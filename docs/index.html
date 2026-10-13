@@ -24,7 +24,7 @@
   <ol>
     <li>Download <b>blackbox 3.1.9</b> from <a href="https://1010music.com/downloads">1010music.com/downloads</a> and unzip it.</li>
     <li>Choose the <code>BLACKBOX.bin</code> from that zip below. Keep that stock file as your backup.</li>
-    <li id="copy">Copy the patched file to the root of the microSD card as <code>BLACKBOX.bin</code> and install it like any firmware update.</li>
+    <li id="copy">Copy what you get to the root of the microSD card and install it like any firmware update (hold BACK + INFO while powering on).</li>
   </ol>
   <div class="box">
     <label for="f"><b>Your stock 3.1.9 BLACKBOX.bin</b></label>
@@ -40,7 +40,7 @@
   (<a href="https://github.com/j3threejay/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
 </main>
 <script>
-const PATCH = "blackbox-mod-3.1.n.json";
+const PATCH = "blackbox-mod-joebox-1.json";
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 const unhex = s => Uint8Array.from(s.match(/../g) || [], h => parseInt(h, 16));
 const sha = async b => hex(await crypto.subtle.digest("SHA-256", b));
@@ -108,14 +108,14 @@ if (typeof document !== "undefined") document.getElementById("f").addEventListen
   const file = e.target.files[0];
   if (!file) return;
   try {
-    const p = await (await fetch(PATCH)).json();
+    const p = typeof PATCH === "string" ? await (await fetch(PATCH)).json() : PATCH;   // a standalone copy carries it inline
     const files = await build(new Uint8Array(await file.arrayBuffer()), p);
     if (files.length === 1) {
       offer(new Blob([files[0].data], { type: "application/octet-stream" }), "BLACKBOX.bin", `Download patched BLACKBOX.bin (${p.version})`);
       say(`Stock ${p.stock_version} confirmed. Patched to ${p.version} and verified.`, "ok");
     } else {
       const names = files.map(f => f.name).join(" and ");
-      offer(zip(files), `blackbox-mod-${p.version}.zip`, `Download blackbox-mod ${p.version} (${files.length} files, zipped)`);
+      offer(zip(files), `blackbox-mod-${p.slug || p.version}.zip`, `Download ${p.version} (${files.length} files, zipped)`);
       document.getElementById("copy").innerHTML = `Unzip it and copy <b>both</b> files, <code>${files.map(f => f.name).join("</code> and <code>")}</code>, ` +
         "to the root of the microSD card. Install like any firmware update. The Blackbox restarts itself once, a second or two " +
         "into the first boot: that is the second file being installed.";

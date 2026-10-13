@@ -10,30 +10,67 @@ An unofficial feature mod for the **original 1010music Blackbox** (not the Black
 **Get new builds by email:** sign up at <https://justinjoe.com/blackbox-mod> and I'll send a note when a new build is
 out (new FX, fixes). That's all the list is for.
 
-## What it adds (build 3.1.n)
+## What it adds (JOEBOX 1)
+
+Releases have names now. JOEBOX 1 is the one after 3.1.n, and TOOLS shows it as the version.
+
+New since 3.1.n:
+
+- **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
+  through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
+  Muting the pad mutes it.
+- **An insert effect per pad**: "Insert" on the Conf tab, INFO opens its knobs. Phaser (five models), Flanger
+  (four models) or Gate. Sample, Multisample, Clip and Slicer pads.
+- **LFO 2 and LFO 3 per pad**, on a new "LFO+" tab: twelve shapes (the stock nine plus two exponential ramps and
+  a smooth random), tempo-synced rates from 32 bars to 1/32, Free / Retrig / Once, and a start Offset. They appear
+  as LFO2 and LFO3 in the modulation Source list.
+- **ENV and KEY as modulation sources**: the pad's own envelope, and key tracking.
+- **Master FX slot** on TOOLS: VHS (wow, flutter, saturation, dropouts, noise) or Prism, a four-block multi-effect
+  (drive, motion, space, texture; twenty effects). INFO on the row opens the knobs.
+- **Delay types**: Motion (the stock delay with tremolo, filter, duck or swell on the repeats), Relapse (a memory
+  echo) and Confetti (a granular micro-looper), next to Delay and Munchi.
+- **Smash**, a three-band compressor, in the compressor list, and a **master clipper** after the compressor
+  (Clean or Diode).
+- **Fidelity**: the S950 mode rebuilt from the machine's schematic, S950 Lo and SP 45 added, and the machine modes
+  now work on Clip and Slicer pads.
+- **Record pre-roll**: TOOLS, Rec, Pre-roll (1, 2, 4 or 8 bars). The loop plays that long before the recording
+  starts, so a resampled loop holds its own tails.
+- **Rotate a sequence**: in the piano roll's Event editor the top-right knob shifts the whole layer a step at a time.
+- **MUTE and SOLO on the Pads screen.**
+- **USB on the power jack**: plugged into a computer the Blackbox is a class-compliant USB MIDI device and sends
+  its three stereo outputs as six channels of 24-bit 48 kHz audio.
+- **Load readout on TOOLS**: average / peak, for example `62/75%`. Over about 100% peak the engine is out of time
+  and you will hear it.
+- **Fixed**: the naming keyboard's 9 key (3.1.n typed "n").
+
+From 3.1.n and earlier:
 
 - **Solo** in the mixer: MIX cycles Mixer → Mute → Solo. Tap pads to solo them (yellow).
 - **Slicer knobs**: on the waveform screen, bottom-left = slice Start, bottom-right = slice End, top-right = Zoom.
-- **Pad-1 ducker**: four new modulation Sources (EXP1, EXP2, PUMP, LINR) that fire when pad 1 plays. Put your kick
+- **Pad-1 ducker**: four modulation Sources (EXP1, EXP2, PUMP, LINR) that fire when pad 1 plays. Put your kick
   on pad 1, set a negative Amount on another pad's Level, and you have sidechain pumping. About 0.65 dB per 1%.
 - **Chords on the Keys screen**: top-right knob picks a shape (Tri, 7th, 9th, Su2, Su4, 6th, Ad9, Pwr, Oct, Opn, Shl,
   Qrt, m7, m9, Mj7). In-scale shapes follow the Keys Scale/Root. Chords record into sequences.
 - **Note conditions**: the piano roll's PLAY list gains 1:2 … 8:8 ("play the Ath of every B loops").
 - **Fidelity** (was Interp): sample-rate crunch plus machine modes SP1200, SP-12, S950, MPC60 and SP Raw, with
-  drop-sample pitching. Machine modes work on Sample and Multisample pads.
+  drop-sample pitching.
 - **Filter**: 24 dB/oct state-variable filter; drive comes in as Res goes past noon.
 - **Saturation** (was Overdrive): soft saturation in place of the hard clip.
 - **Master compressor models**: Stock, Glue, Punch, Opto, Squash, Limit, plus a Comp Thresh setting.
 - **Reverb Type**: Plate (stock) or Room.
-- **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
+- **Munchi**, a port of the CHOMPI TEMPO granular delay, as a delay type.
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
 
 ### Known issues
 
-- Solo can stick: after un-soloing, pads may stay muted. Unmute them in Mute mode.
+- This has run on very few units. If yours does something this list doesn't mention, I want to hear about it.
+- The Blackbox only has so much CPU, and the mod lets you spend all of it. Room and Prism are the expensive ones.
+  Watch the load readout on TOOLS.
+- LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Presets saved with a Fidelity value on an older mod build may read a different value.
+- Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
+  lists gained entries. Set them again and save.
 
 ## Install
 
@@ -48,7 +85,7 @@ out (new FX, fixes). That's all the list is for.
    soon as the install screen shows.
 6. On a two-file build the Blackbox **restarts itself once**, a second or two into the first boot. That is the
    second file being installed. Leave the card in and the power on until it is back up.
-7. TOOLS should show the new version.
+7. TOOLS should show `JOEBOX 1`.
 
 ### The second file
 
@@ -79,18 +116,21 @@ Needs `arm-none-eabi-gcc` and Python 3. Put your stock image at `firmware/BLACKB
 `firmware/README.md`).
 
 ```
-./build.sh
-python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi cave
+RELEASE=1 ./build.sh
+python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi master fault cave
 ```
 
-That writes `out/<patchsets>/BLACKBOX.bin`, byte-identical to the release. `python3 make_patch.py <image> <version>`
-turns an image into the release patch in `docs/`.
+That writes `out/<patchsets>/BLACKBOX.bin` and `out/BBEXTRA.BIN`, byte-identical to the release.
+`python3 make_patch.py <image> "JOEBOX 1" --extra out/BBEXTRA.BIN` turns the pair into the release patch in `docs/`.
+Without `RELEASE=1` you get a test build: a letter for a version, and a raw memory peek / poke over USB for
+development. That one can write anywhere in the machine, so it is not in a release.
 
 How it works: the stock image is left as it is. New code (`src/`) is compiled and appended after it, and a handful of
 call sites and table entries (`patches/`) are redirected to the new code.
 
-Tests (`test_*.py`) run the patched functions under Unicorn (`pip install unicorn`). They test the new functions, not
-a full boot. The first power-on of any build is the real test.
+`./check.sh` builds, patches and runs every suite (`test_*.py`) under Unicorn (`pip install unicorn capstone numpy`).
+Several of them hold the firmware's DSP against a build of the same C for the computer (`host/build.sh`, written
+for macOS). They test the new functions, not a full boot. The first power-on of any build is the real test.
 
 `ghidra/`, `disasm.py`, `findbl.py`, `findref.py` are the helpers used to find things in your own copy of the image.
 

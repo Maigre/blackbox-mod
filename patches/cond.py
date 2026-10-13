@@ -20,4 +20,7 @@ PATCHES = [
     (0x0805D3A6, bytes.fromhex("622b"), bytes.fromhex("852b")),
     # ...where the roll itself is replaced
     hook(0x0805D51E, 0x080C89D4, "cond_roll"),
+    # piano roll, encoder 2 (top right): with Event on it rotates the sequence instead of repeating note length
+    # (src/rotate.c)
+    hook(0x080C179A, 0x080BACD8, "rotate_knob"),
 ]

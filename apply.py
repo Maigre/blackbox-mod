@@ -17,7 +17,7 @@ import os
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ap = argparse.ArgumentParser()
 ap.add_argument("stock")
-ap.add_argument("patch", nargs="?", default=sorted(glob.glob(os.path.join(ROOT, "docs", "blackbox-mod-*.json")))[-1])
+ap.add_argument("patch", nargs="?", default=max(glob.glob(os.path.join(ROOT, "docs", "blackbox-mod-*.json")), key=os.path.getmtime))
 ap.add_argument("-o", "--out", default=None)
 a = ap.parse_args()
 
@@ -40,7 +40,7 @@ for x in p.get("extra", []):
         raise SystemExit(f"{x['name']} in the patch failed its check. Nothing written.")
     extras.append((x["name"], b))
 
-out = a.out or os.path.join("out", f"blackbox-mod-{p['version']}", "BLACKBOX.bin")
+out = a.out or os.path.join("out", f"blackbox-mod-{p.get('slug', p['version'])}", "BLACKBOX.bin")
 if os.path.abspath(out) == os.path.abspath(a.stock):
     raise SystemExit("Refusing to overwrite the stock file. Pick another output path and keep the stock one as backup.")
 folder = os.path.dirname(os.path.abspath(out))
