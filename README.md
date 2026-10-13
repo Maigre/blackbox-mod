@@ -40,13 +40,34 @@ out (new FX, fixes). That's all the list is for.
 1. Download **blackbox 3.1.9** from <https://1010music.com/downloads> and unzip it. You need the `BLACKBOX.bin` inside.
 2. Patch it, either way:
    - **In your browser:** <https://j3threejay.github.io/blackbox-mod/>. Your file never leaves your computer.
-   - **With Python 3:** `python3 apply.py path/to/BLACKBOX.bin` → `out/blackbox-mod-3.1.n/BLACKBOX.bin`
+   - **With Python 3:** `python3 apply.py path/to/BLACKBOX.bin` → `out/blackbox-mod-<version>/`
 3. Keep the stock `BLACKBOX.bin` somewhere safe. That file is your way back.
-4. Copy the patched `BLACKBOX.bin` to the root of the Blackbox's microSD card and install it the way you install
-   any 1010music firmware update (hold BACK + INFO while powering on).
-5. TOOLS should show version `3.1.n`.
+4. Copy what the patcher gives you to the **root** of the Blackbox's microSD card. Newer builds are **two files,
+   `BLACKBOX.bin` and `BBEXTRA.BIN`, and both have to be there** (the browser patcher hands you a zip with both).
+5. Install it the way you install any 1010music firmware update: hold BACK + INFO while powering on, and let go as
+   soon as the install screen shows.
+6. On a two-file build the Blackbox **restarts itself once**, a second or two into the first boot. That is the
+   second file being installed. Leave the card in and the power on until it is back up.
+7. TOOLS should show the new version.
 
-**To go back to stock:** put the stock `BLACKBOX.bin` on the card and install it the same way.
+### The second file
+
+Part of the mod (Prism, Confetti and the per-pad insert effects) is too big to fit beside 1010music's firmware. The
+chip has a second block of flash that 1010music's installer never touches, so the mod keeps that code there and
+installs it itself from `BBEXTRA.BIN` the first time it starts. The file holds this project's own code and nothing of
+1010music's. You can leave it on the card.
+
+- **`!` in front of the load figures on TOOLS** (for example `!62/75%`) means the second part is not installed or
+  does not match this build. Everything else works; those three effects are switched off.
+- **`---` in the Insert, Master FX or delay Type lists** is the same thing seen from the menus: the effect that
+  belongs there is not installed. A preset that uses one keeps its setting and gets the effect back once it is.
+- To fix either: put the `BBEXTRA.BIN` **from the same download** as your `BLACKBOX.bin` in the root of the card and
+  power the Blackbox off and on. The two files are a matched pair; one from a different build is ignored.
+- If the second part cannot be written after two tries, the mod stops trying and leaves those effects off rather
+  than wearing the flash. Installing any build (with its own `BBEXTRA.BIN`) starts the count again.
+
+**To go back to stock:** put the stock `BLACKBOX.bin` on the card and install it the same way. The second part
+stays in the chip, unused: stock firmware never looks at it, and it does not touch the unit's calibration.
 
 The patcher checks your file's SHA-256 before it writes anything
 (`281ae303d32e5eb52adca7817a648a34e4bd3848017f26673dd9df3905f1341d`) and checks the result afterwards. It only
