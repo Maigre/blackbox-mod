@@ -268,7 +268,7 @@ r = control(struct.pack("<BBHHH", 0x01, 11, 0, 2, 0))
 check("SET_INTERFACE on the MIDI interface and clearing an endpoint halt are accepted; the audio stream stays closed",
       r == b"" and control(struct.pack("<BBHHH", 0x02, 1, 0, 0x81, 0)) == b"" and e.r8(STATE + 14) == 0 and core.get(GINTMSK) == 0x10, r)
 
-# --- debug peek / poke: in his builds, and NOT in a public one
+# --- debug peek / poke: in test builds, and NOT in a public one
 RELEASE = e.uc.mem_read(e.sym["release_build"], 1)[0]
 e.w32(0x24070800, 0x11223344)
 e.w32(0x24070804, 0xAABBCCDD)

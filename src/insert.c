@@ -45,7 +45,7 @@ typedef int (*buf_chans_fn)(void *buf, float **left, float **right);
 #define P_INS_IN     0x1c7       /* "Input:" - the live audio input played through this pad */
 
 /*
- * LIVE INPUT ON A PAD (his ask 2026-10-10: the input through a pad's insert, its sends and the master FX, "an extra
+ * LIVE INPUT ON A PAD (requested 2026-10-10: the input through a pad's insert, its sends and the master FX, "an extra
  * processor for the input").
  * The audio task de-interleaves the ADC, gain-stages it and writes it into a bus of its own (FUN_0804caa4, which
  * ends in FUN_080518f0) BEFORE it runs the engine (both from FUN_08041470 @0x08041502 / 0x0804151e), so the samples
@@ -60,8 +60,8 @@ typedef int (*buf_chans_fn)(void *buf, float **left, float **right);
  * 0x1583c (FUN_0805f390). The first cut added the two offsets to 0x2400a9c0 itself, which is 0x24032adc: not a
  * buffer at all. Its "needs clearing" byte happened to be set, so stock's buffer getter tried to zero a "channel" at
  * 0xa8be291b and took an unaligned-access fault in the audio task on the first block after every boot (the fault
- * record off his unit, 2026-10-11: PC 0x080c757c, LR 0x0804d96b, r0 0xa8be291b - the very words at 0x24032adc).
- * On his unit the engine pointer is 0x24037038 and the bus 0x2405f154: 128 frames, channels in DTCM, the idle ADC
+ * record off the test unit, 2026-10-11: PC 0x080c757c, LR 0x0804d96b, r0 0xa8be291b - the very words at 0x24032adc).
+ * On the test unit the engine pointer is 0x24037038 and the bus 0x2405f154: 128 frames, channels in DTCM, the idle ADC
  * in them. So the pointer is read every time and the object is checked before a sample is taken from it, and it is
  * read directly - stock's getter CLEARS a buffer whose flag asks for it, which is no business of a reader.
  */
@@ -107,9 +107,9 @@ void insert_defaults(void *store)
     static const uint16_t first[9] = {INS_OFF, PH_STONE, FL_MISTRESS, 330, 750, 500, 350, 250, 500};
     for (int i = 0; i < 9; i++)
         fw_store_add(store, P_INS + i, first[i]);
-    /* The Gate as it first comes up: HIS settings, read off pad 10 of his unit once he had it gating a drum pad
+    /* The Gate as it first comes up: the settings read off pad 10 of the test unit once it was gating a drum pad
        (2026-10-11) - Thresh 80 %, Attack 0, Hold 0, Release 20 %, Floor 0. 3.2.u shipped Thresh 35 %, which is about
-       -43 dB and opens for almost anything, so switching the Gate on did nothing he could hear. */
+       -43 dB and opens for almost anything, so switching the Gate on did nothing audible. */
     static const uint16_t gate_first[5] = {800, 0, 0, 200, 0};
     for (int i = 0; i < 5; i++)
         fw_store_add(store, P_INS_GATE + i, gate_first[i]);
@@ -177,7 +177,7 @@ void insert_tick(void)
         type = INS_OFF;
     unsigned in = (unsigned)fw_setting(store, P_INS_IN);
     /* A muted pad carries no input. Stock's mute acts on the pad's voices and the input joins the mix after them,
-       so on 3.2.x muting the pad left the line sounding (his report, 2026-10-11). The app's own pad record is what
+       so on 3.2.x muting the pad left the line sounding (reported 2026-10-11). The app's own pad record is what
        solo.c reads and writes, so MUTE, the Mixer's mute view and a solo on another pad all land here. */
     if (in >= IN_SOURCES || APP_MUTED(q))
         in = IN_OFF;
@@ -199,7 +199,7 @@ void insert_tick(void)
     p->mix = knob(store, P_INS_MIX);                     /* Phaser and Flanger share this one */
     if (type == INS_GATE) {
         p->mix = 1.0f;                                   /* the Gate does not: the shared Mix comes up at 50 %, which
-                                                            left a closed gate only 6 dB down (his first try, "not
+                                                            left a closed gate only 6 dB down (the first try, "not
                                                             hearing the gate"). Floor is its how-far-down knob. */
         p->thresh = knob(store, P_INS_GATE);
         p->attack = knob(store, P_INS_GATE + 1);

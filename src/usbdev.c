@@ -3,7 +3,7 @@
  *
  * Stock runs one USB controller, OTG_FS at 0x40080000 on PA11 / PA12, as the host for the USB-A jack. The other one,
  * OTG_HS at 0x40040000, is never touched, and the pins of its built-in full-speed transceiver (PB14 = D-, PB15 = D+)
- * are never set up. The power jack's data lines go to those two pins (3.1.K enumerated on his Mac, 2026-10-05), so the
+ * are never set up. The power jack's data lines go to those two pins (3.1.K enumerated on a Mac, 2026-10-05), so the
  * computer feeding the power jack sees a full-speed, class-compliant MIDI device, "Blackbox", one port each way.
  *
  * usbdev_poll runs from the audio task's wait (cpu_wait), once per audio block (128 frames = 2.67 ms), and answers
@@ -390,8 +390,8 @@ static void ring_put(const float *p, int frames, uint32_t column, int last)
 /*
  * The block function's last step turns four stereo buses into converter words, left side then right side each time
  * (the right side's words sit 8 bytes further in): FUN_0806002c(a, b, c) for the first converter stream, then
- * FUN_0805feb4(d) for the second. From his 3.1.M recordings: a = the HEADPHONE mix (every output summed: it measured
- * as 0.5 c + 0.46 b + a remainder), c = Out 1 (where pads go by default). From his 3.1.O recording (kick on Out 1,
+ * FUN_0805feb4(d) for the second. From the 3.1.M recordings: a = the HEADPHONE mix (every output summed: it measured
+ * as 0.5 c + 0.46 b + a remainder), c = Out 1 (where pads go by default). From the 3.1.O recording (kick on Out 1,
  * hi-hat on Out 2): the hat came in on bus d, so d = Out 2 and b = Out 3. The ring takes c, d, b = USB 1-2, 3-4, 5-6
  * = Out 1, 2, 3, and leaves the headphone mix out.
  */

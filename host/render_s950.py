@@ -1,7 +1,7 @@
 """Audition renders for the S950 modes: out/render/s950/*.wav (host/build.sh first).
 
 Every file is the same two bars three times: at the original pitch, 5 semitones down, an octave down, with half a
-second of silence between. Source: a drum loop from his sample library (measure/4X4DRUMS103-48k.wav), summed to mono
+second of silence between. Source: a drum loop (measure/4X4DRUMS103-48k.wav), summed to mono
 (an S950 voice is mono). Listen in file order.
 """
 import os
@@ -46,7 +46,7 @@ def save(name, parts):
 
 
 def main():
-    # 4X4DRUMS103 from his iCloud Sample Packs / 4x4 Drums (his pick: the USB capture used first sounded bad even clean),
+    # 4X4DRUMS103 (chosen because the USB capture used first sounded bad even clean),
     # resampled to 48 kHz; four bars at 126 BPM, the first two used
     x = load(os.path.join(HERE, "..", "measure", "4X4DRUMS103-48k.wav"), 2 * 4 * 60 / 126)
     PITCHES = (0, -5, -12)

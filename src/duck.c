@@ -145,7 +145,7 @@ const char *const duck_source_names[16] = {
     (const char *)0x080cea70, /* PTCH */
     (const char *)0x080cea78, /* MODW */ (const char *)0x080cea80, /* MVOL */
     (const char *)0x080cea88, /* MPAN */ (const char *)0x080cea90, /* CC   */
-    "ENV",                                       /* envmod.c: the pad's ADSR; ahead of the duck shapes (his ask) */
+    "ENV",                                       /* envmod.c: the pad's ADSR; ahead of the duck shapes (by request) */
     "EXP1", "EXP2", "PUMP", "LINR",
 };
 const uint16_t duck_source_codes[16] = {

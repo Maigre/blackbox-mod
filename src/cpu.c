@@ -56,11 +56,11 @@ __attribute__((used)) const uint8_t release_build = 0;
 
 /*
  * THE READING USED TO INVERT (3.2.c and earlier). Load was busy / period, both measured wake to wake, so when
- * blocks arrived late the period stretched and the ratio FELL: his dropout with four Flanger inserts + clipper +
+ * blocks arrived late the period stretched and the ratio FELL: a dropout with four Flanger inserts + clipper +
  * Glue + Prism read 58/78 %, while VHS at 85/99 % was clean. A low number during a dropout was the symptom, not
  * headroom. The denominator is now the NOMINAL block - the shortest period seen in the previous report window -
  * so the figure is busy time against the time the engine actually had, and over 100 % means the render did not
- * fit. Healthy readings are unchanged (nominal == actual when nothing is late), so his earlier photos still
+ * fit. Healthy readings are unchanged (nominal == actual when nothing is late), so earlier photos still
  * compare.
  *
  * THE FIGURES SPAN THE TIME BETWEEN DRAWS, not a fixed second. The bar is only written when Tools is ENTERED
@@ -76,8 +76,8 @@ __attribute__((used)) const uint8_t release_build = 0;
  *   peak at or over 100 %      -> out of CPU, the render does not fit in a block.
  *   "+n" with peak under 100 % -> something stalled the engine (SDRAM contention, a higher-priority task).
  *   +0 and peak under 100 %    -> NOT the audio task at all. Look at sample streaming starvation instead.
- * The count accumulates until the bar is drawn and is cleared by the draw, so a dropout that happened while he was
- * on another screen still shows when he arrives at Tools (a boot or a preset load will show one too).
+ * The count accumulates until the bar is drawn and is cleared by the draw, so a dropout that happened with another
+ * screen up still shows on arriving at Tools (a boot or a preset load will show one too).
  */
 struct cpu_state {
     uint32_t magic;
@@ -137,7 +137,7 @@ static uint8_t b2_checked(void);
  * "34/71%", "34/71%+3", "--%", or nothing before the first second - and a leading "!" while flash bank 2 is NOT the
  * payload this image was built with, so Prism, Confetti and the per-pad insert are switched off. It goes here
  * because this label is redrawn on every entry to Tools; the version text beside it is set once when the screen is
- * built (his 3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 13 bytes.
+ * built (3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 13 bytes.
  */
 static void compose(char *buf)
 {
@@ -221,7 +221,7 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
 /*
  * Replaces the 6-byte copy of the version string into the global cell's info (FUN_0809ad74, address 0x40, the
  * `ldr; ldr; str; ldrh; strh` @0x0809ad84). dest is the info's name field. The knob screen draws that name as its
- * header from three quarters of the way across, and what does not fit wraps round to the left edge (his 3.1.H
+ * header from three quarters of the way across, and what does not fit wraps round to the left edge (the 3.1.H
  * photos: "Prism 1/" then the "2" at the far left), so a title is 8 characters at most.
  */
 const char *master_title(void);  /* master.c: the header for a Compressor / Master FX knob page, or 0 */
@@ -231,7 +231,7 @@ int b2_ok(void);                 /* b2head.c: is flash bank 2 the payload this i
  * The same answer, cached, for the audio path - b2_ok() sums the whole payload and the engine asks every block.
  * The three effects whose DSP lives in bank 2 (Prism, Confetti, the per-pad insert) call this and BYPASS
  * themselves when it is false, because the alternative is what 3.2.l did on 2026-10-10 when bank 2 was erased
- * underneath it: the engine called into 0xff, hard-faulted, and the unit boot-looped on his saved preset. An
+ * underneath it: the engine called into 0xff, hard-faulted, and the unit boot-looped on a saved preset. An
  * advisory marker on the version label was NOT enough; a missing or mismatched bank 2 has to be survivable.
  */
 /*
@@ -250,7 +250,7 @@ __attribute__((used)) const volatile uint32_t b2_expect_sum = 0xffffffffu;
 /*
  * AND THE FLASH ITSELF HAS TO READ CLEANLY (3.2.t). This chip corrects one flipped bit per 256-bit flash word
  * without telling anyone and bus-faults on two, so a marginally written payload passes every check above - the
- * bytes are right - and then kills an instruction fetch once in a while. That was his "random crash while it was
+ * bytes are right - and then kills an instruction fetch once in a while. That was the "random crash while it was
  * playing" on 3.2.s (2026-10-11): the payload written on 2026-10-10 misread about once in 700 word reads.
  * So before trusting bank 2: clear the two ECC flags, read every flash word of the payload B2_SCANS times with
  * the data cache invalidated first (a cached read never touches the flash), and refuse the lot if either flag is

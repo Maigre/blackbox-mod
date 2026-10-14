@@ -44,7 +44,7 @@ class Emu:
         uc.mem_write(BASE, open(image, "rb").read())
         # Flash bank 2 (0x08100000) holds the relocated leaf DSP. The hardware keeps it across bank 1 installs;
         # here it has to be loaded alongside the image or any call into it runs off into 0x00 bytes.
-        # It loads the payload that is ON HIS UNIT, not the one this build just linked. They used to differ and
+        # It loads the payload that is ON THE TEST UNIT, not the one this build just linked. They used to differ and
         # nothing noticed: every suite ran Confetti and Prism against a freshly linked bank 2 whose calls into the
         # cave were right, while the unit ran the 3.2.l payload whose calls were stale - which crashed it on every
         # build from 3.2.m to 3.2.r. build.sh now refuses a build where the two differ; BANK2_NEW=1 is the

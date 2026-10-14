@@ -348,7 +348,7 @@ else:
 # --- a MODE left over from an older build's numbering must force a clear, not alias onto another type
 # 3.2.m renumbered the list, and MODE lives in backup SRAM which survives a reflash. A raw 3 stored by 3.2.l
 # meant Confetti; under the new numbering 3 is Relapse, so `fresh` came out false, the lines were never cleared,
-# and Relapse read Confetti's state. That crashed his unit while scrolling the delay types (2026-10-11).
+# and Relapse read Confetti's state. That crashed the test unit while scrolling the delay types (2026-10-11).
 MODE_RAW = 0x38800B14
 e.w32(MODE_RAW, 3)                        # a bare type number, as every build before the epoch wrote it
 store(type=3, fb=500, size=5, recall=0, reach=500, twist=0, tone=0, feed=0)

@@ -8,7 +8,7 @@
  * While a solo set exists the Mute screen always comes up as Solo (MIX cycles Mixer -> Solo -> Mixer), whichever way
  * it is reached, so the mutes cannot be edited by hand under a solo. (Through 3.1.n the plain Mute screen was still
  * reachable with a set alive; it looks the same minus the yellow outlines, and a tap there muted the soloed pad and
- * dropped the set: everything muted, nothing to restore. His reports on 3.1.d, 3.1.l, 3.1.n.)
+ * dropped the set: everything muted, nothing to restore. Reported on 3.1.d, 3.1.l, 3.1.n.)
  * A set left over from before a preset load or restart is forgotten when the mixer is next shown (drop_stale).
  * Clearing the set sends every pad its restored state whatever the cell reads, so a stale cell cannot leave a pad muted.
  *
@@ -127,7 +127,7 @@ static int solo_valid(uint8_t *view)
 /*
  * The solo state sits in RAM that survives a preset load and a warm restart, the mutes it describes do not. A set with
  * nothing muted outside it (by the app's own pad records) is left over from before: forget it. Without this a stale
- * pad stays in the set, and un-soloing the pad he just soloed leaves everything but the stale one muted.
+ * pad stays in the set, and un-soloing the pad just soloed leaves everything but the stale one muted.
  */
 static void drop_stale(void)
 {
@@ -351,7 +351,7 @@ static void pads_solo(uint8_t *pads, int i)
     }
 }
 
-/* MUTE always acts (3.1.u ignored it while a solo was on: his report, "mute does not work at all"): a solo that is on
+/* MUTE always acts (3.1.u ignored it while a solo was on: as reported, "mute does not work at all"): a solo that is on
    ends first, the pads going back to their mutes from before it, then the selected pad toggles. */
 static void pads_mute(uint8_t *pads, int i)
 {

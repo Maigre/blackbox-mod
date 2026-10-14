@@ -2,8 +2,8 @@
 
 Every other suite STUBS that call, which is the blind spot that let the Relapse hang through: a stub returns in one
 instruction, so no test could ever see what clearing three multi-megabyte lines costs, or that a clear repeats. Here
-the firmware's own clear runs against lines the size his unit really has, and the cost is counted in instructions
-and converted at his measured 398.8 MHz against the 2.67 ms audio block.
+the firmware's own clear runs against lines the size the test unit really has, and the cost is counted in instructions
+and converted at the measured 398.8 MHz against the 2.67 ms audio block.
 
 Real firmware runs for: the line clear, the settings lookup, the buffer pointer / length helpers, the output mix.
 Stubbed: the stock delay process, the send gate, the bus lookup.
@@ -29,9 +29,9 @@ BUSL, BUSR, INL, INR, ARR = 0x30002000, 0x30002400, 0x30002800, 0x30002C00, 0x30
 LIVE, STATE, FRZ = 0xC0000000, 0xC0400000, 0xC0500000
 APPFX = 0x24020088 + 0x2FC0
 N = 128
-MHZ, BLOCK_MS = 398.8, 128 / 48.0                      # his measured core clock; a 128-frame block is 2.67 ms
+MHZ, BLOCK_MS = 398.8, 128 / 48.0                      # the measured core clock; a 128-frame block is 2.67 ms
 
-# The line sizes are the ones read off his unit: LIVE and FREEZE are 4 s of 16-bit stereo, STATE is 2 s of floats.
+# The line sizes are the ones read off the test unit: LIVE and FREEZE are 4 s of 16-bit stereo, STATE is 2 s of floats.
 LINES = ((0x30, LIVE, 192256), (0x4C, STATE, 96256), (0x68, FRZ, 192256))
 
 e.w32(OBJ, VT)

@@ -27,7 +27,7 @@ B2_ID=$(for b in $BANK2_SRCS; do cat "src/$b.c"; done | cat - src/b2head.c | sha
 
 CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-builtin -Wall -Wextra -Werror -DB2_ID=$B2_ID -DB2LOAD_WRITE=${B2LOAD_WRITE:-1}"
 
-# The card loader (src/b2load.c) programs bank 2 from the card file: proven on his unit with 3.2.z, 2026-10-12.
+# The card loader (src/b2load.c) programs bank 2 from the card file: proven on the test unit with 3.2.z, 2026-10-12.
 # B2LOAD_WRITE=0 builds the read-only loader that came first (3.2.y), which only reads the file and reports.
 # RELEASE=1 builds the public image: the version is the release's name (src/release.h) and the raw USB peek / poke
 # is left out. Everything else is the same code.
@@ -89,7 +89,7 @@ cave[at:at + 4] = struct.pack("<I", chk if raw else 0)
 open("out/cave.bin", "wb").write(cave)
 PY
 
-# THE CHECK THAT WOULD HAVE CAUGHT THE 3.2.m - 3.2.r CRASH ON DAY ONE. Bank 2 on his unit is programmed once and
+# THE CHECK THAT WOULD HAVE CAUGHT THE 3.2.m - 3.2.r CRASH ON DAY ONE. Bank 2 on the test unit is programmed once and
 # survives every bank 1 install, so the bank 2 this build links MUST be the payload that is physically up there,
 # byte for byte. If it is not, bank 2's own code changed: build with BANK2_NEW=1 and ship the new out/BBEXTRA.BIN
 # beside BLACKBOX.bin - the card loader writes it. (Bank 2 calls nothing in the cave since 3.3.c; test_bank2.py
@@ -101,7 +101,7 @@ elif ! cmp -s out/bank2.bin "$DEPLOYED_B2"; then
   if [ "${BANK2_NEW:-0}" = 1 ]; then
     echo "WARNING: out/bank2.bin differs from $DEPLOYED_B2 - this image needs bank 2 REPROGRAMMED before it is flashed"
   else
-    echo "ERROR: the bank 2 this build expects is NOT the payload on his unit ($DEPLOYED_B2)."
+    echo "ERROR: the bank 2 this build expects is NOT the payload on the test unit ($DEPLOYED_B2)."
     echo "       Flashing it would call stale addresses, which is the crash that took three sessions to find."
     echo "       $(cmp -l out/bank2.bin "$DEPLOYED_B2" | wc -l | tr -d ' ') bytes differ. Build with BANK2_NEW=1 only if bank 2 is being reprogrammed."
     exit 1

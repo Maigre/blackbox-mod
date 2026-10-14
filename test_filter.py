@@ -335,7 +335,7 @@ e.call("filter_voice_b", OBJV, BUF, PAD)
 l = struct.unpack(f"<{N}f", e.uc.mem_read(LBUF, 4 * N))
 check("  a second voice of the same clip / slicer pad gets the pad's Fidelity too (3.1.d - T: only the first did)", len(set(l)) <= N // 4 + 1)
 
-# --- the engine resetting its own copy of Interp does not stop the crunch (his 3.1.f report)
+# --- the engine resetting its own copy of Interp does not stop the crunch (the 3.1.f report)
 reset()
 setup(0.0, interp=9 + 1)
 e.w32(PAD + 0x578, 0)
@@ -373,7 +373,7 @@ e.w32(STACK, 2)
 e.w32(STACK + 4, 0x080CC794)
 e.call("interp_register", 0x24001000, 0xF1, 0, 0x080EB7E0)
 names = [e.cstr(e.r32(seen["names"] + 4 * i)) for i in range(seen["count"])]
-check("Fidelity list: the machines together (SP 45 beside S950 Lo, his ask 3.2.b), then the plain crunches 16k .. 2k", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "S950 Lo", "SP 45", "16k", "12k", "10k", "8k", "6k", "4k", "2k"] and seen["param"] == 0xF1, names)
+check("Fidelity list: the machines together (SP 45 beside S950 Lo, requested for 3.2.b), then the plain crunches 16k .. 2k", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "S950 Lo", "SP 45", "16k", "12k", "10k", "8k", "6k", "4k", "2k"] and seen["param"] == 0xF1, names)
 
 check("label reads 'Fidelity:', xml name stays 'interpqual'", seen["label"] == "Fidelity:" and seen["xml"] == "interpqual", (seen["label"], seen["xml"]))
 

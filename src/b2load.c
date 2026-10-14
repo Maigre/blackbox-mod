@@ -2,7 +2,7 @@
  * The card loader: flash bank 2 written from a file on the SD card. Original 1010music Blackbox, firmware 3.1.9.
  *
  * WHY. The SD installer writes bank 1 only, so everything in bank 2 (Prism, Confetti, the per-pad insert models)
- * reached his unit over the USB poke. That cannot ship: his rule is that everything installs from the card, "so we
+ * reached the test unit over the USB poke. That cannot ship: the rule is that everything installs from the card, "so we
  * knew it worked for other people", and the raw poke can write anywhere, bank 1's flash controls included. With
  * this, an install is two files on the card - BLACKBOX.bin through stock's installer as always, and B2_NAME, which
  * this code programs into bank 2 itself the first time it finds bank 2 is not the payload this image was built with.
@@ -24,7 +24,7 @@
  * programmed, one claim word programmed once at the start of sector 6 - and that is checked on every erase and
  * every word, after a look at what is already there (owned(), below). NEVER bank 1's CR1 / KEYR1 - bank 1 holds the bootloader, the one mistake with no
  * recovery - and never sector 7 (0x081E0000), the unit's factory calibration. The recipe is the one BANK2.md
- * proved on his unit and measure/bank2_write.py has used since.
+ * proved on the test unit and measure/bank2_write.py has used since.
  *
  * NOTHING MAY READ BANK 2 WHILE IT IS WRITTEN: a read of a bank under erase stalls until the erase ends, most of a
  * second. So it only writes when the pairing check has already said "not paired" (the three effects are bypassed
@@ -78,7 +78,7 @@ __attribute__((used)) const uint8_t b2load_writes = B2LOAD_WRITE;
 #define DCIMVAC     (*(volatile uint32_t *)0xe000ef5cu)                 /* data cache: forget this line */
 #define ICIALLU     (*(volatile uint32_t *)0xe000ef50u)                 /* instruction cache: forget everything */
 
-/* Loop counts, not times: no clock in here can be trusted to be running. An erase measured 0.87 s on his unit;
+/* Loop counts, not times: no clock in here can be trusted to be running. An erase measured 0.87 s on the test unit;
    these give up after some seconds of a controller that never comes back, and the watchdog covers anything worse. */
 #define SPINS_ERASE 400000000u
 #define SPINS_WORD  20000000u
@@ -195,7 +195,7 @@ static int flash_word(uint32_t at, const uint32_t w[8])
 }
 
 /*
- * WHOSE IS IT? The loader erases, and an erase cannot be taken back. On his unit bank 2's sectors 0-6 were blank
+ * WHOSE IS IT? The loader erases, and an erase cannot be taken back. On the test unit bank 2's sectors 0-6 were blank
  * before the mod used them, and stock's own code points at nothing up there but the calibration in sector 7 - but
  * that is one unit and one firmware, and the bootloader has never been read. So before the first erase on any unit
  * the loader looks: sectors 0-6 must be BLANK, or blank after one of the mod's own payloads from before this check
@@ -338,7 +338,7 @@ void b2_load_poll(void)
 #if B2LOAD_WRITE
     if (live) {
         owned();                 /* paired means it is the mod's beyond doubt: a unit whose payload was put there
-                                    before the claim existed (his, and nobody else's) gets its claim now, while the
+                                    before the claim existed (the test unit, and no other) gets its claim now, while the
                                     bank reads well, so a later bad word can still be repaired */
     } else if (verdict == B2_FILE_OK && !owned()) {
         b2_flag(B2_FOREIGN);                             /* not blank and not ours: it is not this code's to erase */

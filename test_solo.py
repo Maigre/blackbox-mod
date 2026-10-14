@@ -162,7 +162,7 @@ check("unsolo pad 2: only pad 7 audible", unmuted() == [1 if i == 7 else 0 for i
 touch(7)
 check("clear last solo restores previous mutes (only pad 5 muted)", unmuted() == [0 if i == 5 else 1 for i in range(16)])
 
-# a non-soloed pad that will not stay muted (an empty pad, or a hand edit) must NOT break the set: his 3.1.d report,
+# a non-soloed pad that will not stay muted (an empty pad, or a hand edit) must NOT break the set: the 3.1.d report,
 # "un-solo left nothing playing"
 touch(9)
 uc.mem_write(cell(0) + 0x189, b"\x01")  # pad 0 reads unmuted although the solo muted it
@@ -171,7 +171,7 @@ check("a stray unmuted pad: pad 9 still drawn as soloed", c[0] == ("fill", 0x1C)
 touch(9)
 check("un-solo pad 9 restores the state from before the solo (only pad 5 muted), not 'everything muted'", unmuted() == [0 if i == 5 else 1 for i in range(16)])
 
-# his 3.1.l report: a soloed pad that merely READS muted at the next tap (screen refresh, engine / screen disagreeing)
+# the 3.1.l report: a soloed pad that merely READS muted at the next tap (screen refresh, engine / screen disagreeing)
 # must not drop the set and re-capture the solo's own mutes
 touch(9)
 uc.mem_write(cell(9) + 0x189, b"\x00")  # pad 9 reads muted, no hand edit
@@ -181,7 +181,7 @@ touch(9)
 touch(9)
 check("solo and un-solo again afterwards: back to only pad 5 muted", unmuted() == [0 if i == 5 else 1 for i in range(16)])
 
-# with a solo set alive the Mute screen is always Solo, however it is reached (his 3.1.n report: un-solo left
+# with a solo set alive the Mute screen is always Solo, however it is reached (the 3.1.n report: un-solo left
 # everything muted; a tap on the look-alike plain Mute screen muted the soloed pad and dropped the set)
 touch(9)                                 # solo pad 9: everything else muted
 call("solo_set_mode", VIEW, 0)           # MIX: Solo -> Mixer

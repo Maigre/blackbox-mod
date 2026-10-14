@@ -134,7 +134,7 @@ LIST = 0x30004000
 page, removed = [], []
 # The real fill puts EVERY registered setting of the cell in the list, the motion's three among them, and the screen
 # shows the first 8. 3.2.a added them a SECOND time on top of that, so the page ran to ten and read Motion twice
-# (his photo). An empty fill stub is what let that through, so this one fills the way the firmware does.
+# (seen in a photo of the screen). An empty fill stub is what let that through, so this one fills the way the firmware does.
 FILL = [0x197, 0x32, 0x33, 0x38, 0x0E, 0xCA, 0x34, 0xC9, 0x35, 0x1BF, 0x1C0, 0x1C1]
 e.stub(0x080A50FC, lambda: page.extend(FILL))
 e.stub(0x080A5038, lambda: page.append(e.arg(1)))

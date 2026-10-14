@@ -105,7 +105,7 @@ check("a DSB follows the cleaning (in bkp_flush), so the writes have completed a
 
 # --- THE CASE 3.2.q COULD NOT SURVIVE: a stacking fault, where the frame pointer is garbage.
 # The hardware could not push the frame, so dereferencing it faults again and locks the CPU up - no record at all,
-# which is what his unit actually produced. The record must still name the cause.
+# which is what the test unit actually produced. The record must still name the cause.
 for label, bad_sp in (("unmapped", 0x10000000), ("misaligned", 0x24010004), ("just off the end of SDRAM", 0xC3FFFFF8)):
     e.uc.mem_write(FAULT, bytes(64))
     e.uc.mem_write(0xE000ED28, struct.pack("<2I", 0x00001000, 0x40000000))               # CFSR: STKERR

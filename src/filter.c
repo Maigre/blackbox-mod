@@ -5,7 +5,7 @@
  * when the Filter knob is left of centre and high-pass when right of it, bypassed at centre. This replaces that
  * call (both pad classes) with:
  *   1. Crunch: the pad's Interp list gains seven entries after Normal / HighQ (16k down to 2k:
- *      on his hardware 26k / 20k were inaudible on bright material and 12k was where it started to bite). Each holds the
+ *      on the test unit 26k / 20k were inaudible on bright material and 12k was where it started to bite). Each holds the
  *      voice's output at a lower sample rate (zero-order hold, no anti-aliasing: the old-sampler sound) and rounds
  *      it to 12 bits, before the filter, so the filter can tame the grit.
  *   2. Filter: 24 dB/oct, two of the trapezoidal state-variable filters from Emilie Gillet's stmlib (dsp/filter.h,
@@ -87,13 +87,13 @@ static const struct machine machines[] = {
        without a new file. Sped up by 1.35 the sample is stored at 26.04 / 1.35 = 19.29 kHz of its own time (the
        reader's grid, with a five-tap input filter near 9 kHz); the machine then plays it 1.35 slower through its
        26.04 kHz converter (the hold) and its output filter, as on SP1200.
-       3.2.b: moved here, beside the other machines (his ask). A pad saved on one of the plain crunches 16k..2k
+       3.2.b: moved here, beside the other machines (by request). A pad saved on one of the plain crunches 16k..2k
        before 3.2.b comes back one place down the list. */
     {26040.0f / 1.35f, 1, 0, 0, {0.05302f, 0.25399f, 0.38598f, 0.25399f, 0.05302f}, {0.357143f, 0.714286f, 0.0f, 0.428571f},
      26040.0f},
 };
 #define MACHINES ((int)(sizeof machines / sizeof machines[0]))
-#define FIRST_MACHINE STOCK_INTERP                      /* his order (3.1.n): machines before the plain crunches */
+#define FIRST_MACHINE STOCK_INTERP                      /* the order asked for (3.1.n): machines before the plain crunches */
 #define FIRST_CRUNCH  (FIRST_MACHINE + MACHINES)
 #define INTERPS       (FIRST_CRUNCH + CRUNCHES)
 
@@ -113,7 +113,7 @@ const char *const interp_names[INTERPS] = {
     "16k", "12k", "10k", "8k", "6k", "4k", "2k",
 };
 
-/* Replaces the Interp list registration call: 2 -> 16 entries, and the label "Interp:" -> "Fidelity:" (his pick of
+/* Replaces the Interp list registration call: 2 -> 16 entries, and the label "Interp:" -> "Fidelity:" (the pick of
    names; the xml name "interpqual" stays, so presets are unaffected). */
 void interp_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
 {

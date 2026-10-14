@@ -1,14 +1,14 @@
-"""Flash bank 2 AS IT IS ON HIS UNIT, against the image just built. The test that did not exist.
+"""Flash bank 2 AS IT IS ON THE TEST UNIT, against the image just built. The test that did not exist.
 
 Bank 2 is programmed once and survives every bank 1 install; the image is rebuilt and reflashed constantly. Every
-other suite used to load the bank 2 that the SAME build had just linked, so the two always agreed - while on his
-unit they had drifted apart, and Confetti crashed on every build from 3.2.m to 3.2.r:
+other suite used to load the bank 2 that the SAME build had just linked, so the two always agreed - while on the
+test unit they had drifted apart, and Confetti crashed on every build from 3.2.m to 3.2.r:
 
     confetti_block + 0xa10 (bank 2):  bl rev4_step        the reverb, which lives in the cave
         as 3.2.r linked it:   bl 0x080f8e30  -> rev4_step
         as programmed (3.2.l): bl 0x080f8b40  -> by then, relapse_block + 0x3dc
 
-Captured off his unit 2026-10-11: PC relapse_block + 0x40a, LR confetti_block + 0xa14, a precise bus fault at
+Captured off the test unit 2026-10-11: PC relapse_block + 0x40a, LR confetti_block + 0xa14, a precise bus fault at
 0x24cb8d7c. The pairing check passed throughout, because the id hashes bank 2's SOURCES and the sum only checked
 the payload against itself.
 
@@ -38,7 +38,7 @@ def check(label, cond, detail=""):
 
 linked = open("out/bank2.bin", "rb").read()
 # BANK2_NEW=1: this build goes out with a bank 2 of its own, which the card loader writes from BBEXTRA.BIN on the
-# first boot. The payload to hold the image against is then the one it ships with, not the one on his unit today.
+# first boot. The payload to hold the image against is then the one it ships with, not the one on the test unit today.
 NEW = os.environ.get("BANK2_NEW") == "1"
 deployed = linked if NEW else open(DEPLOYED_BANK2, "rb").read()
 funcs, funcs_all = {}, {}
@@ -52,9 +52,9 @@ for line in subprocess.run(["arm-none-eabi-nm", "-n", "out/cave.elf"], capture_o
 if NEW:
     on_unit = open(DEPLOYED_BANK2, "rb").read()
     check("BANK2_NEW: the card file is the payload this build links", open("out/BBEXTRA.BIN", "rb").read() == linked)
-    print(f"     (differs from the payload on his unit in {sum(a != b for a, b in zip(linked, on_unit)) + abs(len(linked) - len(on_unit))} bytes)")
+    print(f"     (differs from the payload on the test unit in {sum(a != b for a, b in zip(linked, on_unit)) + abs(len(linked) - len(on_unit))} bytes)")
 else:
-    check("the bank 2 this build links is byte-identical to the payload on his unit", linked == deployed,
+    check("the bank 2 this build links is byte-identical to the payload on the test unit", linked == deployed,
           f"{sum(a != b for a, b in zip(linked, deployed))} bytes differ")
 
 # --- 2. THE INVARIANT, since 3.3.c: bank 2 calls NOTHING in the cave
@@ -121,7 +121,7 @@ e.uc.mem_write(APPFX + 10, struct.pack("<H", len(vals)))
 e.uc.mem_write(INL, struct.pack(f"<{N}f", *([0.3] * N)))
 e.uc.mem_write(INR, struct.pack(f"<{N}f", *([0.3] * N)))
 
-check("with the pair as it is on his unit, bank 2 is accepted as live", e.call("b2_live") == [] and e.uc.reg_read(66) == 1,
+check("with the pair as it is on the test unit, bank 2 is accepted as live", e.call("b2_live") == [] and e.uc.reg_read(66) == 1,
       e.uc.reg_read(66))                                   # 66 = UC_ARM_REG_R0
 
 hits = {"impl": 0, "relapse": 0, "cave": 0}
@@ -135,7 +135,7 @@ try:
         e.call("munchi_process", OBJ, BUFS, count=200_000_000)
 except Exception as exc:
     err = exc
-check("CONFETTI'S FIRST BLOCKS RUN: the crash on his unit does not happen", err is None, str(err))
+check("CONFETTI'S FIRST BLOCKS RUN: the crash on the test unit does not happen", err is None, str(err))
 check(f"Confetti's Space reaches the reverb, which is now in bank 2 with it ({hits['impl']} entries at {impl:#010x})",
       hits["impl"] > 0 and B2 <= impl < B2 + len(deployed), hits)
 check("...and never in relapse_block, which is where the stale call used to land", hits["relapse"] == 0, hits)
@@ -143,7 +143,7 @@ out = struct.unpack(f"<{N}f", e.uc.mem_read(BUSL, 4 * N))
 check("the output is finite", all(v == v and abs(v) < 100 for v in out))
 
 # --- 4. the failure mode, reconstructed: a payload that is internally consistent but was linked for another cave
-# This is exactly what was on his unit. b2_ok() passes it (right id, sum matches its own contents); only the sum
+# This is exactly what was on the test unit. b2_ok() passes it (right id, sum matches its own contents); only the sum
 # bank 1 carries for the payload it was LINKED against can tell.
 stale = bytearray(deployed)
 site = (e.sym["confetti_block"] & ~1) - B2 + 0x40            # one instruction's worth of difference, anywhere in the code
@@ -161,7 +161,7 @@ check("a payload linked for a different cave still passes the old check (right i
 check("...but is REJECTED now: bank 1 knows the sum of the payload it was linked against", e2.uc.reg_read(66) == 0, e2.uc.reg_read(66))
 
 # --- 4b. WITH BANK 2 OFF, CONFETTI MUST BECOME THE PLAIN DELAY - ONCE. Until 3.2.u it cleared the delay's three
-# lines on every block in that state (4.5 ms of work in a 2.67 ms block): his unit ran at 103 blocks a second with
+# lines on every block in that state (4.5 ms of work in a 2.67 ms block): the test unit ran at 103 blocks a second with
 # the button lights stuttering while bank 2 was being rewritten on 2026-10-11. e2 above holds a rejected payload.
 e2.uc.mem_write(OBJ, bytes(e.uc.mem_read(OBJ, 0x4000)))                # the same delay object, buffers and store
 e2.uc.mem_write(APPFX, bytes(e.uc.mem_read(APPFX, 0x18)))
@@ -181,7 +181,7 @@ check(f"bank 2 off + Confetti selected: the lines are cleared ONCE, then left al
       [c for c, _ in per_block] == [3, 0, 0, 0, 0], per_block)
 check("...and the stock delay runs every block in its place", all(st == 1 for _, st in per_block), per_block)
 
-# --- 5. THE FLASH HAS TO READ CLEANLY TOO (3.2.t). The payload on his unit was byte-perfect and still misread one
+# --- 5. THE FLASH HAS TO READ CLEANLY TOO (3.2.t). The payload on the test unit was byte-perfect and still misread one
 # word read in 700: the chip corrects a single flipped bit silently and bus-faults on two. b2_paired now clears the
 # ECC flags, reads every flash word of the payload sixteen times past the data cache, and refuses bank 2 if a flag
 # is set. Here the flash controller is modelled just far enough: a write to CCR2 clears flags in SR2, and a read

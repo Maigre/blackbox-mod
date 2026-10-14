@@ -142,9 +142,9 @@ typedef void (*list_add_fn)(void *list, int param, int value);
  * Munchi and Motion had to SHARE one slot while the cave was full: `#define ALG_MOTION ALG_MUNCHI`, and which one
  * you got depended on MUNCHI_OFF. Bank 2 ended that (3.2.l: ~900 KB free up there), so they each have their own
  * place and both are in the build.
- * DELAY STAYS AT 0 because every existing preset's plain delay stores that index; Munchi takes 1 at his ask, and
+ * DELAY STAYS AT 0 because every existing preset's plain delay stores that index; Munchi takes 1 by request, and
  * Motion, Relapse and Confetti each shift one place, so presets saved on those come back one type EARLIER in the
- * list. He accepted that explicitly ("I don't really care if we push everything around in the tables").
+ * list. That was accepted explicitly ("I don't really care if we push everything around in the tables").
  */
 enum { ALG_DELAY, ALG_MUNCHI, ALG_MOTION, ALG_RELAPSE, ALG_CONFETTI, ALGS };
 #ifndef MUNCHI_OFF
@@ -166,7 +166,7 @@ static const char *const cf_mode_names[6] = {"Loops", "Cloud", "Slide", "Stutter
 #define P_RL_SIZE   0x1e3
 #define P_RL_RECALL   0x1e4
 /* 0x1e5 is NOT free: stock's cell get / set (FUN_08099504 / FUN_0809fa50) special-case it as a one-byte flag at
-   app+0x8cc7, so a knob on it reads 0 / 1 and snaps back (3.1.s had Spread there: his report). Spread is 0x1e9. */
+   app+0x8cc7, so a knob on it reads 0 / 1 and snaps back (3.1.s had Spread there: as reported). Spread is 0x1e9. */
 #define P_RL_REACH 0x1e9
 #define P_RL_TWIST 0x1e6
 #define P_RL_TONE   0x1e7
@@ -186,7 +186,7 @@ static const char *const duck_names[4] = {"Auto", "Off", "Light", "Heavy"};
  * by comparing it with the selected type, and 3.2.m RENUMBERED the list (Munchi took slot 1, so Motion, Relapse
  * and Confetti each moved up one). A value stored by the old numbering then reads as a different type under the
  * new one, `fresh` comes out false, the three delay lines are NOT cleared, and the new type reads the old type's
- * state as its own. On his unit that crashed the moment scrolling reached Relapse, which now has the number
+ * state as its own. On the test unit that crashed the moment scrolling reached Relapse, which now has the number
  * Confetti used to have (2026-10-11).
  * So the stored value carries an epoch, and anything that does not match it counts as "unknown" - which never
  * equals a real type, so the lines always get cleared. BUMP MODE_EPOCH WHENEVER THE TYPE NUMBERING CHANGES.
@@ -194,7 +194,7 @@ static const char *const duck_names[4] = {"Auto", "Off", "Light", "Heavy"};
 /*
  * BREADCRUMBS, into fault.c's ring (3.2.q). 3.2.p wrote the single word at 0x38800fc0, which the delay rewrites on
  * EVERY audio block - so the watchdog reset the unit, the app came back up, and the crumb described the rebooted
- * unit before anyone could read it (proved on his unit: a sentinel poked in was gone within one block). The ring is
+ * unit before anyone could read it (proved on the test unit: a sentinel poked in was gone within one block). The ring is
  * copied to a saved area once per boot, before any audio runs, so what survives is the trail INTO the hang.
  * Six slots, consecutive repeats dropped. Read SAVED at 0x38800fe8 over the USB peek; see src/fault.c.
  */
@@ -557,7 +557,7 @@ int munchi_process(uint8_t *obj, uint32_t *bufs)
      * call it: 3.2.m - 3.2.t fell back further down, after `fresh` had been worked out for Confetti, and stamped
      * MODE as Delay on the way out - so the next block saw "Confetti selected, Delay ran last", cleared all three
      * lines again, and did that EVERY block. 4.5 ms of clearing in a 2.67 ms block ran the engine at about a
-     * quarter speed (103 blocks a second on his unit, button lights stuttering) for as long as bank 2 stayed off
+     * quarter speed (103 blocks a second on the test unit, button lights stuttering) for as long as bank 2 stayed off
      * with Confetti selected - which is the state every bank 2 rewrite passes through.
      */
     if (alg == ALG_CONFETTI && !b2_live())
@@ -688,7 +688,7 @@ int munchi_process(uint8_t *obj, uint32_t *bufs)
 /*
  * The FX knob screen's message handler (vtable 0x080f07e0 +0x10 = FUN_080ab900). Message 0x32 updates one knob's
  * value in place; message 0x66 rebuilds the whole page from the settings list. The page only rebuilt on some other
- * event, so after turning Type the old type's controls stayed until later (his 3.1.l report: the delay's Beat / Filter
+ * event, so after turning Type the old type's controls stayed until later (the 3.1.l report: the delay's Beat / Filter
  * / Ping buttons lingered on the Munchi page). When a 0x32 lands on a Type slot (0x197 delay, 0x198 reverb), follow it
  * with a 0x66, so the page always shows the selected type's controls. UI task, like the handler itself.
  * Slot layout (FUN_080a86a0): knob view at screen +0x450, its page at +0x3c, slot k at +0x40 + k * 0x3d0, the slot's
@@ -718,7 +718,7 @@ void fx_screen_msg(uint8_t *screen, const uint16_t *msg)
     fw_screen_msg(screen, rebuild);
     DROP_GUI(31, id & 0xffu);                /* GUI: it came back out */
     /* The rebuild hides the slots the new type does not use, but hidden widgets are only skipped, not erased: going
-     * Room -> Plate left four bare knob arcs on the right (his 3.1.n photo). Ask for the full clear + redraw the GUI
+     * Room -> Plate left four bare knob arcs on the right (the 3.1.n photo). Ask for the full clear + redraw the GUI
      * does on a screen switch (FUN_080ab4fc sets the same two flags; FUN_0808b2d0 consumes them next frame). */
     uint8_t *gui = *(uint8_t *volatile *)GUI_PTR;
     if (gui) {

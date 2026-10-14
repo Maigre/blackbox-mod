@@ -37,7 +37,7 @@ PATCHES = [
     (0x08093F26, bytes.fromhex("4021"), bytes.fromhex("6021")),
     # ... and the same size where a cell is first created (FUN_080949e4): this is the one a pad's store really gets.
     # 3.1.C..F missed it, so a sample pad's store filled up at 64 and LFO 3's Rate / Trig / Offset had nowhere to live
-    # (his report: those three knobs do not move).
+    # (the report: those three knobs do not move).
     (0x080949F0, bytes.fromhex("4021"), bytes.fromhex("6021")),
     hook(0x080B8844, 0x080B8724, "lfo_tabs"),
     hook(0x080B8BCC, 0x080B8724, "lfo_tabs"),

@@ -155,7 +155,7 @@ e.call("insert_defaults", 0x24073000)
 check("a new pad: Off, the nine shared settings, the Gate's five, and Input Off",
       added[0] == (0x1B6, 0) and [a[0] for a in added] == list(range(0x1B6, 0x1BF)) + list(range(0x1C2, 0x1C8))
       and added[-1] == (0x1C7, 0), added)
-check("the Gate comes up the way he set it on pad 10: Thresh 80 %, Attack 0, Hold 0, Release 20 %, Floor 0",
+check("the Gate comes up the way it was set on pad 10 of the test unit: Thresh 80 %, Attack 0, Hold 0, Release 20 %, Floor 0",
       [a[1] for a in added if 0x1C2 <= a[0] <= 0x1C6] == [800, 0, 0, 200, 0], added[-6:])
 
 # ---------------------------------------------------------------- the engine's copy of the settings
@@ -241,13 +241,13 @@ r3, kept = enter("insert_run_b", pad(10), {0x14: BUF}, {UC_ARM_REG_R10: BUF})
 l, r = audio()
 check("insert_run_b: the mix buffer being the output bus (sl) is not touched", np.array_equal(l, noise) and kept)
 
-# ---------------------------------------------------------------- live input on a pad (his ask 2026-10-10)
+# ---------------------------------------------------------------- live input on a pad (requested 2026-10-10)
 # The bus hangs off the ENGINE POINTER the audio task keeps at 0x2400a9c0 + 0x9a74, not off 0x2400a9c0 itself: that
-# mistake is what stopped 3.2.e, 3.2.h and 3.2.w booting. The numbers here are his unit's, read over USB.
+# mistake is what stopped 3.2.e, 3.2.h and 3.2.w booting. The numbers here are the test unit's, read over USB.
 ENGINE_PTR, ENGINE = 0x2400A9C0 + 0x9A74, 0x24037038
 INBUS, INL, INR = ENGINE + 0x128E0 + 0x1583C, 0x24078000, 0x24079000
 WRONG_BUS = 0x2400A9C0 + 0x128E0 + 0x1583C
-check("the input bus on his unit is where stock's own code puts it", INBUS == 0x2405F154)
+check("the input bus on the test unit is where stock's own code puts it", INBUS == 0x2405F154)
 e.w32(ENGINE_PTR, ENGINE)
 e.uc.mem_write(INBUS, struct.pack("<IIIIBB", N, N, INL, INR, 0, 1))
 # ...and at the address the first cut read, the words that were really there: a "buffer" whose clear flag is set
@@ -308,7 +308,7 @@ scan()
 buffer(voices, voices)
 enter("insert_run_a", pad(5), {0x18: BUF, 0x1C: 1})
 check("Input Off: nothing is added", np.allclose(audio()[0], voices))
-# the same thing through the class B path, which is what he actually plays
+# the same thing through the class B path, which is what gets played most
 store(5, ins=0, live=3)
 scan()
 pb = pad(5)
@@ -328,7 +328,7 @@ for q in range(16):
 
 # --- what killed the boot, part two: the first blocks after power-on, before insert_tick has been round the pads
 for q in range(16):
-    store(q)                                                  # every pad's Input is Off, as on his unit
+    store(q)                                                  # every pad's Input is Off, as on the test unit
 for what, magic in (("the SDRAM as a power-on leaves it", 0xA5A5A5A5), ("the bank an older build left (magic INS1)", 0x494E5331)):
     e.uc.mem_write(BANK, b"\xa5" * 0x22000)
     e.w32(BANK, magic)
@@ -360,7 +360,7 @@ buffer(zeros, zeros)
 enter("insert_run_a", pad(5), {0x18: BUF, 0x1C: 1})
 check("a mono input bus: its one channel goes to both sides", np.allclose(audio()[0], inl, atol=1e-6) and np.allclose(audio()[1], inl, atol=1e-6))
 e.uc.mem_write(INBUS, struct.pack("<IIIIBB", N, N, INL, INR, 0, 1))
-# --- a muted pad carries no input (his report on 3.2.x: "Mute does not silence the line")
+# --- a muted pad carries no input (reported on 3.2.x: "Mute does not silence the line")
 MUTED5 = 0x24020088 + 0x8A88 + (5 >> 2) * 0x78 + (5 & 3) * 0x18 + 0xD
 store(5, ins=0, live=3)
 e.uc.mem_write(MUTED5, b"\x01")
@@ -601,7 +601,7 @@ info()
 check("the Tools version label is not given a master page title while an insert page is up", e.call("master_title") == [] and e.arg(0) == 0)
 
 # --- a bad bank 2 must BYPASS, not fault. This is 2026-10-10's boot loop as a test.
-# Erasing bank 2 under a running 3.2.l pulled ins_render out from under the engine; his saved preset then called
+# Erasing bank 2 under a running 3.2.l pulled ins_render out from under the engine; a saved preset then called
 # into 0xff on every boot and the watchdog reset the unit forever. An advisory marker on the version label was no
 # use, because the fault happens long before anything reads it. b2_live() has to make it survivable.
 import struct as _struct

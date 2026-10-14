@@ -2,7 +2,7 @@
 
 Real firmware runs for the global cell's info function (FUN_0809ad74, with the patched name copy).
 Stubbed: the FreeRTOS queue wait (advances a fake DWT cycle counter), the label setter.
-NOT checked: that the DWT counter runs on the unit (his 3.1.F photo showed 16 %, so it does), that Tools refreshes
+NOT checked: that the DWT counter runs on the unit (the 3.1.F photo showed 16 %, so it does), that Tools refreshes
 often enough for the figure to be current, how the middle label draws.
 """
 import struct
@@ -88,7 +88,7 @@ check("after a wait that timed out, the next second measures cleanly again (10/1
 
 # --- the figures span the time BETWEEN DRAWS, which is the whole point of the fix
 # The bar is only written when Tools is entered, so a per-second average was a stale one-second sample of
-# whenever that happened. His readings were taken by leaving Tools, playing, and coming back - that has to
+# whenever that happened. The readings were taken by leaving Tools, playing, and coming back - that has to
 # summarise the whole stretch.
 for i in range(188):
     block(PERIOD * 2 // 10, PERIOD * 8 // 10)       # a second at 20 %
@@ -106,7 +106,7 @@ for i in range(94):                                  # half a second: less than 
 check("a look after less than a full second still reports it (80/80%)", tools()[1] == "80/80%", tools())
 
 # --- the dropout signature: the reading must NOT fall when blocks arrive late --------------------------------
-# This is the bug his 2026-10-09 dropout exposed. Load was busy / period, both wake to wake, so a stretched period
+# This is the bug the 2026-10-09 dropout exposed. Load was busy / period, both wake to wake, so a stretched period
 # DEFLATED the figure: Prism dropping out read 58/78 % while VHS at 85/99 % was clean. Below, the work per block is
 # identical in both seconds and only the boundaries slip; under the old formula the second one would have read
 # about 48 %, which is the lie. The denominator is the nominal block now, so it holds at 60 % and the late blocks

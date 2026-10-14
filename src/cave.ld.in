@@ -4,8 +4,8 @@
            image that runs past the end of bank 1 at 0x08100000 (3.1.G was 76 bytes over: "unable to verify"), so
            the cave is 0xE188 = 57,736 bytes at most and the linker enforces it.
    BANK2 - flash bank 2, which the installer never writes and our own code programs over USB (see BANK2.md: the
-           chip has 2 MB, SWAP_BANK_OPT is 0, and program / erase / EXECUTE are all proven on his unit).
-           Sectors 0-6 only: 0x08100000 to 0x081DFFFF, 0xE0000 = 917,504 bytes. SECTOR 7 IS HIS UNIT'S FACTORY
+           chip has 2 MB, SWAP_BANK_OPT is 0, and program / erase / EXECUTE are all proven on the test unit).
+           Sectors 0-6 only: 0x08100000 to 0x081DFFFF, 0xE0000 = 917,504 bytes. SECTOR 7 IS THE TEST UNIT'S FACTORY
            CALIBRATION at 0x081E0000 and must never be in this region.
    Calls between the two are a plain BL - 57 KB apart, well inside range - so no veneers and no relocation. */
 MEMORY {

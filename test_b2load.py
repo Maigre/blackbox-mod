@@ -7,7 +7,7 @@ programmed over cells that were not erased.
 
 What this cannot show, and the hardware has to: that stock's file calls behave from our hook in the disk task,
 that the real controller takes the sequence from firmware as it took it over USB, and the timing (an erase is
-0.87 s on his unit; here it is instant).
+0.87 s on the test unit; here it is instant).
 """
 import struct
 import sys
@@ -50,8 +50,8 @@ MARK, TRIES_ID, TRIES_N, SCAN_MARK = 0x388003C8, 0x388003CC, 0x388003D0, 0x4E435
 NAME_MARK = 0x4D414E32
 SCANNING = 8
 DCCMVAC = 0xE000EF68
-payload = open("out/bank2.bin", "rb").read()      # the payload THIS image was linked with (= his unit's, unless BANK2_NEW)
-on_unit = open(DEPLOYED_BANK2, "rb").read()      # what is in his bank 2 today
+payload = open("out/bank2.bin", "rb").read()      # the payload THIS image was linked with (= the test unit's, unless BANK2_NEW)
+on_unit = open(DEPLOYED_BANK2, "rb").read()      # what is in the test unit's bank 2 today
 WRITES = uc.mem_read(e.sym["b2load_writes"], 1)[0]  # 1 = this build lets the loader program bank 2
 
 
@@ -357,7 +357,7 @@ def label():
     return e.cstr(0x24070000)
 
 
-# What he actually looks at: the load readout in the middle of the Tools bar, redrawn on every entry. A leading "!"
+# What the user actually looks at: the load readout in the middle of the Tools bar, redrawn on every entry. A leading "!"
 # there = bank 2 is not this image's payload. (The version text beside it is fixed when the screen is built.)
 tools_labels = []
 e.stub(0x080A3DEC, lambda: tools_labels.append((e.arg(0), e.cstr(e.arg(1)))))
@@ -488,7 +488,7 @@ if WRITES:
     if on_unit != payload:
         fresh(bank=on_unit)
         poll()
-        check("WRITE BUILD - HIS UNIT'S FIRST BOOT: the payload in his bank 2 today is replaced by this build's, sector 0 only",
+        check("WRITE BUILD - THE TEST UNIT'S FIRST BOOT: the payload in the test unit's bank 2 today is replaced by this build's, sector 0 only",
               state() & 3 == PAIRED and bank2() == payload and flash.erased == [0] and not flash.bad
               and flash.words == list(range(32, len(payload), 32)) + [0], (state(), flash.erased, flash.bad[:3]))
         if payload[16:] == on_unit[16:]:
@@ -622,9 +622,9 @@ if WRITES:
     check("A CLAIMED bank holding debris (an erase the power cut short): erased and written, no questions asked",
           again and flash.erased == [0] and bank2() == payload and not flash.claims and not flash.bad, (flash.erased, flash.bad[:2]))
     check("...and with a claim to go on, the rest of the bank is not read through first", count["n"] == 0, count["n"])
-    fresh(bank=payload)                               # HIS unit today: paired, written before the claim existed
+    fresh(bank=payload)                               # the test unit today: paired, written before the claim existed
     again = poll()
-    check("PAIRED and unclaimed (his unit): the claim is written - and nothing else, no erase, no restart",
+    check("PAIRED and unclaimed (the test unit): the claim is written - and nothing else, no erase, no restart",
           not again and flash.claims == [CLAIM_AT] and not flash.erased and not flash.words and not flash.bad and flash.locked
           and claim_word()[:2] == (CLAIM, ~CLAIM & 0xFFFFFFFF) and bank2() == payload and state() & 3 == PAIRED,
           (flash.claims, flash.erased, flash.bad[:2]))

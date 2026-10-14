@@ -11,7 +11,7 @@
  *      after the watchdog reboot they are ALWAYS clear. The reading carried no information.
  *   3. "MODE said Munchi was the last type to complete a block", and the 3.2.p breadcrumb likewise - both are
  *      rewritten by the delay's every audio block, so within a millisecond of the reboot they describe the
- *      REBOOTED unit. Proved on his unit over USB: a sentinel poked into the crumb was gone before the read back.
+ *      REBOOTED unit. Proved on the test unit over USB: a sentinel poked into the crumb was gone before the read back.
  *
  * So: the trail is now LATCHED AT BOOT (instrument_boot, called once per boot from master_alloc) into a saved copy
  * that the running unit never touches, and the reset itself is caught in the act - the window watchdog's early
@@ -97,7 +97,7 @@ void bkp_enable(void);                         /* od.c: clock on, backup-domain 
  * the privileged default map: normal memory, write-back cached. A record written here and followed microseconds
  * later by SYSRESETREQ is still only in the cache when the core resets, and a reset does not write the cache out.
  * 3.2.o, 3.2.q and 3.2.r all "caught nothing" for this reason, and no suite could show it because the emulator has
- * no cache. Measured on his unit 2026-10-11: a KNOWN fault (the unaligned trap) left the software-reset signature
+ * no cache. Measured on the test unit 2026-10-11: a KNOWN fault (the unaligned trap) left the software-reset signature
  * in RCC_RSR and no record; with backup SRAM made non-cacheable over USB the same fault left the record.
  * So: clean every line of the 4 KB out to the SRAM, then DSB so the writes have actually completed, and only then
  * ask for the reset. The crumb rings get the same treatment for free, so the saved trail is exact, not stale.
@@ -234,7 +234,7 @@ void crumb_drop(uint32_t v, uint32_t which)
  * The stack watermark, from the audio task's own dispatch: the lowest SP the delay has ever been called at. If the
  * hang is a stacking fault this is where it shows up, without having to survive the fault to find out. Also
  * re-arms the watchdog's early wakeup, because stock's HAL_WWDG_Init runs AFTER master_alloc and clears the bit
- * (measured on his unit: instrument_boot's NVIC writes stuck, CFR came back 0x387f = HAL's own value).
+ * (measured on the test unit: instrument_boot's NVIC writes stuck, CFR came back 0x387f = HAL's own value).
  */
 void audio_watch(uint32_t sp)
 {

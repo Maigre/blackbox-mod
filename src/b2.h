@@ -1,7 +1,7 @@
 /*
  * Flash bank 2, the bank 1 side: what cpu.c (the pairing check) and b2load.c (the card loader) share.
  * NOT included by b2head.c on purpose - that file is hashed into the bank 2 id (build.sh), so touching it would
- * change the id and unpair the payload on his unit. Its B2_MAGIC and base address are repeated here.
+ * change the id and unpair the payload on the test unit. Its B2_MAGIC and base address are repeated here.
  */
 #ifndef B2_H
 #define B2_H

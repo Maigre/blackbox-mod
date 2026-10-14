@@ -93,7 +93,7 @@ static const struct { uint8_t word; uint16_t len; } bufs[12] = {
 /*
  * Room: early reflections, four input diffusers (the plate's own lengths), and an 8-line feedback delay network
  * (fast Hadamard 8x8) with a short allpass and a damping low-pass inside every line, so echoes thicken into a smooth
- * wash. (v1 in 3.1.i had 4 lines and 2 diffusers: he heard it as very metallic / resonant.)
+ * wash. (v1 in 3.1.i had 4 lines and 2 diffusers: it was heard as very metallic / resonant.)
  * Buffers: ER line = buffer 6; input diffusers = buffers 0-3; line allpasses = buffers 4-5 (8 x 128 floats);
  * lines = buffers 7-10, two per buffer (4096 floats each).
  */
@@ -254,7 +254,7 @@ static void room(float *state, const float *in, float *outl, float *outr, int n,
             sr += out_sign_r[k] * o[k];
         }
         float mid = 0.5f * (sl + sr), sd = 0.5f * (sl - sr) * side;
-        /* 1.78 = +5 dB: his 3.1.o report, Room sat about 5 dB under the Plate at the same send */
+        /* 1.78 = +5 dB: the 3.1.o report, Room sat about 5 dB under the Plate at the same send */
         outl[i] = 1.78f * (er_lvl * el + 0.3f * (mid + sd));
         outr[i] = 1.78f * (er_lvl * erv + 0.3f * (mid - sd));
     }

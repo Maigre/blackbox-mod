@@ -24,7 +24,7 @@
  * app+0x28, and the screen's 0x66 handler fills its slots from the page builder FUN_08098d40(app, cell, list, 0), which
  * already knows cell 0x40 = the global (Tools) settings. INFO on Tools only re-showed Tools, so:
  *   INFO on the Compressor or Master FX row of Tools -> that row's knob page; INFO or BACK there -> Tools.
- *   (3.1.q cycled Tools -> Compressor -> Master FX; he asked for the row he is on.)
+ *   (3.1.q cycled Tools -> Compressor -> Master FX; the request was for the row that is selected.)
  * master_list supplies the page for cell 0x40; values go through the stock global path.
  */
 #include <stdint.h>
@@ -274,7 +274,7 @@ static void open_page(uint8_t *app, int page)
 
 /*
  * Replaces the five set_screen calls of INFO on the Tools screens (0x25..0x29 -> next: all re-show the same view).
- * INFO opens the knob page of the row he is on: Compressor or Master FX; on any other row it does what stock did.
+ * INFO opens the knob page of the selected row: Compressor or Master FX; on any other row it does what stock did.
  * The Tools view (GUI +0x1fa58, FUN_080c5180) lists its settings in the row widget at +0x218; FUN_080b9d20 returns the
  * selected row's parameter id.
  */
