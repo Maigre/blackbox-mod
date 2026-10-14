@@ -7,6 +7,11 @@ An unofficial feature mod for the **original 1010music Blackbox** (not the Black
 > tested on one unit, it may misbehave on yours, and running modified firmware may affect your warranty. Don't ask
 > 1010music for support on a modded unit; flash stock first.
 
+**JOEBOX 1 is on hold (2026-10-14).** Some units get stuck restarting after installing it, so the patcher gives the
+previous release, 3.1.n, until that is fixed. If yours is stuck: put the stock 3.1.9 `BLACKBOX.bin` on the card and
+install it (hold BACK + INFO while powering on, let go when the install screen shows). The feature list below is
+JOEBOX 1's.
+
 **Get new builds by email:** sign up at <https://justinjoe.com/blackbox-mod> and I'll send a note when a new build is
 out (new FX, fixes). That's all the list is for.
 

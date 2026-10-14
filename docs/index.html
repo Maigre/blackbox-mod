@@ -20,6 +20,7 @@
 <main>
   <h1>blackbox-mod patcher</h1>
   <p>Unofficial mod for the original 1010music Blackbox. <a href="https://github.com/j3threejay/blackbox-mod">What it adds, source, known issues</a>.</p>
+  <p><b>JOEBOX 1 is on hold:</b> some units get stuck restarting after installing it, so this page gives the previous release, 3.1.n, until that is fixed. Stuck in the loop? Put the stock 3.1.9 <code>BLACKBOX.bin</code> on the card and install it (hold BACK + INFO while powering on, let go when the install screen shows).</p>
   <p>Want to hear when a new build is out? <a href="https://justinjoe.com/blackbox-mod">Get new builds by email</a>.</p>
   <ol>
     <li>Download <b>blackbox 3.1.9</b> from <a href="https://1010music.com/downloads">1010music.com/downloads</a> and unzip it.</li>
@@ -40,7 +41,7 @@
   (<a href="https://github.com/j3threejay/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
 </main>
 <script>
-const PATCH = "blackbox-mod-joebox-1.json";
+const PATCH = "blackbox-mod-3.1.n.json";
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 const unhex = s => Uint8Array.from(s.match(/../g) || [], h => parseInt(h, 16));
 const sha = async b => hex(await crypto.subtle.digest("SHA-256", b));
