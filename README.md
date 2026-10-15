@@ -46,6 +46,16 @@ New since 3.1.n:
   its three stereo outputs as six channels of 24-bit 48 kHz audio.
 - **Load readout on TOOLS**: average / peak, for example `62/75%`. Over about 100% peak the engine is out of time
   and you will hear it.
+- **Looper on the XY page**: FX A gains Looper and Loop In. Touch the pad and the bar (or beat) you are in comes
+  round again, in time with the pads; lift your finger and it is live again; the Hold button latches it. X is the
+  length, 4 bars at the left to 1/16 at the right; Y sweeps a high-pass over the loop (at the bottom it is off).
+  Looper loops Out 1 as you hear it; Loop In loops the audio input alone (as the recorder takes it: Rec Input, the
+  jacks set to AUDIO, Rec Gain) and plays it in place of the monitored input, or on top when the input is not
+  monitored on Out 1. Needs the second file.
+  How it works: FX A keeps the last 16 seconds whether you touch or not. A touch takes the grid line at or before
+  the playhead for the length on X as the loop's start; the music plays on to the end of that bar (or beat), then
+  that stretch repeats. Moving X keeps the start and jumps, crossfaded, to where the new length is on the grid, so
+  1 bar, down to 1/16 and back lands on the bar again. While the transport runs the loop stays locked to the grid.
 - **Fixed**: the naming keyboard's 9 key (3.1.n typed "n").
 
 From 3.1.n and earlier:
@@ -76,6 +86,15 @@ From 3.1.n and earlier:
 - Chords need the pad out of Mono Poly Mode.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
+- The Looper remembers 16 seconds: 4 bars needs a tempo faster than 60 BPM (at 60 or slower, it gives 2 bars). Held
+  for longer than that, it stops recording until you let go, and a touch right after catches a loop later than you
+  asked. A touch at 4 bars can take up to 4 bars before you hear the loop, since it waits for the bar to come round.
+- After a tempo change the Looper stays on the grid but does not stretch: each pass is cut short (faster) or runs on
+  into what followed (slower) to fit the new bar. Touch again to catch at the new tempo. Like every DJ FX type it is
+  back to Repeater after a power cycle.
+- Loop In replaces the monitored input exactly only with the master EQ flat: with EQ, the part the EQ added stays
+  under the loop. An Input: pad playing the same input is not replaced either.
+- The loop is kept at 16 bits with 12 dB of headroom, so very quiet tails can sound grainier than the live signal.
 
 ## Install
 

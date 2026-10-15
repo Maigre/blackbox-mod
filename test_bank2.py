@@ -62,10 +62,24 @@ else:
 # install. A branch from one into the other is the crash that hit every build from 3.2.m to 3.2.r. The reverb that
 # Confetti and Prism share used to be the one such call (through a jump pinned at 0x080f8b40); it is in bank 2 now.
 md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
-leaving, outside, off = {}, {}, 16
+# The halfword scan below cannot see where instructions start: the second half of one 32-bit instruction and the first
+# half of the next can read as a BL (looper_dsp.c's `udiv` + `mls` did, 2026-10-15). When the payload is the one this
+# build linked, the link's own disassembly (which knows code from literal pools) says where every instruction starts,
+# and a "branch" anywhere else is not one. A payload that is not this link's is scanned at every halfword, as before.
+starts = None
+if linked == deployed:
+    starts = set()
+    for line in subprocess.run(["arm-none-eabi-objdump", "-d", "out/cave.elf", f"--start-address={B2:#x}",
+                                f"--stop-address={B2 + len(deployed):#x}"], capture_output=True, text=True, check=True).stdout.splitlines():
+        p = line.split("\t")
+        if len(p) >= 3 and p[0].strip().endswith(":") and not p[2].startswith("."):
+            starts.add(int(p[0].strip()[:-1], 16))
+    check("the link's disassembly of bank 2 gives the instruction starts (lp_block's first among them)",
+          len(starts) > 1000 and funcs_all.get("lp_block", 0) in starts)
+leaving, outside, inside, off = {}, {}, 0, 16
 while off < len(deployed) - 4:
     h1, h2 = struct.unpack_from("<HH", deployed, off)
-    if (h1 & 0xF800) == 0xF000 and (h2 & 0xD000) in (0xD000, 0x9000, 0xC000):
+    if (h1 & 0xF800) == 0xF000 and (h2 & 0xD000) in (0xD000, 0x9000, 0xC000) and (starts is None or B2 + off in starts):
         ins = list(md.disasm(deployed[off:off + 4], B2 + off, 1))
         if ins and ins[0].mnemonic in ("bl", "blx", "b"):
             tgt = int(ins[0].op_str.lstrip("#"), 16)
@@ -74,9 +88,12 @@ while off < len(deployed) - 4:
             elif 0x08000000 <= tgt < 0x08200000 and not B2 <= tgt < B2 + len(deployed):
                 outside.setdefault(tgt, []).append(B2 + off)     # anywhere else in the flash (a constant that happens
                                                                  # to decode as a branch points nowhere near it)
+            else:
+                inside += ins[0].mnemonic == "bl"
             off += 4
             continue
     off += 2
+check(f"the scan still sees bank 2's own calls ({inside} BLs within bank 2)", inside > 50, inside)
 check("no branch in bank 2 lands in the cave", not leaving, {hex(t): [hex(x) for x in sites] for t, sites in leaving.items()})
 check("...and none leaves bank 2 at all: it is leaf DSP, calling only itself", not outside,
       {hex(t): [hex(x) for x in sites] for t, sites in outside.items()})

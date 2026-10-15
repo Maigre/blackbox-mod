@@ -13,7 +13,7 @@ mkdir -p out out/obj
 
 # The files that live in bank 2. Leaf DSP only: nothing the engine reaches before bank 2 has been checked, and
 # nothing holding state that bank 1 needs at boot.
-BANK2_SRCS="prism confetti insert_dsp rev4"
+BANK2_SRCS="prism confetti insert_dsp rev4 looper_dsp"
 # BANK 2 IS FOR LEAF DSP ONLY. A function the firmware reaches through a patched call site must stay in bank 1,
 # or a bad bank 2 faults before anything can check it - which is how 3.2.m's first cut would have boot-looped.
 # munchi.o holds munchi_process, munchi_register, munchi_list and fx_screen_msg, all hooks, so it stays in bank 1.

@@ -51,3 +51,9 @@ PATCHES = [
     # ... and sits ABOVE Compressor, the order the audio runs in: Master FX, Compressor (its page has the clipper)
     (0x080EED1A, struct.pack("<2H", 0xB4, 0x1D0), struct.pack("<2H", 0x1DB, 0xB4)),
 ]
+
+# Looper FX (src/looper.c): its hooks ride with this set, which already owns the boot block its state lives in, so the
+# image keeps the name every suite opens. patches/looper.py holds them.
+from looper import PATCHES as LOOPER  # noqa: E402
+
+PATCHES += LOOPER

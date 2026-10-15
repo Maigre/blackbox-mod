@@ -29,6 +29,8 @@
  */
 #include <stdint.h>
 
+#include "looper.h"
+
 #pragma GCC optimize("Os", "no-tree-loop-distribute-patterns")
 
 #define FN(addr) ((addr) | 1u)
@@ -117,7 +119,8 @@ int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, t
 #define PRISM_MEM   (*(volatile uint32_t *)0x38800f70u)
 #define PRISM_CHECK (*(volatile uint32_t *)0x38800f74u)
 #define PRISM_KEY   0x5052534du
-#define EXTRA_BYTES 0x2d100u      /* behind Prism's: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.c's S950 bank (0x4000), insert.c's bank (0x22000), comp.c's clipper (0x100) */
+#define EXTRA_BYTES 0x2db00u      /* behind Prism's: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.c's S950 bank (0x4000), insert.c's bank (0x22000), comp.c's clipper (0x100), 0x800 kept for the Clip Window's bank (feat/slip), looper.c's bank (0x200) */
+_Static_assert(LP_OFFSET == PRISM_BYTES + 0x2d900u && 0x2d900u + LP_BYTES <= EXTRA_BYTES, "looper.c's bank (0x200 at PRISM_BYTES + 0x2d900) fits the block");
 
 /* which master page the knob screen shows, and whether it is showing one (backup SRAM, next to munchi's words) */
 struct master_ui {
@@ -516,6 +519,7 @@ void master_alloc(int *line, int floats)
         *(volatile uint32_t *)(mem + PRISM_BYTES + 0x7000u) = 0;
         *(volatile uint32_t *)(mem + PRISM_BYTES + 0xb000u) = 0;    /* insert.c's bank */
         *(volatile uint32_t *)(mem + PRISM_BYTES + 0x2d000u) = 0;   /* comp.c's clipper */
+        *(volatile uint32_t *)(mem + PRISM_BYTES + 0x2d900u) = 0;   /* looper.c's bank */
     }
 }
 
