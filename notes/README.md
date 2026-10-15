@@ -1,6 +1,6 @@
 # notes/ — the working docs of Thomas's fork
 
-This folder lives on the `thomas` branch only. It is the project workspace: the plan, the
+This folder lives on the `maigre` branch only. It is the project workspace: the plan, the
 reverse-engineering findings, the workflows, the decisions. It is **never** part of a `feat/*`
 branch or a pull request to upstream (j3threejay/blackbox-mod).
 
@@ -15,5 +15,6 @@ projects or exports, 1010music's manuals or artwork. Those stay on dev37 under `
 - `re/` — one file per RE step (A0 … A7), written as the findings come.
 - `workflows.md` — the workflows as performed on the unit; becomes `LOOPER.md` at P5.
 - `decisions.md` — dated decisions with their reasons.
+- `upstream-first-contact.md` — the outline of Thomas's message to the JOEBOX maintainer (he writes and sends it).
 
 The hub side (tasks, bench cards, log) is `37Projects/projects/blackbox/`.
