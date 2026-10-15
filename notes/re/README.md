@@ -59,9 +59,9 @@ All stock sites are 4-byte `bl`, re-read with `disasm.py` for this file; none is
 | # | site | stock there | live at the site | ours |
 |---|---|---|---|---|
 | H1 | **`0x0806578C`** in `FUN_08065550` (segment start) | `bl 0x0806375C` (source prefetch hint, args `r0` src, `r1` pos) | r0 = src (pad `+0x24`), r1 = max(0, start − 8), **r4 = pad**, r5 = step j, fp = stock start frame, sl = end, sb = layer, r8 = first (launch), **`[sp+0x20]` = slot k**. Final here: seg `+0x08` start, `+0x10` end, `+0x34` step. Not final: `+0x24`/`+0x28`; `+0x3C` still 0 even for the launch. The caller reloads r2 (`ldr r2,[sp,#0x20]` at `0x08065790`) and r3 before use (✓ A2 `h1regs.py`; re-read here) | thunk `ldr r2,[sp,#0x20]; mov r3,r4; b.w clipwin_seg_start` → `void clipwin_seg_start(void *src, int32_t pos, unsigned k, uint8_t *pad)`. Read start/step from the segment (final). Latch or invalidate slot k, then call the prefetch itself with the mapped pos (§2.4). Every non-slice segment passes here: launch (`0x08065A9A`), every step and both wraps (`0x08066CF2`) ✓ |
-| H1′ | **`0x0806541A`** in `FUN_08065290` (slice segment start; only caller is `FUN_08065550`) | `bl 0x0806375C` | r4 = pad, **`[sp+4]` = slot k** (stored at `0x0806540C`); after the call r3 is reloaded from `[sp+4]`, r0–r2 rewritten before use (static, two reads: A2 + this file) | thunk `ldr r2,[sp,#4]; mov r3,r4; b.w clipwin_slice_start` → invalidate latch [q][k], then tail-call the prefetch with (src, pos) unchanged. Needed in v1 so a slot reused by a slice segment cannot keep a stale latch |
+| H1′ | **`0x0806541A`** in `FUN_08065290` (slice segment start; only caller is `FUN_08065550`) | `bl 0x0806375C` | r4 = pad, **`[sp+4]` = slot k** (stored at `0x0806540C`); after the call r3 is reloaded from `[sp+4]`, r0–r2 rewritten before use (static, two reads: A2 + this file) | thunk `ldr r2,[sp,#4]; mov r3,r4; b.w clipwin_slice_start` → invalidate latch [q][k] and clear its `h1` bit (§2.5), then tail-call the prefetch with (src, pos) unchanged. Needed in v1 so a slot reused by a slice segment cannot keep a stale latch |
 | H2 | **`0x08066622`** in `FUN_08066454` (segment reader) | already JOEBOX: `bl clip_read_b` (stock `bl 0x080662E4`) | s0 rate (≤ 8.0), r0 pad, r1 filter (`fp + 0x14C`, set by `clip_read_b`), r2:r3 position (int64; stock uses the low word only), `[sp]` n, `[sp+4]` &used, **`[sp+8]` &frac = seg + 0x1C**, `[sp+0xC]` scratch, `[sp+0x10]` out, `[sp+0x14]` &result | change the one line in `src/filter_thunk.S` `clip_read_b`: `b.w clip_read` → `b.w clipwin_read` (same 11-arg C signature as `clip_read`). `k = (frac − pad − 0x30 − 0x1C) / 0x70`; require remainder 0 and k < 4, else pass through (§2.6). Alternative: re-hook `0x08066622` in `patches/clipwin.py` with old bytes = `bl clip_read_b` (then `filter` must precede `clipwin` in the set list) |
-| tick | `duck_block` (`src/duck.c`, the JOEBOX hook of `bl 0x08053164` at `0x0804CE74`) | — | `engine` | add `clipwin_tick(engine);` after `insert_tick();` (one line). Runs before the pads in the same block, same audio task |
+| tick | `duck_block` (`src/duck.c`, the JOEBOX hook of `bl 0x08053164` at `0x0804CE74`) | — | — (v1 reads no clock) | `void clipwin_tick(void)`: `clipwin_tick();` after `insert_tick();` (one line). Runs before the pads in the same block, same audio task |
 | F | **`0x080B0746`** (in `FUN_080B0728`, set-value, every type) and **`0x080B0E18`** (type-1/0x10 turn) | `bl 0x080B0528` (formatter, r0 = knob) | r0 = knob | `clipwin_format(knob)`: act only if `*(int*)(knob+0x14) == 0x1C9` **and** type `knob[0x31]` ∈ {1, 9} **and** `knob[0x2D8] == 0`; else tail-call `0x080B0528`. The type check matters: a reset knob keeps a stale id with type 0 (A3 ✓ E5) |
 | K | **`0x080B0DDE`** (type-1/0x10 turn path of `FUN_080B0D54`) | `bl 0x080B0B74` (stepper add) | r0 = knob + `0x270` (stepper), r1 = counts (signed; the stepper sign-extends into an i64, so > 16 bits is fine) | `clipwin_turn(stepper, counts)`: knob = r0 − 0x270; for id `0x1C9` and type 1 scale counts (§2.7), then tail-call `0x080B0B74`. One site covers all 12 turn call sites, Pos-page list rows included (A3 ✓ E9). JOEBOX's `chord_knob` hooks a different stepper call (`0x080AE178`) |
 | P | Pos page data, both copies | u16 `0x0000` at **`0x080EF998`** and **`0x080EF290`** (slot 5, right after Sync `0x94`) | — | `0x01C9`. P3 rewrites slots 5–7 to `0x1C8, 0x1C9, 0x1CA` |
@@ -136,8 +136,10 @@ SDRAM, behind JOEBOX's blocks: `master_block() + 0x56800 + 0x2D100` (= `+0x83900
 beside the four existing clears); `master_block() == 0` → feature off, every hook passes through. Magic word bumped
 with the layout, as `INS_MAGIC` (SDRAM keeps contents across a reset and a reflash). No `.data`/`.bss` in the cave.
 
-Suggested layout: `u32 magic, scan; i32 slip[16]; uint8_t *pad[16]; u8 valid[16]` (bit k per slot) and
-`struct { i32 rs, vlen, delta; } latch[16][4]` (768 B) ≈ 920 B for v1. **Reserve `0x800`, not the planned `0x400`**:
+Layout (v1, magic `CWN1`): `u32 magic, scan; i32 slip[16]; uint8_t *pad[16]; u8 valid[16]` (bit k per slot),
+`struct { i32 rs, vlen, delta; } latch[16][4]` (768 B), `u8 h1[16]` (bit k: slot k's segment was made through H1, not
+H1′; set by H1, cleared by H1′) and `u8 hinted[16]` (bit k: H2 has hinted `rs` for slot k's crossing; cleared at each
+latch) = **`0x3B8` B** (952). **Reserve `0x800`, not the planned `0x400`**:
 P3 adds an active and a pending region per pad (+256 B) and Loop Len origin/forced-Sync state, which no longer fits
 in 1 KB. Add `_Static_assert(sizeof(struct cw_bank) <= …)` and a build-time assert on `PRISM_BYTES + EXTRA_BYTES`
 (X2's ≤ ~0.4 MB budget; 2 KB is negligible). An oversized `master_alloc` hangs every boot (X2).
@@ -149,7 +151,7 @@ two reads*.
 
 ### 2.6 The per-block poll and the reader
 
-**`clipwin_tick(engine)`**, once per block from `duck_block`, one pad per call like `insert_tick` (`q = scan++ & 15`,
+**`clipwin_tick(void)`**, once per block from `duck_block`, one pad per call like `insert_tick` (`q = scan++ & 15`,
 row = q >> 2, col = q & 3; all 16 within 16 blocks ≈ 43 ms):
 
 1. `slip = fw_setting(store(q), 0x1C9)`, clamp ±3840.
@@ -157,7 +159,9 @@ row = q >> 2, col = q & 3; all 16 within 16 blocks ≈ 43 ms):
    seg = pad + 0x30 + k·0x70: if `seg[0] && !seg[1] && *(i32*)(seg+0x20) > 0 && seg[0x3C] == 0` → `seg[1] = 1`.
    **Never** drop a segment with `+0x3C` set: that is a pending quantized launch, and dropping it makes it sound at
    once off its Quant bar with no `+0x140` and no msg `0x1D` (A2 ✓ `droplaunch.py`, also when armed while stopped,
-   `armed.py`).
+   `armed.py`). It has read nothing yet, so **latch it again in place** instead (H1's latch and prefetch, from its
+   `+0x08` start), when slot k's `h1` bit says H1 made it: the launch keeps its bar and plays the new Slip from its
+   first read (also armed while stopped, then PLAY). A slice segment (H1′, `h1` clear) is never latched.
 
 Notes: the app writes its store before it posts, so this poll leads the engine. During a preset load the store is
 cleared and rebuilt (`FUN_08093F20`) and a read can see 0 for a moment (X3 ✓ t11): harmless for Slip (a spurious 0 and
@@ -169,28 +173,38 @@ nobody ran a `0x1C9` post through it.
 **`clipwin_read(...)`** (H2), same arguments as `clip_read`:
 
 - Latch invalid (or k bad, or no `cw_bank`) → `return clip_read(...)` unchanged: bit-identical to today.
-- Latch valid: `v = pos mod vlen` (fold; floor), `real = rs + ((v + delta) mod vlen)`. The read needs frames
-  `[real − 3, real + count)` (`count` = n when rate == 1.0 and `*frac` == 0, else `min((int)((float)n × rate) + 8,
-  cap)`; the `− 3` is JOEBOX's machine-mode back-step `CLIP_BACK`).
-  - **No seam inside that window** → `return clip_read(rate, pad, filter, real, 0, n, used, frac, scratch, out,
-    result)`. Stock and the machine modes then read real, contiguous frames; `used`/`frac` do not depend on the
-    position, and stock adds `used` to its own (virtual) seg `+0x08`. The stock bound `len + 0xFF < pos` sees `real <
-    len` and never fires.
-  - **Seam inside the window** (once per pass, in the segment whose content spans the file end) → do the stock
-    reader's work with a mapped fetch: fetch `count` frames into the scratch buffer as two contiguous fetches (up to
-    the region end, then from `rs`), mono through `0x0804D934` + `0x08063634`, stereo through `0x0804DA0C` +
-    `0x08063608`; then, exactly as stock: rate 1 and frac 0 → `*used = n`, `*result = scratch`; otherwise run the
-    kernel `0x080603EC` once (mono) or twice (stereo: left with *copies* of `*used`/`*frac`, then right with the real
-    pointers), `*result = out`; return 1. This is the stock reader `0x080662E4` minus its bound check (A1/A2 + the
-    capstone read here). A machine-mode pad gets stock interpolation for that one block (*design*; alternative: give
-    `filter.c`'s machine path the same two-part fetch).
-- The kernel interpolates across the seam as if the file were circular, which is the point (A2).
+- Latch valid: `v = pos mod vlen` (fold; floor), `real = rs + ((v + delta) mod vlen)`.
+- **Seam hint**: if `rs + vlen − real ≤ 16384` and slot k's `hinted` bit is clear → set it, `fw_prefetch(src, rs)`.
+  Once per slot per crossing, as soon as the region end is inside the hint's sure reach (A2: the hinted block and the
+  next two); stock never hints a seam inside a segment. Measured (`test_clipwin.py`): ~128 blocks ahead at rate 1.
+- **Machine mode** (Fidelity SP1200 … SP 45) → `filter.c`'s `clip_read_ring(rate, pad, filter, real, rs, vlen, n,
+  used, frac, scratch, out, result)`: the machine reader over the circular region, seam or not. It fetches
+  `(int)(n × rate) + 8` frames from `real − 3` (even at rate 1, where stock needs only n), so `clip_fetch` takes them
+  round the region end, and the back-step round its start; it writes the filter object's rate (`+0x60`) like
+  `clip_read`, which the clocked S950 / S950 Lo read. Bit for bit `clip_read` on the file turned circular. It returns
+  −1 for a stock pad, which goes on:
+- `count` = n when rate == 1.0 and `*frac` == 0, else `min((int)((float)n × rate) + 8, cap)`.
+  - **No seam in `[real, real + count)`** (`real + count ≤ rs + vlen`) → `return clip_read(rate, pad, filter, real,
+    0, n, used, frac, scratch, out, result)`: stock's reader at the real position, on real, contiguous frames;
+    `used`/`frac` do not depend on the position, and stock adds `used` to its own (virtual) seg `+0x08`. The stock
+    bound `len + 0xFF < pos` sees `real < len` and never fires.
+  - **Seam inside** (once per pass, in the segment whose content spans the file end) → do the stock reader's work
+    with a mapped fetch: `clip_fetch` (`filter.c`) fetches `count` frames into the scratch buffer as two contiguous
+    fetches (up to the region end, then from `rs`), mono through `0x0804D934` + `0x08063634`, stereo through
+    `0x0804DA0C` + `0x08063608`; then, exactly as stock: rate 1 and frac 0 → `*used = n`, `*result = scratch`;
+    otherwise run the kernel `0x080603EC` once (mono) or twice (stereo: left with *copies* of `*used`/`*frac`, then
+    right with the real pointers), `*result = out`; return 1. This is the stock reader `0x080662E4` minus its bound
+    check (A1/A2 + the capstone read here).
+- The kernel (and a machine's reader) interpolates across the seam as if the file were circular, which is the point (A2).
 
 ### 2.7 UI: the Slip row
 
 | id | label | type | range | xml | default | page |
 |---|---|---|---|---|---|---|
 | `0x1C9` | `Slip:` | 1 (int) | −3840 … +3840 ticks | `clipslip` | 0 | Clip Pos slot 5, both copies |
+
+**Sign (D-014, Thomas 2026-10-15): the row reads + = later** (the hits land behind the beat). `clipwin_tick` stores the
+row *negated* in `slip[]`, which (like the latches and every formula in this README) is the content's shift, + = earlier.
 
 - The engine ignores it: the class-B param-set drops ids > `0xF4` except `0x15F`/`0x1DD`, and neither class-B nor
   class-H stores `0x1C8..0x1CA` (X3 ✓ t1, t12). The row is stored and saved by stock (`SetCellParam` →
@@ -245,11 +259,18 @@ Assertions:
    summed gain equals stock's.
 5. **Live** (`k_live.py`): 0 → 480 and 0 → −7 inside step 1: stock-identical up to the next step boundary, slipped
    after it, no extra zero-gain samples. **Pending launch**: a Slip change between the note and its Quant bar leaves
-   the launch at its bar (288 000) with `+0x140` = 11 520 and msg `0x1D`.
+   the launch at its bar (288 000) with `+0x140` = 11 520 and msg `0x1D`, and the launch plays the new Slip from its
+   first step (first fetch = `slip_f`; the poll latches it again in place): every sample from the launch on is stock +
+   `slip_f`. The same armed while stopped, then PLAY (msg `0x57`): stock's onset, slipped from the first read. A
+   Sync = Slice launch (H1′) is never latched again, even in a slot H1 used before.
 6. **Gating**: a Slicer pad and a Clip pad with Sync = Slice + markers holding Slip ≠ 0 play stock; cell `0x401` and a
    `fw_src_len` of 0 or `0x10000000` → inactive; no SDRAM block → no writes, pass-through.
 7. **Reader unit**: a block whose window crosses the file end, mono and stereo, rate 1 / frac 0 (straight copy) and
-   rate ≠ 1 (kernel); a machine-mode pad off the seam still matches `test_clip.py`'s model at the mapped position.
+   rate ≠ 1 (kernel); a machine-mode pad off the seam still matches `test_clip.py`'s model at the mapped position; at
+   the seam, on the last blocks before it (rate 1: the machine's window is wider than stock's) and near the start,
+   every machine mode reads only inside the file and matches `filter.c`'s `clip_read` on the file turned circular, bit
+   for bit, and rewrites the filter object's rate. The seam hint: one at `rs` per segment that reads within 16 384
+   frames of the end (at Sync 1/4, exactly the crossing ones), every seam read hinted ≥ 100 blocks ahead.
 8. **Not yet run anywhere — add**: a 44.1 kHz file, Pitch ≠ 0, stereo (all need `Rig2`).
 9. **UI**: `+1.280`, `-0.030`, `+0.000`; a reset knob with stale id `0x1C9` prints `''`; slow turn 1 tick / 40 counts,
    fast capped by the range.
@@ -280,7 +301,12 @@ corrected accordingly.
   (unsynced), r0 = pad, r1 = clock; at once when no layer is active. Immediate application gives 11 418 or 23 490
   zero-gain samples (A2 ✓). Relaunch sites (`0x08068312`/`0x0806838A`/`0x0806840C`/`0x08068632`/`0x080686A8`) not modelled.
 - **Seam streaming**: the provider caches 8192-frame blocks and the hint reaches 3 blocks; a seam inside a segment
-  jumps to `rs` unhinted. H2 should hint `rs` once per segment when the seam falls within 16 384 frames.
+  jumps to `rs`, which stock never hints. **Done in v1** (§2.6): H2 hints `rs` once per slot per crossing, as soon as
+  the region end is within 16 384 frames (~128 blocks ahead at rate 1, `test_clipwin.py`); a Region seam gets the same.
+  Still unverified: the unit's cache behaviour — peek the miss counter `0x24013930` (§4 #9). Measured gap: a launch
+  whose mapped start is already inside those 16 384 frames is hinted only at its first read (Slip −30 on a 1-bar file:
+  6 blocks before its seam read); hinting `rs` at H1 as well for such a segment would give the seam the lead stock's
+  own launch hint gets (from the note).
 - **Loop Len** (KP3 anchor): origin from the newest sounding segment, `phase = j·tps + (p − (int)((float)j × fps)) ×
   tps / fps`, `origin = floor(phase / W) × W` (not `+0x140`, not `ticks − launch`; A2 ✓ off-grid). W < tps → force
   Sync with `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx}, engine + 0x128E0)`, idx 0..6 only (table
@@ -340,7 +366,7 @@ corrected accordingly.
 | 2 | Slip on a machine-mode (Fidelity) pad, and the seam block | P2 | Unicorn: `test_clip.py` harness with a latch set |
 | 3 | A negative type-1 value of a new id through preset save → load | P2 | Gate 2 step 6 on hardware; or Unicorn of the writer `0x08095328` + loader `0x08096AD8` on one pad store |
 | 4 | Counts per knob revolution, GUI pass period (K tuning) | P2 | USB peek: `0x24001A30 + 4k` before/after one turn; `0x2402EEE0` in a loop |
-| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | the link map of the P2 build |
+| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes (`arm-none-eabi-size -A out/cave.elf`) |
 | 6 | Does the app send a slice table to a Clip pad (Slip silently off there) | P2 doc | USB peek of pad `+0x250` on a Clip pad whose cell has markers |
 | 7 | Attack 0 (`pad+0xBA1` = 1) on real presets (hard wrap start) | P2/P3 | USB peek on a few loaded pads |
 | 8 | Live Slip under Sync None takes effect at the next restart | P2 doc | Unicorn: one `Rig` run |

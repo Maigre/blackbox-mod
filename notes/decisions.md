@@ -30,6 +30,16 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-015 (2026-10-15) — Ideas parked (Thomas: "later").** (a) A colour theme + splash branding, data-only (no cave
+  bytes): the UI palette is 33 ARGB32 at `0x080F1D84` in 3.1.9, cyan accent `#09D7F5` at slots 4 6 9 26 28 30 (checked on
+  our image; found by unremarkablegarden/blackbox-firmware-hacking, no license there: facts only, credit them). It would
+  close JOEBOX issue #1, which is that author's offer. (b) For P4's Looper engine: DaisySP's `Looper` (MIT; JOEBOX already
+  vendors DaisySP for Munchi) has record / overdub / replace modes over a buffer. That repo is not a base: data patches
+  only, a bare-metal skeleton that boots nothing, and docs wrong for this unit (H750, "the encoder", stock USB-MIDI).
+- **D-014 (2026-10-15) — Slip: + = later** (Thomas). The row's value pushes the hits behind the beat (`+0.480` = half a
+  beat late). Inside clipwin.c, slip[] and the latches hold the content's shift, which goes the other way: the tick reads
+  the row negated. test_clipwin.py's `store()` speaks the engine's shift (so its numbers stay), `store_raw()` the row's;
+  a direction check proves +480 plays every sample 12 000 samples after stock at 120 BPM.
 - **D-013 (2026-10-15) — The restart loop is an exclusive load in Device memory; fixed in 37.0.2.** Gate 0 step 2 (the
   full JOEBOX-1 set, dev build, NO `BBEXTRA.BIN`) looped on Thomas's unit: splash, Pads, reset every 4.1 s. Read over
   USB from the looping unit (`bench/bbusb.py catch`): src/fault.c's record, the same every boot — precise bus fault
