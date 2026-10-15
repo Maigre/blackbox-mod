@@ -5,6 +5,9 @@ Stock 3.1.9 (`BLACKBOX-3.1.9.bin`, sha256 `281ae303…1341d`), JOEBOX 1 full set
 checked by running stock code under Unicorn, *inferred* = one static read, *design* = a choice, not a fact. Every
 hook site named in §2 was re-read for this file (see "How this was checked").
 
+**Status: P1 complete (2026-10-15).** Every step the task names has its note (A0–A7, X1–X3). What P2 still relies
+on without a run is listed in the open questions below; P2's own `test_clipwin.py` and Gate 2 settle it, not more RE.
+
 ## 1. Index
 
 | note | one line |
