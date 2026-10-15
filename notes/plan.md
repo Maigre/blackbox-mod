@@ -52,8 +52,9 @@ feature and avoids that path.
   `fw_setting 0x08093E9C`, `SetCellParam 0x0809FA50` (stores + saves + posts to engine). Pad stores
   `APP(0x24020088)+0x1840+row*0xf0+col*0x30` (`{u16 id; u16; i32 value}` array at +4, count at +10), 96 slots,
   82 used → **14 free**. **Free ids 0x1c8–0x1cf** (0x1b5, 0x1e5 not free). Page tables 5×36 u16 per mode:
-  Clip Main `0x080EF948`, **Pos `0x080EF990`** (list page: Loop Mode, Beat Count, Quant Size, Sync — ids not yet
-  identified), class-0x4C copy Pos `0x080EF288`. Quant float/label tables `0x080ECC70/0x080ECCA4` (13 entries).
+  Clip Main `0x080EF948`, **Pos `0x080EF990`** (Loop Mode `0x8d`, Beat Count `0xd2`, Quant Size `0x47`, Sync `0x94`,
+  then 32 free slots — `re/a0-clip-pos-page.md`), class-0x4C copy Pos `0x080EF288`. The 13-entry quant tables
+  `0x080ECC70/0x080ECCA4` are `0x45/0x46/0x48`'s; the Clip's Quant Size is 9 entries (`0x080ECAE4/0x080ECB08`).
 - Memory: cave (bank 1) **~4.5 KB free** beside JOEBOX 1 (53,144 / 57,736); bank 2 = leaf DSP only; patch RAM full;
   new state → the SDRAM block from `master_alloc` (`src/master.c:498-531`, grow `EXTRA_BYTES`, magic cleared there).
   No `.data/.bss` (freestanding, `-Werror`, state behind magic words).
