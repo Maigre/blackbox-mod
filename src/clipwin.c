@@ -1,5 +1,5 @@
 /*
- * Clip Window v1: Slip. Original 1010music Blackbox, firmware 3.1.9.
+ * Clip Window: Slip and Region. Original 1010music Blackbox, firmware 3.1.9.
  *
  * Why: a clip that plays in sync can only start on the grid. A loop cut by ear from an unsynced recording (a song off a
  * phone, a take from other hardware) then sits a little ahead of or behind the groove of everything else, and nothing
@@ -16,22 +16,42 @@
  * This: Slip is a constant circular shift of what every segment plays (stock frame + slip_f, folded into the file),
  * decided once per segment when stock creates it and applied where the segment reads:
  *   H1  clipwin_seg_start    the source prefetch in FUN_08065550, the segment start (bl FUN_0806375c @0x0806578c):
- *                            latch slot k's shift, prefetch where it will really read
+ *                            latch slot k's shift (and region), prefetch where it will really read
  *   H1' clipwin_slice_start  the same in FUN_08065290, slice-marker segments (bl FUN_0806375c @0x0806541a): no shift
  *   H2  clipwin_read         the segment read (filter_thunk.S clip_read_b ends here; filter.c's clip_read next)
+ *   H3  clipwin_len          Region: the clip's length where it shapes the clip (four bl FUN_080636f0, below)
+ *   H3' clipwin_wrap         Region: the recompute at the two wraps (bl FUN_08064a94), where a new region starts
  *   clipwin_tick             duck_block, once per block: one pad's Slip from the app's store; on a change, mark the
  *                            pad's pending segments done so stock re-makes them, and H1 re-latches, in the same render
- * Stock's timing, crossfades, Sync re-grid, wrap, one-shot and launch logic are untouched, and with Slip 0 every hook
- * passes through: bit-identical to stock. A Slip change is heard at the next Sync step, through stock's crossfade.
+ * Stock's timing, crossfades, Sync re-grid, wrap, one-shot and launch logic are untouched, and with Slip 0 (and no
+ * region) every hook passes through: bit-identical to stock. A Slip change is heard at the next Sync step, through
+ * stock's crossfade.
  * A new file under a playing pad (a load, the browser's pre-listen into the pad, a take landing in it): stock does not
- * restart the voice; its segments read on at their positions in the new file. A segment latched for another length
- * reads as stock does (H2), and the next one made latches the new file.
+ * restart the voice; its segments read on at their positions in the new file. A segment latched for another file
+ * length reads as stock does (H2), and the next one made latches the new file.
  * Not covered: Slicer pads and Clip pads on Sync = Slice with markers (their segments start in H1': no shift); the
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
  * 480 ticks), + = ahead of the beat, - = behind (a CDJ jog: clockwise speeds up, counter-clockwise slows down), per
  * pad, saved with the preset as "clipslip". The knob: single ticks slow, 1/64 steps fast, and a turn stops on 0
  * (clipwin_turn).
+ *
+ * Region (notes/re/README.md section 3, a2, x3): a Clip pad plays its Sample-mode loop [Loop Start, Loop End) instead
+ * of the whole file - no Trim. Stock keeps those points in Clip mode, in the cell's class-H object (pad + 8), so they
+ * are read there. Stock is made to believe the file IS the region: the four fw_src_len calls that shape a clip (H3,
+ * clipwin_len) answer the region's length, so Beat Count Auto, the frames per step and the last step's end follow it,
+ * and every segment latches [rs, rs + vlen) in H1, which H2 reads circularly (the same latch Slip uses). A region
+ * changed while the pad plays waits for its next wrap (clipwin_wrap, the recompute there, which runs when the next
+ * pass's step 0 is made, about one Sync step before it sounds; a stopped pad takes it at its next recompute, the
+ * launch's at the latest): changed mid-pass, the steps already made would point past the new end (notes/re/a2: 11 418
+ * or 23 490 silent samples). One that moves the wrap grid (a longer clip) waits for a wrap on its own grid, where a
+ * launch would start it: elsewhere stock snaps that pass's end into the past and doubles. Seamless wrap: with a region, Loop On and Launch not Trigger the last step has no end, so
+ * it crossfades into the next pass like any step: no notch, no gap when the region is shorter than its beats, no
+ * doubling when longer; a clip of one Sync step has that step timed by the clip (H3 site 3), as stock times steps when
+ * there are more. A region under half a beat on Beat Count Auto is a clip of 0 ticks: no grid, it loops on its length.
+ * Setting: "Region:" Auto | File | Loop before Slip, saved as "clipregion". Auto = Loop when the pad has a loop: Loop
+ * Mode on and 0 <= start < end <= length, not the whole file ([0, length - 1] or more: what a load leaves, x3 t13);
+ * File = stock; Loop = the loop points whatever Loop Mode says, the whole file still File.
  */
 #include <stdint.h>
 
@@ -56,7 +76,12 @@ typedef int (*snprintf_fn)(char *buf, unsigned size, const char *fmt, ...);
 typedef void (*ring_push_fn)(void *ring, int counts, uint32_t ms);
 typedef unsigned (*ring_speed_fn)(void *ring);
 typedef void (*stepper_fn)(void *stepper, int counts);
+typedef void (*register_list_fn)(void *table, int param, const char *label, const char *const *names, int count,
+                                 const char *xml);
+typedef void (*recompute_fn)(uint8_t *pad, void *clock);
 #define fw_register_num ((register_num_fn)FN(0x0808c12c))
+#define fw_register_list ((register_list_fn)FN(0x0808c0d8))
+#define fw_recompute    ((recompute_fn)FN(0x08064a94))   /* the class-B pad's recompute: lengths, steps, Beat Count Auto */
 #define fw_store_add    ((store_add_fn)FN(0x08093ef6))
 #define fw_setting      ((setting_fn)FN(0x08093e9c))
 #define fw_src_len      ((src_int_fn)FN(0x080636f0))
@@ -78,19 +103,41 @@ typedef void (*stepper_fn)(void *stepper, int counts);
 #define fw_stepper_add  ((stepper_fn)FN(0x080b0b74))
 #define GUI_MS          (*(volatile uint32_t *)0x2402eee0u)
 
-#define P_SLIP      0x1c9            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
+#define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
+#define P_SLIP      0x1c9
+#define REGION_FILE 1                /* Region's list: Auto, File, Loop */
+#define REGION_LOOP 2
+#define P_LOOP_MODE 0x8e             /* stock's Sample-mode loop: Loop Mode (0 None), Loop Start, Loop End, frames */
+#define P_LOOP_START 0x91
+#define P_LOOP_END  0x92
 #define SLIP_MAX    3840             /* one bar of ticks */
 #define TYPE_INT    1
 #define APP_PADS    (0x24020088u + 0x1840u)   /* the app's pad stores: + row * 0xf0 + col * 0x30 */
 
 /* class-B pad ('L', vtable 0x080d0890) */
 #define PAD_CLASS   0x04             /* u8 0x4c */
+#define PAD_SIBLING 0x08             /* the cell's class-H ('H') object, the next module (notes/re/x3) */
 #define PAD_ID      0x18             /* u32 row << 8 | col; bank << 16 (0 for the pads) */
 #define PAD_SOURCE  0x24
 #define PAD_ON      0x29             /* u8 Clip or Slicer mode active */
+#define PAD_LOOP    0x1f4            /* u8 Loop Mode (0x8d) on */
+#define PAD_SYNCED  0x1f5            /* u8 1: Sync is not None */
+#define PAD_LAUNCH  0x1f8            /* u8 Launch Mode + 1: 1 Trigger, 2 Gate, 3 Toggle */
+#define PAD_STEP_OUT 0x204           /* f32 output samples per step: a segment's countdown + 256 (FUN_08065550) */
 #define PAD_TPS     0x208            /* i64 ticks per step */
 #define PAD_STEPS   0x210            /* u32 steps n */
+#define PAD_SYNC    0x220            /* i64 sync step, ticks: SYNC_SLICE = Sync Slice */
+#define PAD_WRAP_GRID 0x230          /* i64 the wrap's grid, ticks: min(Quant, clip) */
+#define PAD_SLICES  0x250            /* u32 slice markers */
 #define PAD_SLICER  0x254            /* u8 */
+#define LAYER0      0x260            /* two layers (voices) of 0x410: + 0 u8 active */
+#define LAYER_SIZE  0x410
+#define SYNC_SLICE  0xf0000
+/* class-H ('H', vtable 0x080d06c8): the Sample-mode positions, kept in Clip mode too, source frames (x3) */
+#define H_CLASS     0x48
+#define H_LOOP_START 0xfc
+#define H_LOOP_END  0x100
+#define H_LOOP_MODE 0x108
 #define SEG0        0x30
 #define SEG_SIZE    0x70
 #define SEG_POS     0x08
@@ -124,8 +171,13 @@ struct cw_bank {
     uint32_t zero_at;                /* the knob: GUI ms of the last turn event held on 0 */
     int8_t zero_dir;                 /* ...and the direction that turn was going */
     uint8_t zero_hold;               /* 1 while a turn that reached 0 goes on */
+    uint8_t wrap;                    /* 1 + the pad whose wrap is recomputing right now (clipwin_wrap), else 0 */
+    struct {
+        int32_t rs, vlen;            /* the region the pad plays this pass, frames; vlen 0 = the whole file */
+    } region[16];
+    int32_t good[16][2];             /* the last loop points from the app's store that made sense (the fallback) */
 };
-#define CW_MAGIC  0x43574e32u        /* "CWN2": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e33u        /* "CWN3": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
@@ -142,12 +194,15 @@ void clip_fetch(void *src, int stereo, float *l, float *r, int count, int32_t st
 /* master.c calls these from its registration and pad-defaults chains. */
 void clipwin_register(void *table)
 {
+    static const char *const region_names[3] = {"Auto", "File", "Loop"};
+    fw_register_list(table, P_REGION, "Region:", region_names, 3, "clipregion");
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
 }
 
 void clipwin_defaults(void *store)
 {
-    fw_store_add(store, P_SLIP, 0);   /* stock only overwrites ids already in a store: without this nothing saves */
+    fw_store_add(store, P_REGION, 0); /* stock only overwrites ids already in a store: without these nothing saves */
+    fw_store_add(store, P_SLIP, 0);
 }
 
 /* ---- the engine ---- */
@@ -165,12 +220,20 @@ static struct cw_bank *bank(void)
             b->valid[q] = 0;
             b->h1[q] = 0;
             b->hinted[q] = 0;
+            b->region[q].vlen = 0;
+            b->good[q][1] = 0;
         }
         b->zero_hold = 0;
+        b->wrap = 0;
         b->scan = 0;
         b->magic = CW_MAGIC;
     }
     return b;
+}
+
+static const void *pad_store(unsigned q)
+{
+    return (const void *)(APP_PADS + (q >> 2) * 0xf0u + (q & 3) * 0x30u);
 }
 
 /* 0 .. 15 for one of the sixteen pads, -1 for anything else (the 17th class-B object, cell 0x401, would alias pad 1) */
@@ -189,6 +252,123 @@ static int32_t fold(int32_t v, int32_t len)
     return v < 0 ? v + len : v;
 }
 
+/* ---- Region ---- */
+
+/* The region pad q plays from now: its Region setting over the loop points. From the cell's class-H object, which
+   stores them in queue order with everything else the pad hears; from the app's store when that link does not hold,
+   keeping the last pair that made sense there (the app writes Loop Start and Loop End one at a time). */
+static void adopt(struct cw_bank *b, int q, uint8_t *pad, int32_t len)
+{
+    const void *store = pad_store((unsigned)q);
+    int mode = fw_setting(store, P_REGION);
+    uint8_t *h = *(uint8_t **)(pad + PAD_SIBLING);
+    int32_t ls, le, on;
+    if (h && h[PAD_CLASS] == H_CLASS && *(uint32_t *)(h + PAD_ID) == *(uint32_t *)(pad + PAD_ID)) {
+        ls = *(int32_t *)(h + H_LOOP_START);
+        le = *(int32_t *)(h + H_LOOP_END);
+        on = *(int32_t *)(h + H_LOOP_MODE);
+    } else {
+        ls = fw_setting(store, P_LOOP_START);
+        le = fw_setting(store, P_LOOP_END);
+        on = fw_setting(store, P_LOOP_MODE);
+        if (ls >= 0 && ls < le && le <= len) {
+            b->good[q][0] = ls;
+            b->good[q][1] = le;
+        } else {
+            ls = b->good[q][0];
+            le = b->good[q][1];
+        }
+    }
+    /* The region is [Loop Start, Loop End), Loop End taken as stock keeps it (D-003; stock's own default is the
+       length). A WAV's smpl loop comes in with its dwEnd as Loop End, verbatim (x3 t6), and dwEnd is the loop's last
+       frame: such a region is one frame short, which nothing hears. The whole file is File: [0, len) and [0, len - 1]
+       alike (a load leaves Loop End = the length with Loop Mode as it was; a whole-file smpl loop ends on len - 1),
+       for Loop too. Auto also wants Loop Mode on. */
+    b->region[q].vlen = 0;
+    if (mode == REGION_FILE || len >= SRC_BAD || ls < 0 || ls >= le || le > len || (!ls && le >= len - 1) ||
+        (mode != REGION_LOOP && !on))
+        return;
+    b->region[q].rs = ls;
+    b->region[q].vlen = le - ls;
+}
+
+/* the region pad q plays, if it applies to this pad as it is now: its length (0 = the whole file), *rs its start.
+   Not on a Slicer pad, nor on Sync Slice with markers (slices are file frames, timed from the file's tempo). Out of
+   line: H1 and H3 both call it, and the cave is tight (40 bytes). */
+static __attribute__((noinline)) int32_t region_of(struct cw_bank *b, int q, const uint8_t *pad, int32_t len, int32_t *rs)
+{
+    int32_t s = b->region[q].rs, v = b->region[q].vlen;
+    if (v <= 0 || !pad[PAD_ON] || pad[PAD_SLICER] || len >= SRC_BAD || s > len - v ||
+        (*(uint32_t *)(pad + PAD_SYNC) == SYNC_SLICE && *(uint32_t *)(pad + PAD_SLICES)))
+        return 0;
+    *rs = s;
+    return v;
+}
+
+/* H3. Replaces bl FUN_080636f0 (fw_src_len, r0 = the source; r4 = the pad, clipwin_thunk.S) at 0x08064b2c (site 1: the
+   recompute's first, Beat Count Auto and the frames per step), 0x08064c5a (site 3: its second, the file tempo, right
+   after it stored the step fields; clip = r9 there, the clip in output samples), 0x0806561e (site 0: FUN_08065550's
+   > 0 check) and 0x08065690 (site 2: the last step's end, length - 1). Never at 0x080662f6: the reader's bound keeps
+   the real length, clipwin_read folds. A playing pad takes its region only at its wrap; a stopped one at its next
+   recompute, which nothing triggers when only the Region row or the loop points change: at the latest the one before
+   its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
+   0x8d) can be the old one. */
+int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
+{
+    int32_t len = fw_src_len(src), rs;
+    struct cw_bank *b = bank();
+    int q = pad_index(pad);
+    if (!b || q < 0)
+        return len;
+    if (site == 1 && (b->wrap == q + 1 || !(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])))
+        adopt(b, q, pad, len);
+    int32_t v = region_of(b, q, pad, len, &rs);
+    if (!v)
+        return len;
+    /* seamless: no end on the last step (end = 1 - 1 = 0), so it crossfades into the next pass like any other step;
+       H1 latches it with the region, so what it plays past the end is the region's start. Not for a one-shot. */
+    if (site == 2 && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)
+        return 1;
+    /* A synced clip of one step (Sync >= the clip): stock times that step by the length (+0x204 = the region in output
+       samples), not by the clip, so the seamless step would run past the next pass (doubling) or stop short of it (a
+       gap), as stock does with a file that long. Time it by the clip, as stock times every step when there are two or
+       more. Only a step with no end reads +0x204 (an end re-derives the countdown): a one-shot is unchanged. A clip of
+       0 ticks (Beat Count Auto of a region under half a beat) has no grid: the step keeps the region's length, so the
+       region loops on its own length, as with Sync None. */
+    if (site == 3 && pad[PAD_SYNCED] && *(uint32_t *)(pad + PAD_STEPS) == 1 && clip > 0)
+        *(float *)(pad + PAD_STEP_OUT) = (float)clip;
+    return v;
+}
+
+/* H3'. Replaces bl FUN_08064a94 (the recompute, r0 = pad, r1 = the clock) at 0x08066fac (the synced wrap; t = the
+   render's [sp + 0x58], the tick the new pass starts on, snapped to the old +0x230) and 0x08066e9e (the unsynced one;
+   t = 0), through clipwin_thunk.S: the region changed while the pad played starts with this pass.
+   Unless it moves the wrap grid off this pass: stock snaps a pass's end to +0x230 = min(Quant, clip), so a longer clip
+   whose first pass does not start on its own grid has that end snapped back into the past, and the next pass sounds
+   at once over the last step: two early passes at gain 2, then the bar (stock does exactly that after a live Beat
+   Count change). Such a region waits for a wrap on its grid, where a launch would have started it. A tick past 2^32
+   (26 days at 120 BPM) takes it at once, as stock would. */
+void clipwin_wrap(uint8_t *pad, void *clock, const uint32_t *t)
+{
+    struct cw_bank *b = bank();
+    int q = pad_index(pad);
+    if (!b || q < 0) {
+        fw_recompute(pad, clock);
+        return;
+    }
+    int32_t rs = b->region[q].rs, vlen = b->region[q].vlen;
+    b->wrap = (uint8_t)(q + 1);
+    fw_recompute(pad, clock);
+    b->wrap = 0;
+    uint32_t grid = *(uint32_t *)(pad + PAD_WRAP_GRID);
+    if (t && !t[1] && grid && !*(uint32_t *)(pad + PAD_WRAP_GRID + 4) && t[0] % grid &&
+        (b->region[q].rs != rs || b->region[q].vlen != vlen)) {
+        b->region[q].rs = rs;        /* the pass plays the region it had; a layer is active, so no recompute adopts */
+        b->region[q].vlen = vlen;
+        fw_recompute(pad, clock);
+    }
+}
+
 /* H1. src = pad + 0x24, pos = stock's prefetch point max(0, start - 8), k = the segment slot ([sp + 0x20] in
    FUN_08065550, clipwin_thunk.S), pad = r4. The segment's start (+0x08) and step (+0x34) are final here. */
 static int32_t latch(struct cw_bank *b, int q, unsigned k, uint8_t *pad, void *src, int32_t pos)
@@ -198,31 +378,40 @@ static int32_t latch(struct cw_bank *b, int q, unsigned k, uint8_t *pad, void *s
     b->hinted[q] &= (uint8_t)~(1u << k);
     b->h1[q] |= (uint8_t)(1u << k);
     int32_t slip = b->slip[q];
-    int32_t len = fw_src_len(src);
+    int32_t len = fw_src_len(src), rs = 0;
+    /* the region this pass plays (H3 gave the recompute its length), or the whole file */
+    int32_t vlen = region_of(b, q, pad, len, &rs);
     /* ticks per step: an i64 whose value stays far below 2^31 (a whole clip is at most 512 beats x 960) */
     int32_t tps = *(int32_t *)(pad + PAD_TPS), tps_hi = *(int32_t *)(pad + PAD_TPS + 4);
     uint32_t steps = *(uint32_t *)(pad + PAD_STEPS);
-    if (slip && pad[PAD_ON] && !pad[PAD_SLICER] && len > 0 && len < SRC_BAD && tps > 0 && !tps_hi && steps &&
-        steps < 0x10000) {
-        /* slip_f = floor(slip x len / clip) mod len, clip = ticks per step x steps (not Beat Count x 960: the two
-           differ when the steps do not divide the clip). Double precision is the M7's own; no 64-bit division in
-           the cave (no libgcc). */
-        double x = (double)slip * (double)len / ((double)tps * (double)steps);
-        int32_t f = (int32_t)x;
+    /* Slip needs a clip to turn ticks into frames; a region does not: Beat Count Auto makes a region under half a
+       beat a clip of 0 ticks, and its segments must still read the region, not the file's first frames. */
+    int clip = slip && tps > 0 && !tps_hi && steps && steps < 0x10000;
+    if (!vlen) {
+        if (!clip || !pad[PAD_ON] || pad[PAD_SLICER] || len <= 0 || len >= SRC_BAD)
+            return pos;
+        vlen = len;
+    }
+    /* slip_f = floor(slip x vlen / clip) mod vlen, clip = ticks per step x steps (not Beat Count x 960: the two differ
+       when the steps do not divide the clip); 0 without a clip. Double precision is the M7's own; no 64-bit division
+       in the cave (no libgcc). */
+    int32_t f = 0;
+    if (clip) {
+        double x = (double)slip * (double)vlen / ((double)tps * (double)steps);
+        f = (int32_t)x;
         if ((double)f > x)
             f--;
-        f = fold(f, len);
-        struct cw_latch *l = &b->latch[q][k];
-        l->rs = 0;
-        l->vlen = len;
-        l->delta = f;
-        l->len = len;
-        b->valid[q] |= (uint8_t)(1u << k);
-        int32_t start = (int32_t)*(int64_t *)(pad + SEG0 + k * SEG_SIZE + SEG_POS);
-        int32_t real = fold(fold(start, len) + f, len) - 8;
-        pos = real < 0 ? 0 : real;
+        f = fold(f, vlen);
     }
-    return pos;
+    struct cw_latch *l = &b->latch[q][k];
+    l->rs = rs;
+    l->vlen = vlen;
+    l->delta = f;
+    l->len = len;                    /* the FILE's length, not the region's: what H2 checks a load against */
+    b->valid[q] |= (uint8_t)(1u << k);
+    int32_t start = (int32_t)*(int64_t *)(pad + SEG0 + k * SEG_SIZE + SEG_POS);
+    int32_t real = rs + fold(fold(start, vlen) + f, vlen) - 8;
+    return real < 0 ? 0 : real;
 }
 
 void clipwin_seg_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
@@ -253,7 +442,7 @@ void clipwin_tick(void)
     if (!b)
         return;
     unsigned q = b->scan++ & 15;
-    const void *store = (const void *)(APP_PADS + (q >> 2) * 0xf0u + (q & 3) * 0x30u);
+    const void *store = pad_store(q);
     /* The row reads + = AHEAD, like a CDJ jog (Thomas, D-016): clockwise pushes the loop ahead of the beat (it plays
        from further into the file), counter-clockwise drags it behind. That is the content's shift as this file keeps it. */
     int32_t slip = fw_setting(store, P_SLIP);

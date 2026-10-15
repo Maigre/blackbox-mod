@@ -293,14 +293,27 @@ corrected accordingly.
   frames, kept in Clip mode, in queue order (X3 ✓). Fallback: `fw_setting` with validation and last-good pair.
 - **Auto** = Loop iff `0x8e ≠ 0 && 0 ≤ ls < le ≤ len && !(ls == 0 && le ≥ len − 1)`, else File (the last clause
   keeps a freshly loaded Loop-Forward pad on File; X3 ✓ t13). Treat `fw_src_len` 0 or `0x10000000` as "not ready /
-  Region off" and re-validate every call (`L+0x24` refreshes only at a recompute).
+  Region off" and re-validate every call (`L+0x24` refreshes only at a recompute). As built: Loop = the same pair
+  rule without the `0x8e` test, `[0, ≥ len − 1]` File for both. The region is `[ls, le)` (D-003); stock stores a
+  `smpl` `dwEnd`, which is inclusive, verbatim as `0x92` (X3 t6), so such a region is one frame short: kept, inaudible.
 - **H3** virtual length at `0x08064B2C`, `0x08064C5A`, `0x0806561E`, `0x08065690` (r4 = pad at all four ✓): return the
   *active* region's vlen; never `0x080662F6` (the reader bound must keep the real length; H2 folds). Beat Count Auto
   then follows the region ✓. Optional **seamless** wrap: `0x08065690` returns 1 only when active, Loop On and Launch ≠
-  Trigger (A2 ✓ removes the 1 849-sample gap and the 2.0-gain overlap).
+  Trigger (A2 ✓ removes the 1 849-sample gap and the 2.0-gain overlap). As built: not enough for a synced clip of one
+  step (Sync ≥ clip): the recompute sets `+0x204` from the length there, not the clip, and only a step with no end reads
+  it. `0x08064C5A` (after `+0x204` is stored) sets it to `r9` = the clip in output samples (`[sp+0x20]`, FUN_08070420's
+  output, loaded at `0x08064BAC` on every path) ✓. A region under half a beat is a clip of 0 ticks on Beat Count Auto:
+  H1 latches the region without a clip (slip_f 0), and it loops on its length, restarting early (stock does too) ✓.
 - **Region change while playing**: defer; promote at `bl 0x08064A94` `0x08066FAC` (synced wrap) / `0x08066E9E`
-  (unsynced), r0 = pad, r1 = clock; at once when no layer is active. Immediate application gives 11 418 or 23 490
-  zero-gain samples (A2 ✓). Relaunch sites (`0x08068312`/`0x0806838A`/`0x0806840C`/`0x08068632`/`0x080686A8`) not modelled.
+  (unsynced), r0 = pad, r1 = clock; on a stopped pad at its next recompute (as built: nothing triggers one when only
+  `0x1c8`/`0x8e`/`0x91`/`0x92` change, so at the latest the one before the next voice start, `0x0806838A`/`0x08068632`/
+  `0x080686A8`; msg `0x8d` lags until then). Immediate application gives 11 418 or 23 490 zero-gain samples (A2 ✓).
+  Relaunch sites (`0x08068312`/`0x0806838A`/`0x0806840C`/`0x08068632`/`0x080686A8`) not modelled. As built: the wrap's
+  recompute runs when the next pass's step 0 is made, one Sync step before the wrap, so a change in the last step is
+  heard a pass later ✓. A change that moves the wrap grid `+0x230` = min(Quant, clip) off the new pass's start tick (the
+  render's i64 at `[sp+0x58]` at `0x08066FAC`) is put back until a wrap on the new grid: otherwise that pass's end snaps
+  into the past and the next pass sounds at once over it, twice, at gain 2 (stock does exactly that on a live Beat
+  Count change 2 → 4 inside the first half of a bar) ✓.
 - **Seam streaming**: the provider caches 8192-frame blocks and the hint reaches 3 blocks; a seam inside a segment
   jumps to `rs`, which stock never hints. **Done in v1** (§2.6): H2 hints `rs` once per slot per crossing, as soon as
   the region end is within 16 384 frames (~128 blocks ahead at rate 1, `test_clipwin.py`); a Region seam gets the same.
@@ -367,7 +380,7 @@ corrected accordingly.
 | 2 | Slip on a machine-mode (Fidelity) pad, and the seam block | P2 | Unicorn: `test_clip.py` harness with a latch set |
 | 3 | A negative type-1 value of a new id through preset save → load | P2 | Gate 2 step 6 on hardware; or Unicorn of the writer `0x08095328` + loader `0x08096AD8` on one pad store |
 | 4 | Counts per knob revolution, GUI pass period (K tuning) | P2 | USB peek: `0x24001A30 + 4k` before/after one turn; `0x2402EEE0` in a loop |
-| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes (`arm-none-eabi-size -A out/cave.elf`) |
+| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region, `.bank2` 12,896 (`arm-none-eabi-size -A out/cave.elf`); before Loop Len, pick the leaf maths for `BANK2_SRCS` (behind `b2_live()`) |
 | 6 | Does the app send a slice table to a Clip pad (Slip silently off there) | P2 doc | USB peek of pad `+0x250` on a Clip pad whose cell has markers |
 | 7 | Attack 0 (`pad+0xBA1` = 1) on real presets (hard wrap start) | P2/P3 | USB peek on a few loaded pads |
 | 8 | Live Slip under Sync None takes effect at the next restart | P2 doc | Unicorn: one `Rig` run |

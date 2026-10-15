@@ -26,6 +26,16 @@ New since 3.1.n:
   the loop ahead, counter-clockwise drags it behind. The value is beats.ticks, 960 ticks to a beat (`-0.480` is half a
   beat behind; one tick is about half a millisecond at 120 BPM). Turn slowly for single ticks, fast for 1/64 steps; a
   turn stops on 0, pause to go past it. A change is heard at the next Sync step. Saved with the preset; 0 is stock.
+- **Region on Clip pads**: a "Region" row on a Clip pad's Pos tab, before Slip: Auto, File or Loop. Loop plays only the
+  pad's loop (Loop Start to Loop End, set in Sample mode or read from the WAV's own loop) as if it were the whole file,
+  so a loop cut from a longer recording needs no Trim. Auto, the default, does that when the pad has a loop (Loop Mode
+  on, and not the whole file) and plays the file otherwise, so fresh recordings and plain files play as before. File
+  always plays the whole file. Beat Count Auto counts the region, Slip shifts within it, and the end of the region
+  crossfades into its start like any other Sync step, so a region that is not a whole number of beats leaves no gap
+  and no doubling at the loop point, even when the whole loop is one Sync step. A change while the pad plays is heard
+  from the next time the loop comes round, or the time after that if it is made during the loop's last Sync step. A
+  change that makes the loop longer can wait a little more: it starts where a launch would start the new loop (on the
+  Quant, or on the new loop's own length when that is shorter), so it never doubles. Saved with the preset.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -80,8 +90,16 @@ From 3.1.n and earlier:
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
-  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped for up to two Sync
-  steps, then slipped.
+  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, and without its
+  region, for up to two Sync steps, then as set.
+- Region does nothing on those pads either, and the playhead line is wrong on a pad playing a region. Switching a Clip
+  pad to Sample mode clears its loop points (stock does that), so a pad sent back to Sample mode to adjust the loop
+  needs it set again. A Beat Count that is not Auto, including one read from the WAV when it was loaded, is taken as
+  the region's length in beats. A pad that never loops round (Launch Trigger, or Loop Off) takes a new region at its
+  next launch after it has stopped, and so does a stopped pad: until that launch, the length it reports for Beat Count
+  Auto is the old one. A region shorter than half a beat counts 0 beats on Beat Count Auto, as a file that short does
+  on stock: it loops on its own length, restarting slightly early with a short overlap, and Slip does nothing there.
+  Give it a Beat Count.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 

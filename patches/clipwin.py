@@ -1,4 +1,4 @@
-"""Clip Window: per-pad Slip on Clip pads (see src/clipwin.c, notes/re/README.md section 2).
+"""Clip Window: per-pad Slip and Region on Clip pads (see src/clipwin.c, notes/re/README.md sections 2 and 3).
 
 Rides with the `filter` set (patches/filter.py imports it), which already owns the clip reader's call and the pad
 pages, so the patched image keeps its name. The clip read itself needs no patch here: filter.py's hook at 0x08066622
@@ -20,13 +20,22 @@ PATCHES = [
     # FUN_08065290 (slice-marker segments)
     hook(0x0806578C, 0x0806375C, "clipwin_seg_start_b"),
     hook(0x0806541A, 0x0806375C, "clipwin_slice_start_b"),
+    # Region: the clip's length where it shapes the clip (H3: the recompute's two - the second also times a clip of one
+    # step by the clip -, FUN_08065550's > 0 check and the last step's end; never the reader's bound at 0x080662F6),
+    # and the recompute at the two wraps (H3')
+    hook(0x08064B2C, 0x080636F0, "clipwin_len_recompute_b"),
+    hook(0x08064C5A, 0x080636F0, "clipwin_len_steps_b"),
+    hook(0x0806561E, 0x080636F0, "clipwin_len_b"),
+    hook(0x08065690, 0x080636F0, "clipwin_len_end_b"),
+    hook(0x08066FAC, 0x08064A94, "clipwin_wrap_b"),
+    hook(0x08066E9E, 0x08064A94, "clipwin_wrap_free_b"),
     # the knob's value text: set value (every type) and the type-1 turn
     hook(0x080B0746, 0x080B0528, "clipwin_format"),
     hook(0x080B0E18, 0x080B0528, "clipwin_format"),
     # the type-1 turn's stepper call: Slip's acceleration
     hook(0x080B0DDE, 0x080B0B74, "clipwin_turn"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Slip in slot 5
-    (0x080EF998, struct.pack("<H", 0), struct.pack("<H", 0x1C9)),
-    (0x080EF290, struct.pack("<H", 0), struct.pack("<H", 0x1C9)),
+    # slots), both copies of the tables: Region in slot 5, Slip in slot 6
+    (0x080EF998, struct.pack("<HH", 0, 0), struct.pack("<HH", 0x1C8, 0x1C9)),
+    (0x080EF290, struct.pack("<HH", 0, 0), struct.pack("<HH", 0x1C8, 0x1C9)),
 ]
