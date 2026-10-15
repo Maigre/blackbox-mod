@@ -9,7 +9,7 @@
 #ifndef RELEASE_H
 #define RELEASE_H
 
-#define RELEASE_NAME "JOEBOX 1"
+#define RELEASE_NAME "MAIGRE 1"
 _Static_assert(sizeof RELEASE_NAME - 1 <= 8, "a release name is eight characters at most: longer wraps on a knob page");
 
 #endif
