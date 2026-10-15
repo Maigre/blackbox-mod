@@ -26,8 +26,9 @@
  * Not covered: Slicer pads and Clip pads on Sync = Slice with markers (their segments start in H1': no shift); the
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
- * 480 ticks), + = later (the hits land behind the beat), per pad, saved with the preset as "clipslip". Turning fast
- * accelerates (clipwin_turn). Inside, slip[] and the latches hold the content's shift: the row's value negated.
+ * 480 ticks), + = ahead of the beat, - = behind (a CDJ jog: clockwise speeds up, counter-clockwise slows down), per
+ * pad, saved with the preset as "clipslip". The knob: single ticks slow, 1/64 steps fast, and a turn stops on 0
+ * (clipwin_turn).
  */
 #include <stdint.h>
 
@@ -116,6 +117,9 @@ struct cw_bank {
     struct cw_latch latch[16][4];
     uint8_t h1[16];                  /* bit k: slot k's segment was made through H1 (not a slice segment, H1') */
     uint8_t hinted[16];              /* bit k: H2 has hinted rs for slot k's crossing of the region end */
+    uint32_t zero_at;                /* the knob: GUI ms of the last turn event held on 0 */
+    int8_t zero_dir;                 /* ...and the direction that turn was going */
+    uint8_t zero_hold;               /* 1 while a turn that reached 0 goes on */
 };
 #define CW_MAGIC  0x43574e31u        /* "CWN1": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
@@ -158,6 +162,7 @@ static struct cw_bank *bank(void)
             b->h1[q] = 0;
             b->hinted[q] = 0;
         }
+        b->zero_hold = 0;
         b->scan = 0;
         b->magic = CW_MAGIC;
     }
@@ -244,9 +249,9 @@ void clipwin_tick(void)
         return;
     unsigned q = b->scan++ & 15;
     const void *store = (const void *)(APP_PADS + (q >> 2) * 0xf0u + (q & 3) * 0x30u);
-    /* The row reads + = LATER (Thomas, 2026-10-15): the hits move behind the beat. Inside this file slip is the shift
-       of the content, which goes the other way (+ = from further into the file = earlier), so it is the row negated. */
-    int32_t slip = -fw_setting(store, P_SLIP);
+    /* The row reads + = AHEAD, like a CDJ jog (Thomas, D-016): clockwise pushes the loop ahead of the beat (it plays
+       from further into the file), counter-clockwise drags it behind. That is the content's shift as this file keeps it. */
+    int32_t slip = fw_setting(store, P_SLIP);
     slip = slip < -SLIP_MAX ? -SLIP_MAX : slip > SLIP_MAX ? SLIP_MAX : slip;
     if (slip == b->slip[q])
         return;
@@ -357,18 +362,65 @@ void clipwin_format(uint8_t *knob)
     fw_knob_redraw(knob);
 }
 
-/* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde). Type-1 rows take 400 counts a step
-   and have no acceleration of their own: for Slip, scale by how fast the knob turns, from 40 counts a tick (slow) to
-   60 ticks, a 1/64 note, for the same 40 counts (fast). The range clamps. */
+/* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde). For the Slip knob (Thomas, after
+   Gate 2: "tricky, especially to set back to 0"):
+     slow     single ticks: 40 counts a tick, twice that rate at speed 2 (the stepper's own accumulator does the rest);
+     fast     (speed 3 and up) one 1/64 step a turn event, onto the 1/64 grid (60 ticks): round values are easy to hit;
+     zero     a move that reaches or crosses 0 stops on it, and stays there while that turn goes on (events less than
+              ZERO_HOLD ms apart, the same way); a pause or the other direction moves it again.
+   The stepper (A3): +0x00 i64 accumulated counts, +0x08 counts per step (400 for type 1), +0x0c index, +0x18 start;
+   index = floor(acc / step) with a step/3 hysteresis, so a value is set by parking acc mid-step. */
+#define SLIP_GRID 60                 /* a 1/64 note */
+#define ZERO_HOLD 250                /* ms */
+
+static int32_t grid_next(int32_t v, int dir)
+{
+    int32_t q = v / SLIP_GRID, r = v % SLIP_GRID;
+    if (dir > 0)
+        return (q - (r < 0)) * SLIP_GRID + SLIP_GRID;    /* the next multiple above v */
+    return (q + (r > 0)) * SLIP_GRID - SLIP_GRID;        /* ...below v */
+}
+
 void clipwin_turn(uint8_t *stepper, int counts)
 {
     uint8_t *knob = stepper - KNOB_STEP0;
-    if (*(int32_t *)(knob + KNOB_PARAM) == P_SLIP && knob[KNOB_TYPE] == TYPE_INT) {
-        static const uint8_t gear[6] = {1, 2, 4, 10, 30, 60};
-        fw_ring_push(knob + KNOB_RING, counts, GUI_MS);
-        unsigned m = fw_ring_speed(knob + KNOB_RING);
-        m = m < 1 ? 1 : m > 6 ? 6 : m;
-        counts *= 10 * gear[m - 1];
+    if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_TYPE] != TYPE_INT || !counts) {
+        fw_stepper_add(stepper, counts);
+        return;
     }
-    fw_stepper_add(stepper, counts);
+    struct cw_bank *b = bank();
+    uint32_t now = GUI_MS;
+    int dir = counts > 0 ? 1 : -1;
+    fw_ring_push(knob + KNOB_RING, counts, now);
+    unsigned m = fw_ring_speed(knob + KNOB_RING);
+    if (b && b->zero_hold) {
+        if (dir == b->zero_dir && now - b->zero_at < ZERO_HOLD) {
+            b->zero_at = now;                            /* the same turn: stay on 0 */
+            return;
+        }
+        b->zero_hold = 0;
+    }
+    int32_t step = *(int32_t *)(stepper + 0x08), start = *(int32_t *)(stepper + 0x18);
+    int32_t acc = *(int32_t *)stepper;                   /* < steps x step = 7 681 x 400: the low word is all of it */
+    int32_t v = *(int32_t *)(stepper + 0x0c) + start, target;
+    if (m < 3) {
+        int32_t add = counts * 10 * (int32_t)m;
+        target = (acc + add) / step + start;             /* where the stepper would land (acc + add >= 0 here) */
+        if (acc + add < 0 || !((v > 0 && target <= 0) || (v < 0 && target >= 0))) {
+            fw_stepper_add(stepper, add);                /* no zero on the way: the stepper's own way */
+            return;
+        }
+        target = 0;
+    } else {
+        target = grid_next(v, dir);
+        if ((v > 0 && target < 0) || (v < 0 && target > 0))
+            target = 0;
+    }
+    target = target < -SLIP_MAX ? -SLIP_MAX : target > SLIP_MAX ? SLIP_MAX : target;
+    if (target == 0 && v != 0 && b) {
+        b->zero_hold = 1;
+        b->zero_dir = (int8_t)dir;
+        b->zero_at = now;
+    }
+    fw_stepper_add(stepper, (target - start) * step + step / 2 - acc);   /* park mid-step on the target */
 }

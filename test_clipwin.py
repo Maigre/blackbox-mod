@@ -60,7 +60,7 @@ PMEM, PCHECK, KEY = 0x38800F70, 0x38800F74, 0x5052534D
 BLOCK = 0xC0000000                                   # master.c's boot-time SDRAM block, here
 BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
 B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x398, 0x3A8
-B_SIZE = 0x3B8                                       # sizeof(struct cw_bank)
+B_SIZE = 0x3C0                                       # sizeof(struct cw_bank)
 CW_MAGIC = 0x43574E31
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
@@ -95,10 +95,9 @@ def sdram(m, on=True):
 
 
 def store(m, q, vals):
-    """the app's settings store of pad q (row q // 4, col q % 4): {id: value}. Slip goes in as the ENGINE's shift of the
-    content (+ = earlier), the number every check below reasons in; the row itself reads + = later (Thomas, 2026-10-15),
-    so what lands in the store is its negative. store_raw writes the row's own value."""
-    return store_raw(m, q, {i: (-v if i == P_SLIP else v) for i, v in vals.items()})
+    """the app's settings store of pad q (row q // 4, col q % 4): {id: value}. The Slip row's value is the content's
+    shift, + = ahead (D-016: clockwise on the knob, like a CDJ jog), the number every check below reasons in."""
+    return store_raw(m, q, vals)
 
 
 def store_raw(m, q, vals):
@@ -849,20 +848,20 @@ for frames in (96000, 88615):
               and first_new == 336000 and not (np.abs(gs - gc) > 1e-6).any(),
               (e_old, e_new, first_new, int((np.abs(gs - gc) > 1e-6).sum())))
 
-# The row's sign (Thomas, 2026-10-15): + = LATER. Here the row's own value goes in, raw: +480 (+0.480 on screen, half a
-# beat) must play every sample 12 000 samples (half a beat at 120 BPM) after stock plays it: content = stock - 12 000.
+# The row's sign (Thomas, D-016): + = AHEAD, - = behind (a CDJ jog). -480 (-0.480 on screen, half a beat behind) must
+# play every sample 12 000 samples (half a beat at 120 BPM) after stock plays it: content = stock - 12 000.
 ref = audio(frames=96000, cell=0x102)
 
 
 def user_late(rr):
     if rr.block == 0:
-        store_raw(rr.m, 6, {0x4: 500, P_SLIP: 480})
+        store_raw(rr.m, 6, {0x4: 500, P_SLIP: -480})
 
 
 cw = audio(frames=96000, cell=0x102, pre=user_late)
 n, err, bad, gd = shifted(ref, cw, slip_f(-480, 96000, 3840), 96000)
-check(f"the row's sign: Slip +0.480 (raw 480) plays every sample half a beat LATER than stock - content = stock frame "
-      f"- 12 000 ({n} samples, max {err:.4f} frame), and the bank holds the content's shift -480",
+check(f"the row's sign: Slip -0.480 (counter-clockwise, behind) plays every sample half a beat LATER than stock - content "
+      f"= stock frame - 12 000 ({n} samples, max {err:.4f} frame), and the bank holds -480",
       n > 25000 and err <= 0.02 and bad == 0 and gd == 0 and bank_slip(cw["rig"].m, 6) == -480, (n, err, bad, gd))
 
 # Sync None: no pending segment to drop - the new Slip waits for the restart (README section 4, open question 8)
@@ -1452,12 +1451,19 @@ check("the same row registered as type 9 (a list position): the value it stands 
 e.uc.mem_write(TABLE + P_SLIP * 0x1C + 2, b"\x01")
 
 
-def turn(path, per_ms, events=40, sign=1):
-    fresh()
-    e.call(0x080A7EE0, P_SLIP, 0, KN)
-    c, t = sign * int(per_ms * 16), 10_000
-    posts.clear()
-    texts.clear()
+def turn(path, per_ms, events=40, sign=1, start=0, fresh_knob=True, t0=10_000):
+    """`events` turn events 16 ms apart at `per_ms` counts per ms; returns (value, counts sent, last time). A fresh knob
+    comes with its acceleration ring (8 x {counts, ms} at +0x294, write index at +0x2d4) as if it had been turning at
+    that speed for 8 events already: fresh() zeroes the widget, and a ring of zeros would read as a slow turn."""
+    c, t = sign * int(per_ms * 16), t0
+    if fresh_knob:
+        fresh()
+        e.call(0x080A7EE0, P_SLIP, start, KN)
+        posts.clear()
+        texts.clear()
+        for k in range(8):
+            e.uc.mem_write(KN + 0x294 + 8 * k, struct.pack("<iI", c, t - 16 * (7 - k)))
+        e.w32(KN + 0x2D4, 0)
     for _ in range(events):
         t += 16
         e.w32(GUI_MS, t)
@@ -1465,21 +1471,50 @@ def turn(path, per_ms, events=40, sign=1):
             e.call(0x080B9A3C, LIST, c)
         else:
             e.call(0x080B0D54, KN, c)
-    return e.r32(KN + 0x27C) + e.r32(KN + 0x288), c * events
+    return e.r32(KN + 0x27C) + e.r32(KN + 0x288), c * events, t
 
 
+# The knob after Gate 2 (Thomas: "tricky, especially to set back to 0"): slow = single ticks (40 counts a tick, twice
+# that at speed 2), fast = one 1/64 (60 ticks) a turn event on the 1/64 grid, and a turn that reaches 0 stops on it.
+# The hold on 0 lives in cw_bank (SDRAM), as on the unit, so the block is there for these.
+try:
+    e.uc.mem_map(0xC0000000, 0x1800000)
+except Exception:
+    pass                                                    # already mapped
+e.uc.mem_map(0x38800000, 0x1000) if not any(r[0] == 0x38800000 for r in e.uc.mem_regions()) else None
+e.uc.mem_map(0x58024000, 0x1000) if not any(r[0] == 0x58024000 for r in e.uc.mem_regions()) else None
+sdram(e)
+e.w32(BANK, 0)                                              # bank() sets itself up on first use
 for path in ("list", "turn"):
-    got = {s: turn(path, s) for s in (0.7, 1.5, 3, 6, 12)}
-    vals = [v for v, _ in got.values()]
-    per = [v / c for v, c in got.values()]                    # ticks per count
-    slow, counts = got[0.7]
-    check(f"{'pad page list (FUN_080b9a3c)' if path == 'list' else 'waveform turn (FUN_080b0d54)'}: slow, 1 tick per 40 "
-          f"counts ({counts} counts -> {slow}); faster turns give more ticks per count ({vals} for "
-          f"{[c for _, c in got.values()]} counts); fast stops at +3840",
-          slow == counts // 40 and per[:3] == sorted(per[:3]) and per[2] > 2 * per[0] and vals[-1] == 3840, got)
-    v, _ = turn(path, 12, sign=-1)
-    check("  fast the other way stops at -3840; the value text follows the turn, and the app is sent 0x1c9 = the value",
-          v == -3840 and vtext()[-1:] == ["-4.000"] and posts and posts[-1] == (0x3D, -3840, P_SLIP), (v, vtext()[-1:], posts[-1:]))
+    name = "pad page list (FUN_080b9a3c)" if path == "list" else "waveform turn (FUN_080b0d54)"
+    slow, counts, _ = turn(path, 0.7)
+    med, mcounts, _ = turn(path, 2.5)
+    check(f"{name}: slow, 1 tick per 40 counts ({counts} counts -> {slow}); speed 2, 2 ticks per 40 ({mcounts} -> {med})",
+          slow == counts // 40 and med == 2 * mcounts // 40, (slow, counts, med, mcounts))
+    fast = [turn(path, s_, events=7)[0] for s_ in (3, 6, 12)]
+    check(f"  fast (3, 6, 12 counts/ms): one 1/64 a turn event, on the grid - 7 events from 0 give 420 each ({fast})",
+          fast == [420, 420, 420], fast)
+    off_grid, _, _ = turn(path, 6, events=3, start=25)
+    check(f"  fast from an off-grid value (+25) snaps to the grid first: 60, 120, 180 (got {off_grid})", off_grid == 180, off_grid)
+    v, _, _ = turn(path, 12, events=80)
+    check("  fast up stops at +3840 (64 grid steps); the text follows, and the app is sent 0x1c9 = the value",
+          v == 3840 and vtext()[-1:] == ["+4.000"] and posts and posts[-1] == (0x3D, 3840, P_SLIP), (v, vtext()[-1:], posts[-1:]))
+    v, _, _ = turn(path, 12, events=80, sign=-1)
+    check("  fast down stops at -3840 too", v == -3840 and vtext()[-1:] == ["-4.000"], (v, vtext()[-1:]))
+    # stop at zero
+    v, _, t = turn(path, 6, events=20, sign=-1, start=300)
+    check(f"  fast down from +300 stops on 0 and stays there while the turn goes on (20 events; got {v}, text {vtext()[-1:]})",
+          v == 0 and vtext()[-1:] == ["+0.000"], (v, vtext()[-1:]))
+    v_same, _, t = turn(path, 6, events=3, sign=-1, fresh_knob=False, t0=t)
+    v_pause, _, t = turn(path, 6, events=3, sign=-1, fresh_knob=False, t0=t + 400)
+    check(f"  ...still 0 on the same turn ({v_same}); after a 0.4 s pause the next turn crosses, slowly at first, as any "
+          f"turn starting from rest ({v_pause})", v_same == 0 and -60 < v_pause < 0, (v_same, v_pause))
+    v, _, t = turn(path, 6, events=10, sign=1, start=-200)
+    v_back, _, _ = turn(path, 6, events=1, sign=-1, fresh_knob=False, t0=t)
+    check(f"  fast up from -200 stops on 0 ({v}); turning the other way moves at once (-60: {v_back})",
+          v == 0 and v_back == -60, (v, v_back))
+    v, c_, _ = turn(path, 0.7, events=40, sign=-1, start=5)
+    check(f"  slow down from +5 ({c_} counts, 11 ticks' worth) stops on 0 too (got {v})", v == 0, v)
 
 # other knobs: the same text, steps and posts as on the stock image
 for m_ in (st_m,):
