@@ -1,5 +1,9 @@
 # blackbox-mod
 
+> **Fork 37.x** (Maigre/blackbox-mod): JOEBOX 1 + the restart-loop fix + Clip Window (Slip, Region, Loop Len) and,
+> on its way, a KP3-style looper. What it adds, its versions and its upstream PRs: [`FORK.md`](FORK.md). The text below
+> is upstream's README, with each fork feature's bullet added where it lands.
+
 An unofficial feature mod for the **original 1010music Blackbox** (not the Blackbox 2), built on stock firmware 3.1.9.
 
 > **Not affiliated with, endorsed by, or supported by 1010music.** This repository does not contain 1010music's
