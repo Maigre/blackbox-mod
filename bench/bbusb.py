@@ -13,6 +13,7 @@ never part of a feat/* branch or a PR.
   bbusb.py slip                         Clip Window bank: polled Slip per pad, latched slots (src/clipwin.c)
   bbusb.py record SECONDS FILE.wav      capture the 6 USB channels (arecord)
   bbusb.py offsets FILE.wav [A B]       onset offsets between channel A and B (default 0 = Out1 L, 2 = Out2 L)
+  bbusb.py shift BASE.wav NEW.wav [BPM] how far Out 1 moved between two takes, aligned on the metronome (Out 2)
   bbusb.py note NOTE [VEL]              send a note on (then off 100 ms later) on the Global In channel (amidi)
 
 Permissions: the peek / poke needs write access to the device node. Once, as root:
@@ -89,6 +90,28 @@ def print_crash():
           f"audio {' '.join(f'{x:08x}' for x in aud)} | gui {' '.join(f'{x:08x}' for x in gui)}")
     b2 = words(0x388003C8, 3)
     print(f"bank-2 words {b2[0]:#010x} {b2[1]:#010x} {b2[2]:#010x}")
+
+
+def read_wav(path):
+    """a capture as floats, frames x channels (S24_3LE from `record`, or 16-bit)"""
+    import numpy as np
+    import wave
+    w = wave.open(path)
+    raw = np.frombuffer(w.readframes(w.getnframes()), dtype=np.uint8)
+    ch, width = w.getnchannels(), w.getsampwidth()
+    if width == 2:
+        return np.frombuffer(raw.tobytes(), dtype="<i2").reshape(-1, ch).astype(float) / 32768
+    f = raw.reshape(-1, ch, width).astype(np.int32)
+    x = f[..., -3] | f[..., -2] << 8 | f[..., -1] << 16
+    return np.where(x & 0x800000, x - 0x1000000, x).astype(float) / 0x800000
+
+
+def first_onset(s):
+    import numpy as np
+    e = np.abs(s)
+    if e.max() < 1e-3:
+        return None
+    return int(np.argmax(e > 0.3 * e.max()))
 
 
 def alsa_card():
@@ -190,6 +213,26 @@ def main(argv):
             d = np.array(diffs)
             print(f"ch {b} minus ch {a}: median {np.median(d):+.1f} samples ({np.median(d) / 48:+.3f} ms), "
                   f"spread {d.min():+d} .. {d.max():+d}")
+    elif cmd == "shift":
+        # Gate 2: how far Out 1 moved between two takes, each aligned on its own metronome (Out 2): + = later.
+        import numpy as np
+        base, new = read_wav(args[0]), read_wav(args[1])
+        bpm = float(args[2]) if len(args) > 2 else 120.0
+        per_tick = 48000 * 60 / (bpm * 960)
+        cb, cn = first_onset(base[:, 2]), first_onset(new[:, 2])
+        if cb is None or cn is None:
+            sys.exit("no metronome click on Out 2 (channel 2) in one of the takes")
+        span = min(len(base) - cb, len(new) - cn, int(16 * 48000 * 60 / bpm))   # up to 4 bars
+        a, b = base[cb:cb + span, 0], new[cn:cn + span, 0]
+        nfft = 1 << int(np.ceil(np.log2(2 * span)))
+        xc = np.fft.irfft(np.fft.rfft(b, nfft) * np.conj(np.fft.rfft(a, nfft)), nfft)
+        lags = np.concatenate([np.arange(0, span), np.arange(-span + 1, 0)])
+        vals = np.concatenate([xc[:span], xc[nfft - span + 1:]])
+        lag = int(lags[np.argmax(vals)])
+        beat = int(round(48000 * 60 / bpm))       # the takes align on their first click, which may be another beat
+        lag = (lag + beat // 2) % beat - beat // 2  # of the bar: fold into +- half a beat (exact for small Slips)
+        print(f"Out 1 moved {lag:+d} samples ({lag / per_tick:+.1f} ticks at {bpm:g} BPM; + = later) between the takes, "
+              f"each aligned on its first click (base {cb}, new {cn})")
     elif cmd == "note":
         note, vel = int(args[0]), int(args[1]) if len(args) > 1 else 100
         port = subprocess.run(["amidi", "-l"], capture_output=True, text=True).stdout
