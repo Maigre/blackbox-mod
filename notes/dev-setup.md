@@ -29,7 +29,7 @@ export PATH=/srv/dev/toolchains/arm-gnu-14.2/bin:$PATH
 
 Release images (what goes on the card): `RELEASE=1 ./build.sh && python3 patch.py cave` (cave-only) or the
 full set `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi master fault cave`.
-`RELEASE=1` compiles the USB peek/poke out and shows `RELEASE_NAME` (`src/release.h`, `MAIGRE 1`) on TOOLS.
+`RELEASE=1` compiles the USB peek/poke out and shows `RELEASE_NAME` (`src/release.h`, 37.x.y; dev builds `DEV_NAME`, 37.x.yd) on TOOLS.
 **Rebuild without `RELEASE=1` before running the suites** (they expect the dev build). The two Gate 0 images of
 2026-10-15 sit in `out/gate0/{cave,full}/BLACKBOX.bin`; `BBEXTRA.BIN` is not installed for now (D-008).
 
