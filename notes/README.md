@@ -15,5 +15,7 @@ projects or exports, 1010music's manuals or artwork. Those stay on dev37 under `
 - `re/` — one file per RE step (A0 … A7), written as the findings come.
 - `workflows.md` — the workflows as performed on the unit; becomes `LOOPER.md` at P5.
 - `decisions.md` — dated decisions with their reasons.
+- `features/` — one file per feature of the fork as built: what it does on the unit, the controls, how it is
+  implemented, what is not done, how to bench it (`looper.md`: P4).
 
 The hub side (tasks, bench cards, log) is `37Projects/projects/blackbox/`.

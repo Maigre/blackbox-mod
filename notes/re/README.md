@@ -317,6 +317,22 @@ corrected accordingly.
   read in `duck_block` (raw there). A post to the app from the DJ FX slot is wiped (X1 ✓): set a flag and append in
   the next `duck_block`. No knob rows on the XY page: Source/Max Len/Slip need another home.
 
+- **As built (P4 v1, `feat/looper`, D-020..D-024)**: route A. `bl 0x0808C594` → `looper_register_fxa` (5 names,
+  plus `0x1cc` "Length:" on stock's Clip Quant names `0x080ECB0C`, 7 of them); `b.w` at `0x0806E174` →
+  `looper_fxa_set` (index ≤ 4, else `bx lr`) → `looper_latch` (class `0x40` for 3 / 4) → `b.w 0x0806E048`; the 4
+  literals → `lp_axes` `{5, …, (0x1cc, 0x30) × 2}`; vtable `0x080DF58C` → `looper_process`, `0x080DF5F0` →
+  `looper_active`. Not wrapped: `+0x74` hold, `+0x64` set_param — the DSP re-reads the channel's queue
+  (`FUN_0804F4D4`'s format) for `0x15`, `0x1a`, `0x1cc`, `0x30` and type `0x40`. Leaving modes 3 / 4 resets the
+  Repeater and zeroes the last 2048 floats of both ring buffers (the backfill reads behind write index 0). Clock:
+  `looper_tick` in `duck_block` snapshots `+0x00`, `+0x30`, `+0x38`; a block where `+0x38` changed or `+0x00` is not
+  snapshot + n is a transport edge, and a catch waits one block. Executed in `test_looper.py` (real container, pool,
+  Repeater, registrar, view handler `0x080B1EE4`, `FUN_080B1DE0`, `FUN_080B26C8`).
+  After the review (D-025): Loop In reads the raw input at the audio object (`*(0x2400A9C0 + 0x8FB0 / 0x8FB4)`, A6
+  step 1; static: written only by `FUN_0804CAA4`, read only by it and the copy `FUN_080518F0`) × Rec Gain
+  (`rec + 0x64`, a float: `vldr s0, [r4, #0x64]` before `FUN_0805FD14` at `0x080624DA`), so Resam and the in-place
+  gain no longer reach it; and the loop is locked to `+0x30`'s grid while playing. Whether those buffers are DTCM on
+  the unit (`0x080443A8` "fast" allocations of 0x200) is one USB peek at Gate 4.
+
 ### P5 — Save to slot and capture shortcuts
 
 - **Arm**: `FUN_0809F2E8(0x24020088, ref)`, ref = `{u32 0x080EAF38, u16 row << 4 | col}` (MIDI refs at `0x2402EE60 +
@@ -354,12 +370,12 @@ corrected accordingly.
 | 16 | Top-end dead travel of 0xD knobs on hardware | P3 | bench: Sample mode, zoomed, Loop End past the end and back |
 | 17 | Task priorities behind the `fw_setting` race | P3 | static read of the thread-create calls (`main`) |
 | 18 | Last-step overlap at the wrap (Sync on, file > Beat Count): audible? | P3 | bench listen |
-| 19 | Count-4 FX A list with the relocated axis table | P4 | Unicorn: view handler `0x080B1EE4` + `FUN_080B1DE0`, index 3 |
+| 19 | Count-5 FX A list with the relocated axis table | P4 | Unicorn ✓ (`test_looper.py`: registrar, view handler msg `0x3c` index 3 / 4, `FUN_080B1DE0`, rest posts); on the unit: one look at Gate 4 |
 | 20 | FX A slot, engine address on the unit | P4 | USB peek `0x2405FDE8+0x18` (= `0x30300`), `+0x20`; `0x24014434` (= `0x24037038`) |
-| 21 | Hold (`APP+0x2C/+0x2D`) and DJ FX type across preset load / power cycle | P4 | USB peek `0x240200B4/B5`; power-cycle with Gater on FX A |
-| 22 | XY orientation (which half is FX A, Y up?) | P4 | one look at the unit |
-| 23 | Senders of effect messages `0x32`/`0x40`; which tempo command re-bases the map | P4 | static reads (`FUN_080520EC`) |
-| 24 | Looper CPU cost | P4 | TOOLS load readout on the unit |
+| 21 | Hold (`APP+0x2C/+0x2D`) and DJ FX type across preset load / power cycle (the Looper must be re-picked after a power cycle if the type is not kept) | P4 | USB peek `0x240200B4/B5`; power-cycle with Gater on FX A |
+| 22 | XY orientation (which half is FX A, Y up?); v1 assumes X left = 4 bars, Y 0 = HPF off (a flip is one line) | P4 | one look at the unit (Gate 4) |
+| 23 | Senders of effect messages `0x32`/`0x40`; which tempo command re-bases the map. v1: `0x40` = release + Hold off, `0x32` ignored (the Looper keeps looping through a STOP) | P4 | static reads (`FUN_080520EC`) |
+| 24 | Looper CPU cost: Unicorn counts 10k instructions a block idle, 18k looping, 26k at a wrap with the HPF (of 1.28 M cycles) | P4 | TOOLS load readout on the unit (Gate 4) |
 | 25 | Real free SDRAM after the largest preset load; preset save peak | all | USB peek `0x2400008C`/`0x24000088` after boot and after the load; Unicorn of the writer |
 | 26 | Where the RecToPlay start lands in the stop block | P5 | Unicorn: the tick with a loaded Clip pad and the recorder at its stop block |
 | 27 | XY → Record screen → XY Save hop end to end; Save from a `SetCellParam` intercept | P5 | Unicorn of the app path (`set_screen`, `0x26` handler), then Gate 5 |
