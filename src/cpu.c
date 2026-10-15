@@ -32,11 +32,11 @@ typedef void (*label_fn)(uint8_t *label, const char *s);
  * patched that byte, so the 9 key typed the build letter instead (reported by a user on the public 3.1.n, which
  * typed "n"; 3.2.b typed "b"). Instead the four places that DISPLAY the version are repointed here (patches/cave.py).
  */
-#ifdef PUBLIC_BUILD
 #include "release.h"
+#ifdef PUBLIC_BUILD
 const char fw_version[] = RELEASE_NAME;
 #else
-const char fw_version[] = "3.3.e";
+const char fw_version[] = DEV_NAME;
 #endif
 /* 1 = a public build: named, and without the raw USB peek / poke (test_usbdev.py and test_cpu.py ask). */
 #ifdef PUBLIC_BUILD
