@@ -264,7 +264,27 @@ __attribute__((used)) const volatile uint32_t b2_expect_sum = 0xffffffffu;
 #define FLASH_ECC   ((1u << 25) | (1u << 26))             /* SNECCERR | DBECCERR */
 #define DCIMVAC     (*(volatile uint32_t *)0xe000ef5cu)   /* data cache: forget the line holding this address */
 #define B2_SCANS    16
-#define B2_BYTE     ((uint8_t *)&M->b2chk)
+#define B2_BYTE     ((volatile uint8_t *)&M->b2chk)
+
+/*
+ * ONE STEP AT A TIME WITH INTERRUPTS MASKED, NOT AN ATOMIC. b2chk lives in patch RAM (0x2405ff54..), and stock's MPU
+ * maps 0x24050000..0x2407ffff as Device memory (regions 3-5: TEX 0, C 0, B 1; read off a unit over USB, 2026-10-15).
+ * The __atomic_* builtins compile to LDREXB / STREXB, and an exclusive access to Device memory goes out on the AXI
+ * bus, which has no exclusive monitor: a precise bus fault at the byte (CFSR 0x8200, BFAR = &b2chk), the fault
+ * recorder resets, and the next boot faults on the same LDREXB - the loop some units sat in after installing JOEBOX 1,
+ * with or without BBEXTRA.BIN (Thomas's unit: splash, Pads, reset, every 4.1 s). A plain load or store there is fine.
+ * One core, so masking interrupts is enough to keep the read and the write of each change together.
+ */
+static uint8_t b2_change(uint8_t set, uint8_t clear)
+{
+    /* cpsid / cpsie, not a PRIMASK save and restore: the three callers are tasks, after the scheduler has started,
+       and this FreeRTOS port masks with BASEPRI, which PRIMASK leaves alone. (Unicorn has no MRS PRIMASK either.) */
+    __asm volatile("cpsid i" : : : "memory");
+    uint8_t old = *B2_BYTE;
+    *B2_BYTE = (uint8_t)((old | set) & (uint8_t)~clear);
+    __asm volatile("cpsie i" : : : "memory");
+    return old;
+}
 
 /*
  * 1 = bank 2 is this image's payload and reads cleanly, 0 = it is not, -1 = another task is in here right now.
@@ -280,7 +300,7 @@ __attribute__((used)) const volatile uint32_t b2_expect_sum = 0xffffffffu;
  */
 static int b2_paired(void)
 {
-    if (__atomic_fetch_or(B2_BYTE, B2_SCANNING, __ATOMIC_SEQ_CST) & B2_SCANNING)
+    if (b2_change(B2_SCANNING, 0) & B2_SCANNING)
         return -1;
     int ok = 0;
     bkp_enable();
@@ -303,13 +323,14 @@ static int b2_paired(void)
         }
         bkp_put(B2_MARK, 0);
     }
-    __atomic_and_fetch(B2_BYTE, (uint8_t)~B2_SCANNING, __ATOMIC_SEQ_CST);
+    b2_change(0, B2_SCANNING);
     return ok;
 }
 
 /*
  * b2chk is written from three tasks - the audio task (b2_live), the screen task (cpu_name) and the disk task (the
- * card loader) - so every change to it is one atomic step, never a read followed by a write.
+ * card loader) - so every change to it is one step, never a read and a write that a task switch can come between
+ * (b2_change: interrupts masked, since the exclusives the atomics compile to fault on patch RAM).
  * Two tasks that both find it unchecked may both scan; they OR in the same answer. If a marginal flash made them
  * disagree the pair bits read 3, which is not 1, so the effects stay off: the safe direction.
  */
@@ -320,7 +341,7 @@ uint8_t b2_state(void)
 
 void b2_flag(uint8_t bits)
 {
-    __atomic_or_fetch(B2_BYTE, bits, __ATOMIC_SEQ_CST);
+    b2_change(bits, 0);
 }
 
 /* Has the meter's state been set up (the audio task has run), so that b2chk means something? */
@@ -386,7 +407,7 @@ int b2_rescan(void)
     bkp_put(B2_MARK, 0);         /* what an earlier boot's scan died on has just been erased */
     int ok = b2_paired() > 0;
     if (ok) {
-        __atomic_and_fetch(B2_BYTE, (uint8_t)~B2_PAIR, __ATOMIC_SEQ_CST);
+        b2_change(0, B2_PAIR);
         b2_flag(B2_PAIRED);
     }
     return ok;
