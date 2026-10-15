@@ -30,13 +30,19 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-016 (2026-10-15) — Slip: + = ahead, like a CDJ jog; replaces D-014** (Thomas, after Gate 2: "CCW would slower
+  the record, like a turntable or CCW on a CDJ"). Clockwise pushes the loop ahead of the beat, counter-clockwise drags
+  it behind, and the number follows the knob: `+` ahead, `−` behind. The engine reads the row as it is (the content's
+  shift); test_clipwin.py's direction check: -0.480 plays every sample 12 000 samples later at 120 BPM. Same session:
+  the knob gives single ticks slow, one 1/64 (60 ticks) a turn event fast, snapped to the 1/64 grid, and a turn stops
+  on 0 (held while it goes on; a 250 ms pause or the other direction moves on) — Thomas: "tricky to set back to 0".
 - **D-015 (2026-10-15) — Ideas parked (Thomas: "later").** (a) A colour theme + splash branding, data-only (no cave
   bytes): the UI palette is 33 ARGB32 at `0x080F1D84` in 3.1.9, cyan accent `#09D7F5` at slots 4 6 9 26 28 30 (checked on
   our image; found by unremarkablegarden/blackbox-firmware-hacking, no license there: facts only, credit them). It would
   close JOEBOX issue #1, which is that author's offer. (b) For P4's Looper engine: DaisySP's `Looper` (MIT; JOEBOX already
   vendors DaisySP for Munchi) has record / overdub / replace modes over a buffer. That repo is not a base: data patches
   only, a bare-metal skeleton that boots nothing, and docs wrong for this unit (H750, "the encoder", stock USB-MIDI).
-- **D-014 (2026-10-15) — Slip: + = later** (Thomas). The row's value pushes the hits behind the beat (`+0.480` = half a
+- **D-014 (2026-10-15) — Slip: + = later** (Thomas) — *replaced by D-016 the same evening*. The row's value pushes the hits behind the beat (`+0.480` = half a
   beat late). Inside clipwin.c, slip[] and the latches hold the content's shift, which goes the other way: the tick reads
   the row negated. test_clipwin.py's `store()` speaks the engine's shift (so its numbers stay), `store_raw()` the row's;
   a direction check proves +480 plays every sample 12 000 samples after stock at 120 BPM.

@@ -203,8 +203,9 @@ nobody ran a `0x1C9` post through it.
 |---|---|---|---|---|---|---|
 | `0x1C9` | `Slip:` | 1 (int) | −3840 … +3840 ticks | `clipslip` | 0 | Clip Pos slot 5, both copies |
 
-**Sign (D-014, Thomas 2026-10-15): the row reads + = later** (the hits land behind the beat). `clipwin_tick` stores the
-row *negated* in `slip[]`, which (like the latches and every formula in this README) is the content's shift, + = earlier.
+**Sign (D-016, Thomas 2026-10-15): the row reads + = ahead, − = behind**, like a CDJ jog (clockwise speeds up). That is
+the content's shift every formula in this README uses, so `clipwin_tick` stores the row as it is. (D-014's + = later,
+the row negated, lasted one Gate 2 session.)
 
 - The engine ignores it: the class-B param-set drops ids > `0xF4` except `0x15F`/`0x1DD`, and neither class-B nor
   class-H stores `0x1C8..0x1CA` (X3 ✓ t1, t12). The row is stored and saved by stock (`SetCellParam` →
