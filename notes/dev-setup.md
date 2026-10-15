@@ -33,6 +33,18 @@ full set `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix 
 **Rebuild without `RELEASE=1` before running the suites** (they expect the dev build). The two Gate 0 images of
 2026-10-15 sit in `out/gate0/{cave,full}/BLACKBOX.bin`; `BBEXTRA.BIN` is not installed for now (D-008).
 
+Ghidra (the RE helpers in `ghidra/`): the scripts default to the Homebrew paths and read `GHIDRA_INSTALL_DIR`,
+`JAVA_HOME` and `GHIDRA_PROJ` (where the analysed project lives; default `ghidra/`) from the environment. Keep the
+project outside the clone so a fresh checkout or a loop worktree can reuse it:
+
+```sh
+export JAVA_HOME=/srv/dev/toolchains/jdk-21 GHIDRA_INSTALL_DIR=/srv/dev/toolchains/ghidra_12.1.4_PUBLIC GHIDRA_PROJ=/srv/dev/firmware/ghidra
+mkdir -p "$GHIDRA_PROJ" && /srv/dev/venvs/bb/bin/python ghidra/import.py       # once: import + auto-analysis, 2,577 functions
+/srv/dev/venvs/bb/bin/python ghidra/gq.py callers 0x0808c158                    # then any gq.py query
+```
+
+(dev37 has no system Java; `jdk-21` is a Temurin 21 tarball. mgr-ran has Java 25 on the system.)
+
 Facts: this toolchain's output is not byte-identical to upstream's releases (D-010); the host CPU here has no FMA,
 hence `HOST_TOL = 1e-5` in `test_machine.py` (D-009); `check.sh` always exits 0 and prints `N suites, M failed`,
 so a verdict is `./check.sh 2>&1 | tail -1 | grep -q ', 0 failed'` — that line is the hub's `verify:`.
