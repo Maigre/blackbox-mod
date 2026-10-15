@@ -32,9 +32,10 @@ feature and avoids that path.
 
 ## Facts the design rests on (manuals, 3.1.9 strings, both repos — all read this session)
 
-- **Mk1 Clip mode does not time-stretch**: `Sync` jumps the playhead to the clock-implied position at each Sync
-  step (1/16 … 1 bar / Slice), with a 2-layer crossfade handover (`pad+0x260`, `pad+0x670`). Small BPM mismatch
-  is inaudible; large = stutter. Clip mode plays the **whole WAV**; `samstart/samlen/loopstart/loopend` are ignored
+- **Mk1 Clip mode does not time-stretch**: at each Sync step (1/16 … 1 bar / Slice) stock starts a new *segment*
+  in the same voice at frame `step × len/n`, crossfaded over 256 samples, on the absolute step grid (RE A1/A2; the
+  two layers `pad+0x260` / `pad+0x670` are two voices, not a handover pair). Small BPM mismatch is inaudible;
+  large = stutter. Clip mode plays the **whole WAV**; `samstart/samlen/loopstart/loopend` are ignored
   there — that is why Trim (destructive) exists in today's workflow.
 - Clock: **960 ticks/beat**, bar = 4 beats; `fw_position 0x08069C38(i32 out[2], clock)`; clock = `bufs[0]`
   (`+0x18` float BPM, `+0x30` i64 ticks, `+0x38` playing); block = 128 frames @48 kHz.
@@ -96,8 +97,13 @@ decided), 0 while Loop Len is Off.
 
 ### Engine architecture: feed stock a **virtual file** (do not reimplement the clip player)
 
-Stock keeps a file-linear position `p` per layer, realigns `p` from the clock at Sync steps (crossfading layers)
-and wraps at "file length". We make stock believe the file is `[0, vlen)` with `vlen` = region (or window) length,
+> **Superseded in part by P1 (A2):** there is no clock-derived target and no per-pad "next sync tick". Pieces 3–5
+> are replaced by a per-segment latch at segment start plus a mapped read, piece 6 is four `fw_src_len` sites,
+> piece 7 is a mapped fetch, and the maths below is replaced by A2's content formula. The corrected hook plan is
+> `re/README.md` §2 (P2) and §3 (P3).
+
+Stock keeps a whole-frame position per *segment* (one segment per Sync step, each started at `step × len/n`) and
+wraps by a step-counter compare, not by "file length" (A1/A2). We make stock believe the file is `[0, vlen)` with `vlen` = region (or window) length,
 offset its clock-derived target by Slip, and map virtual `p` → real sample in the reader hook. Stock's own launch
 quantization, Sync realign, wrap, Loop Mode off (one-shot) and crossfade do the rest. Pieces (all bank 1, ≈2.5 KB):
 
@@ -137,8 +143,8 @@ stock maths needed, loses the stock crossfade at our re-anchors (add a 64-sample
   (`patches/clipwin.py`, pattern `patches/filter.py:34-53`). Registration from `master_register` after
   `insert_register` (`src/master.c:180-181`); defaults at the tail of `insert_defaults` (`src/insert.c:95-104`):
   Region 0 (Auto), Slip 0, Loop Len 0. Store 82+3 = 85 ≤ 96. Slip is `fw_register_num` type 1 (int) −3840..3840
-  with a formatter intercept for its id (beats.ticks) and knob acceleration (stock if numeric rows accelerate —
-  RE A3 — else our own step logic).
+  with a formatter intercept for its id (beats.ticks) and our own acceleration curve (A3: type-1 rows do not
+  accelerate; hook the stepper call at `0x080B0DDE`).
 - Waveform screen in Clip mode (P3): hook the Clip branch's "unbind bottom knob" calls (RE A3) with
   `clip_bind_loopstart/_loopend` modelled on `slice_bind_start` (`src/slice.c:255-266`), binding the **stock ids
   0x91/0x92** with `KNOB_STEP` = samples per pixel (fine at full zoom) — the view's generic forward stores them;
@@ -159,8 +165,9 @@ fallback = JOEBOX's Master FX slot (`src/master.c`, TOOLS row, list `Off/VHS/Pri
 touch forwarded to it (RE A5 decides).
 
 **Behaviour** (decided with Thomas):
-- Always-recording **ring** of the source in SDRAM (`master_alloc`, 16-bit stereo like Relapse: 8 s ≈ 1.5 MB; size
-  = `Max Len` bars at the current BPM, capped) — the same `cw_target` maths as the Clip Window applied to a ring:
+- Always-recording **ring** of the source in the FX A Repeater's own SDRAM buffers (X2 route A: 16 s of int16
+  stereo guaranteed; the `master_alloc` pool cannot hold a ring — budget ≤ ~0.4 MB in all; size = `Max Len` bars at
+  the current BPM, capped) — the same `cw_target` maths as the Clip Window applied to a ring:
   region = `[in_point, in_point + max_len)` in the ring, `clip_ticks = max_len` beats.
 - **Touch = loop in** at the grid position (quantized to Loop Len, i.e. the beat/bar that was playing — the KP3
   feel); the loop plays *instead of* the live signal while engaged; **release = back to live** (KP3), knob
@@ -313,7 +320,9 @@ unit runs the **full JOEBOX 1 set + ours, without `BBEXTRA.BIN`**; the feature i
   `output_sha256` byte for byte (README says it is); `./check.sh` → "N suites, 0 failed".
 - **`test_clipwin.py`** (templates `test_preroll.py`, `test_clip.py`, `test_insert.py`, `test_slice.py`): image
   checks (BL decode of every site, both Pos page copies, untouched stock bytes, size ≤ 786,432) · registration/
-  defaults (ids 0x1c8..0x1ca, 3 distinct xml names, labels ≤ 9 chars; Slip formatter renders ±beats.ticks) · `clipwin_tick` with fake stores/clock/SDRAM
+  defaults (ids 0x1c8..0x1ca, 3 distinct xml names, labels ≤ 9 chars; Slip formatter renders ±beats.ticks) ·
+  *(the `cw_target` / `launch_tick` / split-read / doctored-thunk items below are superseded by A2's latch + mapped
+  read; the P2 test list is `re/README.md` §2.9)* · `clipwin_tick` with fake stores/clock/SDRAM
   (no SDRAM → no writes) · `cw_target` vs the Python formula on ~2000 random cases (negative slip, loop > clip, ticks
   before launch) · reader mapping: feature off = bit-identical audio/used/frac to stock; Region=[1000,5000)+slip equals
   stock reads at the mapped positions; split read at the region end = two stock reads concatenated; SP1200 machine
@@ -322,9 +331,10 @@ unit runs the **full JOEBOX 1 set + ours, without `BBEXTRA.BIN`**; the feature i
   process**: Sync steps land at `cw_target`, wrap at `region_end`, slip change realigns at the next Sync step,
   Loop Len 1/4 wraps every 240 ticks, Region File + Slip 0 + Loop Len Off → trace identical to the unpatched image.
 - **Gate 2 recipe (Slip, ~20 min)**: P2 image on the card (BACK+INFO at power-on). Tools: Metro On → Out 1, clock
-  120. Reference clip: empty pad 1 → Load/Record: Rec Input Resam, Length 1 bar, Rec Quant 1 bar, RecToPlay On →
-  PLAY → REC: one bar of the BB's own click lands on pad 1 and plays as a clip (fallback: a 1-bar factory drum loop,
-  Loop On, Quant 1 bar, Sync 1/4). Checks: (1) Slip 0 → clicks coincide, no flam; (2) Slip +0.480 (half a beat) → exactly
+  120. Reference clip: **not** a Resam of the metronome — the click never reaches the Resam tap and the metronome
+  mutes itself while a Resam take is armed (A6). Use a 1-bar factory drum loop (Loop On, Quant 1 bar, Sync 1/4), or
+  Resam one bar of a pad playing a click sample on Out 1 into empty pad 1 (Length 1 bar, Rec Quant 1 bar,
+  RecToPlay On); the live metronome stays the reference to listen against. Checks: (1) Slip 0 → clicks coincide, no flam; (2) Slip +0.480 (half a beat) → exactly
   between the metronome's; (3) +1.000 → coincide again, accent on beat 2; (4) back to 0 while playing → no dropout,
   heard within one Sync step; (5) −0.480 mirrors (2); (5b) slow turn moves 1 tick, fast turn 60 ticks; (6) PSET Save, power-cycle, reload → same value, same sound;
   (7) TOOLS load readout unchanged. Report: `37 wrap blackbox-mod t-006` with seven yes/no.
@@ -342,8 +352,8 @@ unit runs the **full JOEBOX 1 set + ours, without `BBEXTRA.BIN`**; the feature i
 | doctored clock also feeds launch quantization at the same call | prefer hooking `0x08069C64` if it is target-only; else per-site thunk |
 | DJ FX type list not table-driven | Looper in JOEBOX's Master FX slot (`src/master.c` list) with the XY page's touch/X/Y forwarded to it; worst case a dedicated knob page without XY (X/Y on two knobs) |
 | Looper DSP needs bank 2 (cave left ≈ 2 KB after the Clip Window) | design the ring/HPF as a bank-2 leaf (Confetti pattern, `BANK2_SRCS`); then `BBEXTRA.BIN` is required → investigate JOEBOX 1's restart bug in `src/b2load.c` first (our unit's Gate 0 data point), or trim bank-1 code (slip names via stock pointers) |
-| SDRAM pool too small for a 4-bar ring at slow tempos | cap `Max Len` by free SDRAM (8 s ring = 1.5 MB at 16-bit stereo; measure the pool in RE); 8 s = 16 beats @120, the KP3's own cap |
-| input monitor reaches Out 1 after the FX insert | `Source: In` reads the input bus directly (`src/insert.c:48-69`); `Mix` then excludes the raw input unless routed through a pad (JOEBOX "Input on a pad") |
+| SDRAM pool too small for a 4-bar ring at slow tempos | **settled (X2)**: the pool has ≤ 1.43 MB free and is the preset-I/O scratch; the ring lives in the FX A Repeater's buffers (16 s int16 stereo = 4 bars ≥ 60 BPM, 20 s when contiguous); cap `Max Len` = frames × BPM / (48000 × 60 × 4) |
+| input monitor reaches Out 1 after the FX insert | **settled (A6): it does not** — the recorder mixes the monitor into bus 0 before the pads render, so `Source: Mix` hears it; `Source: In` reads input bus 0 in `duck_block`, where it is raw |
 | Save via resample records post-compressor at a few dB less | Tools>Comp Off during Save (the stock manual's own advice), or hook the Resam tap before the compressor (`src/comp.c:237` is at the compressor stage already) |
 | bricking | boot code untouched; installer re-verifies; sector 7 (calibration) never written; SD reinstall of stock = recovery |
 | warranty/support | affected while modded; stock first before asking 1010music anything |

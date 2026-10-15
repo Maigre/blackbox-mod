@@ -43,7 +43,14 @@ mkdir -p "$GHIDRA_PROJ" && /srv/dev/venvs/bb/bin/python ghidra/import.py       #
 /srv/dev/venvs/bb/bin/python ghidra/gq.py callers 0x0808c158                    # then any gq.py query
 ```
 
-(dev37 has no system Java; `jdk-21` is a Temurin 21 tarball. mgr-ran has Java 25 on the system.)
+(dev37 has no system Java; `jdk-21` is a Temurin 21 tarball. mgr-ran's system Java 21/25 are runtimes without
+`javac`, which Ghidra's launcher refuses, so mgr-ran uses a Temurin 21 tarball too: `/srv/dev/toolchains/jdk-21.0.12.1+1`.)
+
+For grep-speed RE, export the analysed project once as text, **outside the clone** (it is 1010music's code):
+`GHIDRA_OUT=/srv/dev/firmware/ghidra-out python ghidra/dump_all.py` writes `out_all.c` (every function decompiled) and
+`python ghidra/export_listing.py /srv/dev/firmware/ghidra-out` writes `listing.txt` (every instruction with its call
+and data references) + `functions.tsv`. On mgr-ran, `/srv/dev/bin/bb-env` sets the whole environment and
+`/srv/dev/bin/gq <cmd>` runs `gq.py` under a lock, so parallel sessions never collide on the project.
 
 Facts: this toolchain's output is not byte-identical to upstream's releases (D-010); the host CPU here has no FMA,
 hence `HOST_TOL = 1e-5` in `test_machine.py` (D-009); `check.sh` always exits 0 and prints `N suites, M failed`,
