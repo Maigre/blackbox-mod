@@ -106,12 +106,15 @@ def read_wav(path):
     return np.where(x & 0x800000, x - 0x1000000, x).astype(float) / 0x800000
 
 
-def first_onset(s):
+def first_onset(s, skip=1000):
+    """the first click that is whole: one in the first `skip` samples may have started before the take (Gate 2: a click
+    96 samples in skewed the alignment by 16)"""
     import numpy as np
     e = np.abs(s)
     if e.max() < 1e-3:
         return None
-    return int(np.argmax(e > 0.3 * e.max()))
+    hits = np.nonzero(e[skip:] > 0.3 * e.max())[0]
+    return int(hits[0]) + skip if len(hits) else None
 
 
 def alsa_card():
@@ -157,7 +160,7 @@ def main(argv):
         print(f"bank {bank:#010x} magic {magic:#010x} scan {scan}")
         for q in range(16):
             if slip[q] or valid[q]:
-                print(f"pad {q + 1:2}: Slip row {-slip[q]:+5} ticks (+ = later)  pad object {pads[q]:#010x}  "
+                print(f"cell row {q >> 2} col {q & 3}: Slip row {slip[q]:+5} ticks (+ = ahead)  pad object {pads[q]:#010x}  "
                       f"latched slots {valid[q]:04b}")
     elif cmd == "crash":
         print_crash()
