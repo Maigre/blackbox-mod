@@ -24,7 +24,7 @@ cd ~/Bakery/blackbox-mod
 ln -sf /srv/dev/firmware/BLACKBOX-3.1.9.bin firmware/BLACKBOX-3.1.9.bin   # gitignored
 ln -sfn /srv/dev/venvs/bb .venv && echo .venv >> .git/info/exclude        # check.sh prefers .venv/bin/python
 export PATH=/srv/dev/toolchains/arm-gnu-14.2/bin:$PATH
-./check.sh            # build (dev), patch every set, run the 30 suites -> "30 suites, 0 failed"
+./check.sh            # build (dev), patch every set, run every suite -> "N suites, 0 failed", exit 0 only then
 ```
 
 Release images (what goes on the card): `RELEASE=1 ./build.sh && python3 patch.py cave` (cave-only) or the
@@ -55,3 +55,26 @@ and data references) + `functions.tsv`. On mgr-ran, `/srv/dev/bin/bb-env` sets t
 Facts: this toolchain's output is not byte-identical to upstream's releases (D-010); the host CPU here has no FMA,
 hence `HOST_TOL = 1e-5` in `test_machine.py` (D-009); `check.sh` always exits 0 and prints `N suites, M failed`,
 so a verdict is `./check.sh 2>&1 | tail -1 | grep -q ', 0 failed'` — that line is the hub's `verify:`.
+
+## Branches, worktrees, releases
+
+| branch | from | what | goes upstream? |
+|---|---|---|---|
+| `main` | upstream `main` | a mirror, fast-forward only, never committed to | — |
+| `maigre` | `main` | the fork's integration: every landed feature + `notes/` + `bench/` + `FORK.md` + the 37.x names | no (features go as their own PRs) |
+| `37loop/blackbox-t-NNN` | `maigre` (or the unlanded branch it stacks on) | one hub task's work; lands on `maigre` when Thomas taps it | no |
+| `feat/<name>`, `fix/<name>` | upstream `main` | ONE feature as a PR: `src/<f>.c` + `patches/<f>.py` + `test_<f>.py` + its README bullet; no `notes/`, no fork names; comments cite `notes/re/...` as "in github.com/Maigre/blackbox-mod" | yes, opened by Thomas |
+
+A PR branch is cut from upstream `main`, the feature's commits cherry-picked without committing
+(`git cherry-pick -n <sha>…`), fork-only wording taken out of the comments (D-0xx ids, names), then `./check.sh` on
+upstream's base before ONE commit. On this box before `feat/linux-dev` is upstream, a branch from his `main` needs a
+`clang` on the PATH (`mkdir /dev/shm/x && ln -s /usr/bin/gcc /dev/shm/x/clang && PATH=/dev/shm/x:$PATH`) and shows
+`test_machine.py`'s four S950 Lo misses (no FMA) — both are what `feat/linux-dev` fixes.
+
+Worktrees on mgr-ran live under `/data/dev/bb-*` (one per branch in flight), the clone in `~/Bakery/blackbox-mod`.
+Each needs its own `firmware/BLACKBOX-3.1.9.bin` link and `.venv` link (above).
+
+A release: bump `src/release.h` (`RELEASE_NAME` 37.x.y, `DEV_NAME` 37.x.yd) in its own commit, then
+`RELEASE=1 ./build.sh && python3 patch.py <the full set>` → `out/<set>/BLACKBOX.bin` (+ `out/BBEXTRA.BIN` when bank 2
+holds code: both files from the SAME build run, or the pair is refused), copied out of `out/` with its sha256 and
+release notes; then a dev rebuild before the suites again. Never commit an image (README "What is and isn't").

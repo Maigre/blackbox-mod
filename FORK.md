@@ -33,8 +33,8 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 | branch | what | state |
 |---|---|---|
 | `fix/restart-loop-ldrex` | the restart-loop fix + a no-exclusives check in test_cpu.py | open: j3threejay/blackbox-mod#2 |
-| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment; `check.sh` exit status | ready, text in the hub |
-| `feat/slip` | Slip on Clip pads (src/clipwin.c, test_clipwin.py) | ready, text in the hub |
+| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment; `check.sh` exit status | ready (PR text prepared, Thomas opens it) |
+| `feat/slip` | Slip on Clip pads (src/clipwin.c, test_clipwin.py) | ready (PR text prepared, Thomas opens it) |
 
 ## Build, install, bench
 
