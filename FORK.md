@@ -24,9 +24,9 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 |---|---|---|
 | 37.0.1 | JOEBOX 1 under the fork's name | `maigre` |
 | 37.0.2 | the **restart-loop fix** (JOEBOX 1's hold: an LDREXB on patch RAM, which stock's MPU maps as Device memory — D-013) | `maigre`; upstream **PR #2** |
-| 37.1.x | **Slip** on Clip pads; the knob: single ticks slow, 1/64 fast, stops on 0; + = ahead like a CDJ jog | branch `37loop/blackbox-t-004` (lands on `maigre` after review); upstream branch `feat/slip` |
-| 37.2.x | **Region** and **Loop Len** on Clip pads, Clip-mode waveform knobs | branch `feat/region` (in progress) |
-| — | **Looper FX** (P4) | branch `feat/looper` (in progress, kept apart until 37.2 is benched) |
+| 37.1.x | **Slip** on Clip pads; the knob: single ticks slow, 1/64 fast, stops on 0; + = ahead like a CDJ jog; then the **stale-latch fix** (a new file under a playing slipped pad reads as stock until the next segment latches it) | branch `37loop/blackbox-t-004` (lands on `maigre` after review); upstream branch `feat/slip` |
+| 37.2.0 | **Region**, **Loop Len** and the **Clip-mode waveform knobs** on Clip pads, with the two fixes: the stale latch (37.1.x's, ported) and the **pre-listen cell** (the browser's pre-listen voice, cell 0x401, is no pad: pad 2's input, insert and LFO retriggers stay off it). Needs this build's `BBEXTRA.BIN` (Loop Len runs from bank 2, D-017) | branch `37loop/blackbox-t-018`, stacked on `37loop/blackbox-t-004`; lands on `maigre` after Gate 3 |
+| — | **Looper FX** (P4) | branch `feat/looper` (local, kept apart until Gate 3) |
 
 ## Upstream pull requests (one feature each, from upstream `main`)
 
@@ -34,7 +34,8 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 |---|---|---|
 | `fix/restart-loop-ldrex` | the restart-loop fix + a no-exclusives check in test_cpu.py | open: j3threejay/blackbox-mod#2 |
 | `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment; `check.sh` exit status | ready (PR text prepared, Thomas opens it) |
-| `feat/slip` | Slip on Clip pads (src/clipwin.c, test_clipwin.py) | ready (PR text prepared, Thomas opens it) |
+| `feat/slip` | Slip on Clip pads (src/clipwin.c, test_clipwin.py) + the stale-latch fix: 2 commits | ready (PR text prepared, Thomas opens it) |
+| `fix/preview-cell` | JOEBOX's insert and LFO retrigger took the browser's pre-listen voice (cell 0x401) for pad 2 | ready (Thomas opens it) |
 
 ## Build, install, bench
 

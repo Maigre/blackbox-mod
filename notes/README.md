@@ -15,7 +15,8 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
 - [`decisions.md`](decisions.md) — dated decisions (D-001 …) with their reasons; newest first.
 - [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root.
 - [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X3) and the hand-off index (`re/README.md`).
-- `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it.
+- `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it:
+  [`features/clip-window.md`](features/clip-window.md) (Slip, Region, Loop Len, the Clip-mode Waveform knobs).
 - `bench/` — reports of the bench gates on the unit (what was measured, with which build).
 
 The hub side (tasks, bench cards, the project log) is `37Projects/projects/blackbox/`. The fork's overview is

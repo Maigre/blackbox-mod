@@ -53,8 +53,9 @@ and data references) + `functions.tsv`. On mgr-ran, `/srv/dev/bin/bb-env` sets t
 `/srv/dev/bin/gq <cmd>` runs `gq.py` under a lock, so parallel sessions never collide on the project.
 
 Facts: this toolchain's output is not byte-identical to upstream's releases (D-010); the host CPU here has no FMA,
-hence `HOST_TOL = 1e-5` in `test_machine.py` (D-009); `check.sh` always exits 0 and prints `N suites, M failed`,
-so a verdict is `./check.sh 2>&1 | tail -1 | grep -q ', 0 failed'` — that line is the hub's `verify:`.
+hence `HOST_TOL = 1e-5` in `test_machine.py` (D-009); `check.sh` prints `N suites, M failed` and exits non-zero
+when any failed, so a verdict is its exit status, or `./check.sh 2>&1 | tail -1 | grep -q ', 0 failed'` — that line is
+the hub's `verify:`.
 
 ## Branches, worktrees, releases
 
