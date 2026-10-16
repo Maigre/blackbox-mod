@@ -31,6 +31,37 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-018 (2026-10-16) — Bank-1 room: the Clip Window's maths in bank 2; Slip and Region need `BBEXTRA.BIN` too;
+  updates D-017** (Thomas at Gate 3: "move everything (that can be moved) to bbextra then so we give back room now",
+  the room Fit and Loop Fade need, `#t-023`). Every piece of the Clip Window's own code that is maths or policy moved
+  from `src/clipwin.c` to `src/clipwin_b2.c`, fourteen leaf `cw_*` functions: H1's latch (Slip's shift, the region,
+  Loop Len's window: the design's R4), H2's slot decode, mapping and seam hint, Region's rule (R9) and its adoption
+  from the class-H object or the store, the lengths H3 tells and the one-step clip's timing, the wrap-grid hold, the
+  poll's clamps and pad check, the guarded drop, Loop Len's take with the Sync param-set message it builds (R6), the
+  Slip knob's tiers and detent (`clipwin_turn` stays the hook; `cw_turn` returns what the stepper gets), the Slip
+  row's beats.ticks text (no `snprintf`), the Waveform bracket. Bank 1 keeps the hooks, every stock call, the bank's
+  set-up and the Waveform's binding; `bank()` asks `b2_live()` first. JOEBOX's own code (Munchi, the filter, master,
+  insert, comp) did not move. Measured (`arm-none-eabi-size -A out/cave.elf`): `.cave` 57 624 → 56 312 B (112 → 1 424
+  B free), `.bank2` 13 540 → 15 412 B; payload header id `0x78b96508` len `0x3c60` sum `0xc8978c56`. Consequences,
+  accepted by Thomas: (1) without this build's `BBEXTRA.BIN` every Clip pad plays as stock: Slip, Region and Loop Len
+  do nothing (the rows stay, turn and save), the Slip row reads stock's plain tick count and turns as a stock number
+  row, the Waveform shows no bracket (its four rows still bind) (README Known issues). (2) Slip 0, Region File and
+  Loop Len Off stay bit-identical to stock with or without bank 2: `test_clipwin.py`'s no-bank-2 checks now wipe the
+  header before the first poll (the first `b2_live()` caches its verdict for the boot), and add a run with all three
+  set (bit for bit every clipwin hook taken out) and one at Slip 0 / File / Off (bit for bit the stock image). (3)
+  Every bank-1 call into bank 2 is behind `b2_live()`, and bank 2 calls nothing outside itself (`test_bank2.py` plants
+  a `bl` in every `cw_*`). (4) What bank 2 is compiled against is now all of `cw_bank` and the pad, class-H, segment,
+  stepper and waveform fields, pinned by `_Static_assert` in `src/clipwin.h`; the layout itself did not change (still
+  `CWN5`, so `bench/bbusb.py` reads it as before). (5) The knob's tuning numbers (`KNOB_MEDIUM`, `KNOB_FAST`,
+  `KNOB_STEP_MEDIUM`, `SLIP_GRID`, `ZERO_DETENT_MS`) live in `src/clipwin_b2.c` now: retuning the knob means a new
+  bank-2 payload. (6) Cost, measured under Unicorn (instructions executed in the cave and bank 2 per engine block, one
+  playing Clip pad, cell 0x102, `test_clipwin.py`'s rig, 300 blocks, the boot's one-time payload check left out):
+  Slip 0 / File 360 → 454, Slip 480 469 → 569, Slip 480 + Region Loop 534 → 634, Loop Len 1/4 409 → 503: about +95 a
+  block a pad (one `b2_live()` per hook call, a few reads of `cpu.c`'s state, and the calls across). Sixteen such pads
+  would be about 1.6 k instructions, roughly 0.1 % of a 2.67 ms block at 480 MHz. Also new: `clipwin_len` reads the
+  four store rows at every site-1 recompute, adopted or not (it read them only when adopting): a few lookups a
+  recompute, not a block. Not measured on the unit (TOOLS' load is the check). A unit with this `BLACKBOX.bin` needs
+  this build's `BBEXTRA.BIN` written by the card loader before any Clip Window check (TOOLS: no `!`).
 - **D-017 (2026-10-16) — Bank-1 overflow goes to bank 2 now; Loop Len needs `BBEXTRA.BIN`; supersedes D-008's
   premise** (Thomas: if the cave overflows, move code to bank 2 rather than trim). The P3 Waveform knobs cost ~510 B
   against 48 B free after Loop Len, so Loop Len's take (`cw_looplen`, `src/clipwin_b2.c`, 522 B) moved to bank 2. On
@@ -51,7 +82,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   to write bank 2: TOOLS must show no `!` before the Loop Len checks. The restart loop D-008 steered around turned out
   to be the exclusive load in `b2_paired`, fixed in 37.0.2 (D-013). (4) What bank 2 is compiled against (the
   `cw_bank` and pad offsets in `src/clipwin.h`) is pinned by `_Static_assert`; bank 2's id still hashes its `.c` files
-  only, so a bank-1-only edit of the header needs no reflash.
+  only, so a bank-1-only edit of the header needs no reflash. *Updated by D-018: not only Loop Len, all of the Clip
+  Window's maths is in bank 2 now, so Slip and Region need `BBEXTRA.BIN` too.*
 - **D-016 (2026-10-15) — Slip: + = ahead, like a CDJ jog; replaces D-014** (Thomas, after Gate 2: "CCW would slower
   the record, like a turntable or CCW on a CDJ"). Clockwise pushes the loop ahead of the beat, counter-clockwise drags
   it behind, and the number follows the knob: `+` ahead, `−` behind. The engine reads the row as it is (the content's

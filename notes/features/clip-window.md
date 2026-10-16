@@ -6,18 +6,19 @@ stale-latch fix (`37loop/blackbox-t-004`), and adds Region, Loop Len and the Wav
 built on `feat/region`, ported onto the fix), a "bank 1 room" commit before the knobs, and JOEBOX's pre-listen cell fix.
 Status on 2026-10-16:
 
-- All four parts pass under Unicorn: `test_clipwin.py` 359 checks, `test_bank2.py` 25, `./check.sh` 31 suites, 0
-  failed.
+- All four parts pass under Unicorn: `test_clipwin.py` 363 checks, `test_bank2.py` 39, `./check.sh` 31 suites,
+  0 failed (after D-018's move of the maths to bank 2).
 - Slip v1 was measured on the unit at Gate 2 (37.1.0d, `notes/bench/2026-10-15-gate2-slip.md`).
 - The knob rework and the CDJ sign (37.1.1), Region, Loop Len and the Waveform knobs have not been on the unit yet.
   That is Gate 3, and §6 is its recipe.
 - The knob on the unit, 37.2.0d (2026-10-16), Thomas: "blocking at 0 is not great. maybe just a small "pause" not
   a complete block break would help. also accelerator is too fast it seems". The v2 (37.2.1d) answers both; its feel
   is not yet approved.
-- **This build needs both files from the same build on the card**: `BLACKBOX.bin` and `BBEXTRA.BIN`. Loop Len's
-  take and its window run in flash bank 2 (D-017).
+- **This build needs both files from the same build on the card**: `BLACKBOX.bin` and `BBEXTRA.BIN`. The maths of
+  every Clip Window hook runs in flash bank 2 (D-017, D-018, §3.5): without the matching `BBEXTRA.BIN` every Clip
+  pad plays as on stock, and Slip, Region and Loop Len do nothing.
 
-Other documents: the decisions are `notes/decisions.md` (D-002, D-003, D-004, D-016, D-017) and the reverse
+Other documents: the decisions are `notes/decisions.md` (D-002, D-003, D-004, D-016, D-017, D-018) and the reverse
 engineering behind it is `notes/re/README.md` §2–§3 (step notes a1, a2, a3, x3). Users read the README bullets and
 Known issues. The research model of the hooks is outside the repo, in `/srv/dev/firmware/re-scratch/a2/r2/cw2.py`
 (with `k_region.py`, `k_looplen.py`, `k_seam.py`).
@@ -51,7 +52,8 @@ their defaults the pad plays exactly as stock (bit for bit, under emulation).
   and a 1/64 is 60 ticks.
 - **Knob feel** (v2, 37.2.1; the same code on the Pos tab and on the Waveform's BL: both turn through the one
   type-1 turn path, `clipwin_turn`). The tiers go by the stock accelerator's speed m, 1..6 (about 8/7 × the counts
-  per ms over the last 8 events). Every number is a `#define` at the top of the knob section in `src/clipwin.c`:
+  per ms over the last 8 events). Every number is a `#define` at the top of the knob section in `src/clipwin_b2.c`
+  (`cw_turn`, bank 2 since D-018: retuning means a new `BBEXTRA.BIN`, D-018 (5)):
   - **Slow** (m < `KNOB_MEDIUM` = 3): single ticks, one per 40 counts. At speed 2 it gives one per 20 counts.
   - **Medium** (m < `KNOB_FAST` = 5, so speeds 3 and 4, about 2.6–4.4 counts/ms): one `KNOB_STEP_MEDIUM` = 10 ticks
     (a 1/384 note) per turn event, snapped to the 10-tick grid. From `+0.025` the first medium step lands on `+0.030`.
@@ -222,28 +224,32 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 
 | hook | site (stock function) | stock call | ours | job |
 |---|---|---|---|---|
-| H1 | `0x0806578C` (`FUN_08065550`, segment start) | `bl 0x0806375C` prefetch | `clipwin_seg_start_b` → `clipwin_seg_start(src, pos, k = [sp+0x20], pad = r4)` | latch slot k (Slip, region, Loop Len window from bank 2's `cw_window`, the file's length), prefetch where it will really read |
-| H1′ | `0x0806541A` (`FUN_08065290`, slice-marker segment) | `bl 0x0806375C` | `clipwin_slice_start_b` → `clipwin_slice_start(src, pos, k = [sp+4], pad)` | invalidate slot k, clear its `h1` bit, prefetch unchanged |
-| H2 | `0x08066622` (`FUN_08066454`, segment reader; already JOEBOX's `clip_read_b`) | `bl 0x080662E4` | `src/filter_thunk.S` `clip_read_b` now ends in `b.w clipwin_read` | mapped read: stock's reader at the real position, or its work done over two fetches at a seam; machine modes through `filter.c`'s `clip_read_ring`; the seam hint; stock's read when the file's length is not the latch's |
-| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | adopt a new region (at this pad's wrap, or when no layer plays); answer the region's length (Beat Count Auto, frames per step) |
+| H1 | `0x0806578C` (`FUN_08065550`, segment start) | `bl 0x0806375C` prefetch | `clipwin_seg_start_b` → `clipwin_seg_start(src, pos, k = [sp+0x20], pad = r4)` | latch slot k (bank 2's `cw_latch`: Slip, region, Loop Len window, the file's length), prefetch where it will really read |
+| H1′ | `0x0806541A` (`FUN_08065290`, slice-marker segment) | `bl 0x0806375C` | `clipwin_slice_start_b` → `clipwin_slice_start(src, pos, k = [sp+4], pad)` | invalidate slot k, clear its `h1` bit (`cw_slice`), prefetch unchanged |
+| H2 | `0x08066622` (`FUN_08066454`, segment reader; already JOEBOX's `clip_read_b`) | `bl 0x080662E4` | `src/filter_thunk.S` `clip_read_b` now ends in `b.w clipwin_read` | mapped read (`cw_map`: the real position, the seam hint): stock's reader at the real position, or its work done over two fetches at a seam; machine modes through `filter.c`'s `clip_read_ring`; stock's read when the file's length is not the latch's |
+| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | `cw_len`: adopt a new region (at this pad's wrap, or when no layer plays; the four store rows read here for it); answer the region's length (Beat Count Auto, frames per step) |
 | H3 site 3 | `0x08064C5A` (recompute, second length) | `bl 0x080636F0` | `clipwin_len_steps_b` (r3 = r9 = the clip in output samples) | the region's length; a synced clip of one step gets `+0x204` = the clip, not the length |
 | H3 site 0 | `0x0806561E` (`FUN_08065550`'s `> 0` check) | `bl 0x080636F0` | `clipwin_len_b` | the region's length |
 | H3 site 2 | `0x08065690` (the last step's end, `len − 1`) | `bl 0x080636F0` | `clipwin_len_end_b` | seamless wrap: 1 (end = 0) when Loop On and not Trigger; else the region's length |
-| H3′ | `0x08066FAC` (render, the synced wrap) | `bl 0x08064A94` recompute | `clipwin_wrap_b` (r2 = sp + 0x58, the next pass's tick) → `clipwin_wrap(pad, clock, t)` | the recompute with this pad marked wrapping (it adopts); put a grid-moving region back until a wrap on its grid |
+| H3′ | `0x08066FAC` (render, the synced wrap) | `bl 0x08064A94` recompute | `clipwin_wrap_b` (r2 = sp + 0x58, the next pass's tick) → `clipwin_wrap(pad, clock, t)` | the recompute with this pad marked wrapping (it adopts); put a grid-moving region back until a wrap on its grid (`cw_hold`) |
 | H3′ | `0x08066E9E` (render, the unsynced wrap) | `bl 0x08064A94` | `clipwin_wrap_free_b` (r2 = 0) | the same, no grid check |
-| F | `0x080B0746` (set value) and `0x080B0E18` (type-1 turn) | `bl 0x080B0528` formatter | `clipwin_format(knob)` | Slip's beats.ticks text (type 1 or 9, id `0x1C9`, not frozen) |
-| K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob: slow ticks, medium 10-tick grid, fast 1/64 grid, a detent on 0 |
+| F | `0x080B0746` (set value) and `0x080B0E18` (type-1 turn) | `bl 0x080B0528` formatter | `clipwin_format(knob)` | Slip's beats.ticks text (`cw_text`; type 1 or 9, id `0x1C9`, not frozen) |
+| K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob (`cw_turn`): slow ticks, medium 10-tick grid, fast 1/64 grid, a detent on 0 |
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0` | `0x1C8, 0x1C9, 0x1CA` | the three rows in slots 5–7 |
-| tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store; the guarded drop; Loop Len's take (bank 2) and its Sync |
-| H4 | none: `clipwin_tick` → `set_sync` | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
+| tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
+| H4 | none: `clipwin_tick` sends `cw_looplen`'s message | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
 | R | `master_register` (`src/master.c`) | — | `clipwin_register(table)` | `fw_register_list` Region (3 names), `fw_register_num` Slip (type 1, ±3840), `fw_register_list` Loop Len (8 of stock's own strings) |
 | D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the three ids at 0; a pad store holds 85 of JOEBOX's 96 |
 | M | `master_alloc` (`src/master.c`) | — | `EXTRA_BYTES` `0x2D900` (includes `0x800` for `cw_bank`) | the bank's magic cleared at `block + 0x83900` every boot |
 
 H5, the playhead message `0x4A` at `0x080668FC`, is not built. The playhead stays stock's.
+
+Every `cw_*` named above is in bank 2 (§3.5); bank 1 keeps the hooks and the stock calls. Without this build's bank 2
+each hook is a straight pass to stock: no latch, no region, no forced Sync, stock's text and stepper for the Slip
+knob, no bracket. The Waveform still binds its four rows (TL and TR are stock's own Loop Start and End).
 
 ### 3.3 State: `cw_bank`
 
@@ -253,7 +259,8 @@ the stale-latch fix (the latch's `len`), `CWN3` the Region step, `CWN4` arrived 
 knob's v2 (37.2.1: the bench fields at `0x720`, `zero_hold` gone). (On `feat/region`,
 without the fix, `CWN2`/`CWN3` were Region/Loop Len and the bank used `0x620`.) When the magic is wrong the bank is
 cleared whole, with a word loop, and the magic set. `master_alloc` clears the magic at every boot, because SDRAM keeps
-its contents through a reset. If there is no block, every hook passes through. There is no `.data` or `.bss`, and no
+its contents through a reset. If there is no block, or no matching bank 2 (`bank()` asks `b2_live()` first, and
+nothing sets the bank up without it), every hook passes through. There is no `.data` or `.bss`, and no
 exclusive access anywhere (D-013).
 
 | offset | field | meaning |
@@ -275,9 +282,10 @@ exclusive access anywhere (D-013).
 | `0x620` | `i32 sf[16][4]` | Slip's part of `latch[q][k].delta`, frames |
 | `0x720` | `i16 knob_counts; u8 knob_speed` | the Slip knob's last turn event: its counts and the accelerator's speed (`bbusb.py knob`) |
 
-The offsets that bank 2 reads are pinned by `_Static_assert` in `src/clipwin.h`: `valid`, `latch`, `origin`, `ll`,
-`forced`, `sf`, and the pad and segment fields. Moving one makes a new bank-2 payload. Another assert pins the knob's
-fields and the size, which `bench/bbusb.py knob` and `test_clipwin.py` read.
+Bank 2 reads and writes every field but `magic` and `scan` (D-018), so every offset it is compiled against is pinned
+by `_Static_assert` in `src/clipwin.h`, with the pad, class-H, segment, stepper and waveform fields and the settings it
+uses. Moving one makes a new bank-2 payload. Another assert pins the knob's fields and the size, which
+`bench/bbusb.py knob` and `test_clipwin.py` read. The D-018 move changed no offset: the magic stays `CWN5`.
 
 ### 3.4 The maths
 
@@ -346,9 +354,9 @@ latches its region, with Slip forced to 0.
 - **When a new region is taken.** A new region is adopted only at site 1, and only while this pad's wrap recompute
   runs (`wrap == q + 1`) or while neither of its layers plays. A change in mid-pass would leave the steps already made
   pointing past the new end: 11 418 or 23 490 silent samples (a2).
-- **The wrap grid.** After the wrap's recompute, `clipwin_wrap` compares the next pass's start tick `t` (the render's
-  i64 at `[sp + 0x58]`) with the new `+0x230`. If `t mod grid ≠ 0` and the region changed, it puts the old region
-  back and runs the recompute again, so the pass plays as it was. Without this, stock snaps that pass's end into the
+- **The wrap grid.** After the wrap's recompute, `clipwin_wrap` asks bank 2's `cw_hold`, which compares the next
+  pass's start tick `t` (the render's i64 at `[sp + 0x58]`) with the new `+0x230`. If `t mod grid ≠ 0` and the region
+  changed, it puts the old region back, and `clipwin_wrap` runs the recompute again, so the pass plays as it was. Without this, stock snaps that pass's end into the
   past and starts two passes at once at gain 2, which is what stock does on a live Beat Count change from 2 to 4.
   Ticks past 2³² skip the check.
 
@@ -372,12 +380,14 @@ latches its region, with Slip forced to 0.
      `t = 3840 >> (idx − 1)`, and halve t while `t > 240` and t does not divide W, origin and clip. It is sent when
      the pad's `+0x220 ≠ t`, so it is re-sent if the app re-sends Sync. `forced = (idx ≠ user's)`. At Off, a forced
      pad gets the user's Sync back (idx ≤ 6).
-  5. It returns `(idx + 1) << 8 | moved`. Bank 1 sends the Sync through the param-set (H4). On `moved`, it does the
-     guarded drop, so H1 re-latches the pending steps.
+  5. It returns bit 0 = moved and bit 1 = `msg` holds the class-B param-set's `{0x39, cell, 0x94, idx}` for the
+     Sync. `clipwin_tick` (bank 1) sends it through the param-set (H4), then, on `moved`, does the guarded drop, so
+     H1 re-latches the pending steps.
 
-**The guarded drop** (`clipwin_tick`, on a Slip or Loop Len change). Each slot that is active, not done and has
-delay > 0 is marked done. The exception is a slot with `+0x3C` set: dropping a pending launch would sound it at once,
-off its bar. Such a slot is latched again in place if H1 made it.
+**The guarded drop** (bank 2's `cw_drop`, from `clipwin_tick` on a Slip or Loop Len change). Each slot that is
+active, not done and has delay > 0 is marked done. The exception is a slot with `+0x3C` set: dropping a pending
+launch would sound it at once, off its bar. `cw_drop` returns those slots that H1 made, and `clipwin_tick` latches
+them again in place (`cw_latch` with pos −1) and prefetches there.
 
 **The Slip knob.** The stepper has 400 counts per step for type 1, and the stock accelerator speed is m (1..6).
 
@@ -391,23 +401,44 @@ off its bar. Such a slot is latched again in place if H1 made it.
 
 ### 3.5 Bank 2
 
-Two functions of `src/clipwin_b2.c` run from bank 2 (D-017, Thomas: move to bank 2 rather than trim): `cw_window`,
-Loop Len's per-segment window (moved by the "bank 1 room" commit, when the port of the stale-latch fix had left Loop
-Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform knobs came).
+The maths and the policy of every hook are in `src/clipwin_b2.c`, which runs from bank 2 (D-017, then D-018 — Thomas
+at Gate 3: "move everything (that can be moved) to bbextra then so we give back room now"). Loop Len's window
+(`cw_window`) moved first, in the "bank 1 room" commit, then its take (`cw_looplen`) with the Waveform knobs; D-018
+moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 
-- They are leaf code: they read the bank and the pad they are handed and call nothing outside their file.
-  `test_bank2.py` enforces that, because bank 2 lives through every bank-1 install and a call out of it would go
-  stale; it plants a `bl` in each to prove its scan still sees one.
-- `latch()` asks `cw_window` and `clipwin_tick` calls `cw_looplen` only when `b2_live()` holds, which means this
-  build's payload is up there and read clean. Otherwise Loop Len stays Off: the row is kept as stored but never taken,
-  and no Sync is forced.
+| function | for | what it does |
+|---|---|---|
+| `cw_pad` | every pad hook, `cw_tick` | the pad's index 0..15 from its cell, −1 for anything else |
+| `cw_len` | H3 | adopt the region at site 1 (class-H points, or the store's with the last good pair), Region's rule, the length told, the seamless last step, the one-step clip's timing |
+| `cw_hold` | H3′ | the wrap-grid hold: put the region back when it would move the grid off this pass |
+| `cw_latch`, `cw_window` | H1, the poll | the latch: Slip's shift, the region or the file, Loop Len's window; the prefetch point |
+| `cw_slice` | H1′ | clear slot k's bits |
+| `cw_slot`, `cw_map` | H2 | the slot the reader's fraction belongs to and its latch; the real position and the one seam hint per crossing segment |
+| `cw_tick`, `cw_looplen`, `cw_drop` | the poll | the clamps, the pad check, Loop Len's take and its Sync message (R6), the guarded drop and the launches to latch again |
+| `cw_turn` | K | the knob's tiers and its detent (`KNOB_*`, `SLIP_GRID`, `ZERO_DETENT_MS` live here) |
+| `cw_text` | F | `+b.ttt`, as `"%c%d.%03d"` would print it |
+| `cw_bracket` | W | Region's rule over the view's store, the bracket's fields and dirty flag |
+
+- They are leaf code: they read and write what they are handed (the bank, the pad and its segments, the stepper, the
+  waveform widget, a message buffer) and call nothing outside their file. `test_bank2.py` enforces that, because bank 2
+  lives through every bank-1 install and a call out of it would go stale; it plants a `bl` in each to prove its scan
+  still sees one.
+- Bank 1 (`src/clipwin.c`) keeps the hooks, every stock call (the settings lookup, the source's length and prefetch,
+  the readers and the kernel, the class-B param-set, the recompute, the knob's ring, stepper, text and redraw), the
+  bank's set-up and the Waveform's knob binding. `bank()` asks `b2_live()` first, and `clipwin_format`,
+  `clipwin_turn` and the bracket ask it too, so a bank-2 function runs only when this build's payload is up there and
+  reads clean. Otherwise every hook passes through to stock (§3.2).
+- Slip 0, Region File and Loop Len Off stay bit-identical to stock with bank 2 and without it (`test_clipwin.py` §3,
+  §11). What costs: one `b2_live()` (three reads of `cpu.c`'s state) per hook call, and bank 1's argument set-up:
+  about +95 instructions per block per playing Clip pad, measured under Unicorn (D-018 (6)), not yet on the unit.
 - Bank 2's id hashes its `.c` files only (`build.sh`). Bank 1 pairs with the payload on its sum, and a bank-1-only
   edit of `clipwin.h` leaves bank 2's bytes, and so needs no reflash.
 
-**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 57 624 of 57 736 B (112 free) and `.bank2`
-13 540 B. The bank-2 payload header is id `0x2c4676ca`, len `0x3500`, sum `0x73f8a581`. The previous payload, release
-37.1.1 (and 37.1.x with the stale-latch fix), was id `0xf5f0171b`, len `0x3280`; `feat/region`'s 37.2.0 build had id
-`0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md question 5.
+**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 56 312 of 57 736 B (1 424 free) and `.bank2`
+15 412 B. The bank-2 payload header is id `0x78b96508`, len `0x3c60`, sum `0xc8978c56`. Before D-018 (37.2.1):
+`.cave` 57 624 (112 free), `.bank2` 13 540, id `0x2c4676ca`, len `0x3500`, sum `0x73f8a581`. The previous payloads,
+release 37.1.1 (and 37.1.x with the stale-latch fix), id `0xf5f0171b`, len `0x3280`; `feat/region`'s 37.2.0 build,
+id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md question 5.
 
 ### 3.6 What stays stock
 
@@ -426,6 +457,8 @@ Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform kno
 
 **Slip**
 
+- It needs this build's bank 2 (§3.5), as Region and Loop Len do. Without it the row is there and saves, but does
+  nothing; it reads stock's plain number of ticks and turns as a stock number row.
 - It does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
 - On Sync None, a live change waits for the clip's restart (len − 257 samples).
 - `+1.500` reads as beats.ticks, which is 1.52 beats, not one and a half.
@@ -437,7 +470,8 @@ Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform kno
 
 **Region**
 
-- It does nothing on the pads Slip ignores. The playhead line is wrong on a pad playing a region.
+- It does nothing on the pads Slip ignores, nor without this build's bank 2 (no bracket either). The playhead line is
+  wrong on a pad playing a region.
 - Clip → Sample clears the loop points (stock).
 - A Beat Count that is not Auto, including one read from the WAV's `acid` chunk at load, is taken as the region's
   length in beats.
@@ -475,9 +509,9 @@ Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform kno
 - **Off drops the pending step.** Stock re-makes it at once, so its prefetch leads by only the rest of the current
   step, and it may jump far back on a 2–4-bar clip (question 9). If misses show, add one prefetch of the in-phase
   position at Off.
-- **Without this build's bank 2**, the row is there, turns and saves, but does nothing. An older payload in bank 2
-  also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open question 30, Thomas's call:
-  it measured +48 B of the 112 free.
+- **Without this build's bank 2**, the row is there, turns and saves, but does nothing, as Slip and Region (D-018).
+  An older payload in bank 2 also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open
+  question 30, Thomas's call: it measured +48 B, which the cave now has (1 424 B free).
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
 - A take right after a file change (review F1, release 37.2.0): Loop Len turned Off and on again within two Sync
@@ -496,13 +530,14 @@ Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform kno
 
 **Space**
 
-- Bank 1 has 112 B free, after the "bank 1 room" commit took 216 B back (Loop Len's window to bank 2, -116 B; a stale
-  bank cleared with a word loop, -64 B; `pad_store()` one multiply, -24 B; `clipwin_defaults()` a loop, -8 B). The size
-  of the id check in `b2_ok` / `header_ok` moves by a few bytes when the bank-2 id changes, and the linker refuses an
-  overflow.
-- What else could go: only Loop Len's code is bank-2 by rule (Slip and Region work without bank 2), and what is left of
-  it in bank 1 is calls and the Sync message (about 40 B if `cw_looplen` built the message itself). More than that means
-  Slip/Region maths in bank 2 (they would then need `BBEXTRA.BIN`) or JOEBOX's Munchi engine split out of `munchi.cpp`.
+- Bank 1 has 1 424 B free (`.cave` 56 312 of 57 736), after D-018 moved the Clip Window's maths to bank 2 (−1 312 B;
+  `clipwin.o` 3 561 → 2 243 B, `clipwin_b2.o` 644 → 2 516 B). Before it: 112 B, after the "bank 1 room" commit took
+  216 B back (Loop Len's window to bank 2, −116 B; a stale bank cleared with a word loop, −64 B; `pad_store()` one
+  multiply, −24 B; `clipwin_defaults()` a loop, −8 B). The size of the id check in `b2_ok` / `header_ok` moves by a
+  few bytes when the bank-2 id changes, and the linker refuses an overflow.
+- What is left of the Clip Window in bank 1 is the hooks and their stock calls, `clipwin_register` and the Waveform's
+  binding: what remains to move is a few bytes of glue each (the slot decode in `clipwin_read`, its count and seam
+  test). More than that means JOEBOX's own code (Munchi's engine split out of `munchi.cpp`), which is not ours to move.
 
 ## 5. How each piece was tested
 
@@ -533,15 +568,15 @@ frame it plays and the gain it plays at.
 | 6 gating | Slicer with and without markers, Sync Slice + markers, cell `0x401`, `fw_src_len` 0 / sentinel, no SDRAM | plays exactly as with the hooks out, no latch |
 | 7 reader | seam reads mono and stereo, rate 1 / 0.7 / 2.3 / 8, a 40-frame file; every machine mode at, before and after the seam; the filter object's rate | bit for bit what the stock reader (or `filter.c`'s `clip_read`) makes of the file turned circular |
 | 8 rate, stereo | a 44.1 kHz file, stereo 48 and 44.1 kHz, Pitch +7 | every sample stock + slip_f, the same gain |
-| 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path: each speed 1..6 and its tier's step, the grid snaps, the clamps, the detent (held for the events under `ZERO_DETENT_MS` after the arrival, a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest, medium and slow arrivals), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin.c`'s `#define`s; other knobs post exactly as on stock. Against 37.2.0d's knob 23 of these fail (the wall: a steady stream never passed 0) |
+| 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path: each speed 1..6 and its tier's step, the grid snaps, the clamps, the detent (held for the events under `ZERO_DETENT_MS` after the arrival, a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest, medium and slow arrivals), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against 37.2.0d's knob 23 of these fail (the wall: a steady stream never passed 0) |
 | 10 Region | the rule over 20 cases; each H3 site; adoption only at the wrap; the wrap-grid hold; the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
-| 11 Loop Len | `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, neither `cw_looplen` nor `cw_window` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
-| 12 Waveform | the bind order, the four rows and texts, the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out |
+| 11 Loop Len | `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
+| 12 Waveform | the bind order, the four rows and texts, the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
 
-**Elsewhere.** `test_bank2.py` (25 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of an
-instruction from a planted `bl`, using the linker's mapping symbols, and plants one in each of `cw_looplen` and
-`cw_window`. `test_insert.py` and `test_lfo.py` hold the pre-listen cell `0x401` off pad 2. `./check.sh` runs all 31
-suites.
+**Elsewhere.** `test_bank2.py` (39 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of
+an instruction from a planted `bl`, using the linker's mapping symbols, and plants one in each of the fourteen `cw_*`
+functions, at its first instruction and at its first division where it has one. `test_insert.py` and `test_lfo.py`
+hold the pre-listen cell `0x401` off pad 2. `./check.sh` runs all 31 suites.
 
 **On the unit.** Gate 2 ran on 37.1.0d, with Slip v1 under D-014's sign and no bank 2:
 
@@ -639,13 +674,14 @@ not. Three things to answer along the way:
 
 - whether a preset load stops a playing pad (Loop Len's F4 rule);
 - whether the bracket's lead over what you hear is acceptable;
-- whether Loop Len without bank 2 should read `---` (question 30).
+- whether Loop Len (and now Slip and Region) without bank 2 should read `---` (question 30).
 
 ## 7. Files
 
-- `src/clipwin.c`: bank 1, the hooks, the poll, the reader, the knob and the Waveform.
-- `src/clipwin_b2.c`: bank 2, Loop Len's take and its window.
-- `src/clipwin.h`: the shared pad fields, `cw_bank`, and the asserts that pin bank 2's offsets.
+- `src/clipwin.c`: bank 1, the hooks and their stock calls (the poll, the reader, the knob, the Waveform's binding).
+- `src/clipwin_b2.c`: bank 2, the maths and the policy of every hook (§3.5).
+- `src/clipwin.h`: the shared pad, knob and waveform fields, `cw_bank`, the `cw_*` prototypes, and the asserts that pin
+  bank 2's offsets.
 - `src/clipwin_thunk.S`: the H1, H1′, H3 and H3′ thunks.
 - `src/filter_thunk.S`: `clip_read_b` → `clipwin_read`.
 - The chain lines are in `src/duck.c` (`clipwin_tick(engine)`), `src/master.c` (`clipwin_register`, `EXTRA_BYTES`,

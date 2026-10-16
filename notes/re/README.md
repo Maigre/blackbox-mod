@@ -152,19 +152,20 @@ is one frame off on non-integer fps (88 615 frames, Slip 960, step 1). The latch
 to stock's at every sample). Note `clip = tps × n` can differ from Beat Count × 960 when n does not divide it; use
 the product, as the model did.
 
-*As built* (`latch()` in `clipwin.c`):
+*As built* (`cw_latch` in `clipwin_b2.c`, bank 2 since D-018; `latch()` in `clipwin.c` before):
 
 - `rs`/`vlen` are the region's when one applies (`region_of`), else `0`/`len`.
 - `slip_f` is computed over `vlen` in double: floor, no 64-bit division in the cave. It is 0 when `clip` is 0, and
   is kept as `sf[q][k]`.
 - `delta = fold(slip_f + ((int)((float)w × fps) − start, if a Loop Len window applies), vlen)`.
 - The prefetch is at `max(0, rs + fold(fold(start, vlen) + delta, vlen) − 8)`.
-- `fold` is the floored modulo, out of line to save bytes.
+- `fold` is the floored modulo: `fold2` in bank 2 (out of line, as bank 1's `fold` was, to save bytes).
 - The latch keeps `len` too, the FILE's length (`fw_src_len` at H1, never the region's): H2 reads a slot whose `len`
   differs from the source's now (a new file under the playing pad: notes/re/x3 §§3-4, the browser's pre-listen) as
   stock does, and the next segment latches the new file (the stale-latch fix, `37loop/blackbox-t-004`).
 - The Loop Len window term is bank 2's `cw_window` (on `37loop/blackbox-t-018`, since "bank 1 room"), asked only when
-  Loop Len is taken and `b2_live()` holds.
+  Loop Len is taken and `b2_live()` holds. Since D-018 (`37loop/blackbox-t-021`) the whole latch is bank 2's
+  (`cw_latch`), with every other hook's maths: without this build's bank 2 nothing is latched and the pad plays stock.
 
 What Slip means musically: at each step start the content is the file's own position `j steps + slip ticks`, so the
 offset is in the grid's ticks even for a file whose own tempo differs (*inferred* from the formula; the mismatched
@@ -292,7 +293,8 @@ the row negated, lasted one Gate 2 session.)
   *v2 (37.2.1, after Thomas tried 37.2.0d: "blocking at 0 is not great ... accelerator is too fast it seems"):*
   three tiers, m < 3 as above, m 3–4 one 10-tick step a turn event onto the 10-tick grid, m ≥ 5 the 1/64 step;
   and 0 is a detent: the same turn passes it 150 ms after it arrived there (`zero_at` is the arrival, no longer
-  refreshed by each event). Every number is a `#define` in `src/clipwin.c`; the feature doc
+  refreshed by each event). Every number is a `#define` in `src/clipwin_b2.c` (`cw_turn`, bank 2 since D-018); the
+  feature doc
   (`notes/features/clip-window.md` §2) has the reasons. Each event's counts and speed are left in `cw_bank + 0x720`
   for `bbusb.py knob`.
 
@@ -495,6 +497,9 @@ corrected accordingly.
     (behind `b2_live()`, as the take; -116 B), `bank()` clears a stale bank with a word loop (-64 B), `pad_store()` is
     one multiply (-24 B), `clipwin_defaults()` a loop (-8 B): 216 B. The knobs then left 176 B, the pre-listen cell fix
     112 (§4 question 5). `test_bank2.py` plants its `bl` in both bank-2 functions.
+  - D-018 (`37loop/blackbox-t-021`, "bank 1 room" for Fit and Loop Fade): every movable piece of the Clip Window's
+    maths went to bank 2, fourteen leaf `cw_*` functions in `src/clipwin_b2.c` (notes/features/clip-window.md §3.5),
+    56 312 B of the cave used (1 424 free); Slip and Region now need this build's `BBEXTRA.BIN` as Loop Len does.
 - **Workflow traps**: Clip → Sample wipes the loop points (X3 ✓ t4); a Clip pad saved/trimmed by stock writes no
   `smpl` loop; an imported `acid` beat count refers to the whole file (rule needed when Region resolves to Loop).
 
@@ -544,7 +549,7 @@ corrected accordingly.
 | 2 | Slip on a machine-mode (Fidelity) pad, and the seam block | P2 | **settled for the reader** (`test_clipwin.py` §7: every machine mode at, before and after the seam, bit for bit `clip_read` on the circular file); not in the whole process |
 | 3 | A negative type-1 value of a new id through preset save → load | P2 | Gate 2 kept a positive one (`+0.120`); a negative one is Gate 3 check 13 (`../features/clip-window.md` §6); or Unicorn of the writer `0x08095328` + loader `0x08096AD8` on one pad store |
 | 4 | Counts per knob revolution, GUI pass period (K tuning) | P2 | USB peek: `0x24001A30 + 4k` before/after one turn; `0x2402EEE0` in a loop |
-| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region; **57,688 (48 free) after Loop Len** and its review fixes (`fold` out of line saves 68 B), which fit in bank 1 (`.bank2` 12,896, unchanged; `arm-none-eabi-size -A out/cave.elf`). **57,720 (16 free) after the Waveform knobs**, with Loop Len's take moved to bank 2 (`.bank2` 13,418, +522: `clipwin_b2.c`). A unit then needs this build's `BBEXTRA.BIN` (`BANK2_NEW=1` where `card-backup/` holds the deployed payload). On `37loop/blackbox-t-018`: 55,976 after the stale-latch fix; 56,816 after Region; **57,736 (0 free) after Loop Len**; 57,520 (216 free) after "bank 1 room" (`.bank2` 13,022: Loop Len's window); 57,560 (176 free) after the knobs (`.bank2` 13,540); **57,624 (112 free) after the pre-listen cell fix**, 37.2.0's figure |
+| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region; **57,688 (48 free) after Loop Len** and its review fixes (`fold` out of line saves 68 B), which fit in bank 1 (`.bank2` 12,896, unchanged; `arm-none-eabi-size -A out/cave.elf`). **57,720 (16 free) after the Waveform knobs**, with Loop Len's take moved to bank 2 (`.bank2` 13,418, +522: `clipwin_b2.c`). A unit then needs this build's `BBEXTRA.BIN` (`BANK2_NEW=1` where `card-backup/` holds the deployed payload). On `37loop/blackbox-t-018`: 55,976 after the stale-latch fix; 56,816 after Region; **57,736 (0 free) after Loop Len**; 57,520 (216 free) after "bank 1 room" (`.bank2` 13,022: Loop Len's window); 57,560 (176 free) after the knobs (`.bank2` 13,540); **57,624 (112 free) after the pre-listen cell fix**, 37.2.0's figure (and 37.2.1's); on `37loop/blackbox-t-021` **56,312 (1,424 free) after D-018** moved the Clip Window's maths to bank 2 (`.bank2` 15,412) |
 | 6 | Does the app send a slice table to a Clip pad (Slip silently off there) | P2 doc | USB peek of pad `+0x250` on a Clip pad whose cell has markers |
 | 7 | Attack 0 (`pad+0xBA1` = 1) on real presets (hard wrap start) | P2/P3 | USB peek on a few loaded pads |
 | 8 | Live Slip under Sync None takes effect at the next restart | P2 doc | **settled** (`test_clipwin.py` §5: the playing segment plays on stock, the re-made restart slipped) |
@@ -569,7 +574,7 @@ corrected accordingly.
 | 27 | XY → Record screen → XY Save hop end to end; Save from a `SetCellParam` intercept | P5 | Unicorn of the app path (`set_screen`, `0x26` handler), then Gate 5 |
 | 28 | Buses 12/13 writers; trims `0x2400A9C0+0x9014..0x9030`; Rec Mon under RecConfig Per Pad | P5 | Unicorn of the recorder `0x105` path; static |
 | 29 | Watchdog stamp writers (does a task-time overflow reset or hang) | trap only | static read of `0x080469C4`/`0x080469CA` callers |
-| 30 | Loop Len without a matching bank 2: the row (Pos page, Waveform BR) stays live, shows `1/4`, turns and saves, and does nothing (README Known issues), where the bank-2 effects read `---` (`cpu.c` `b2_present`) | P3, Thomas | Thomas's call: keep it, or a `---` name set when `!b2_present()` in `clipwin_register`. On `37loop/blackbox-t-018` the window maths is in bank 2 and 112 B are free; the `---` list (8 pointers and the `b2_present()` choice) measured +48 B, which would leave 64. Not done: kept for the headroom, short of the 200 B asked for |
+| 30 | Loop Len without a matching bank 2: the row (Pos page, Waveform BR) stays live, shows `1/4`, turns and saves, and does nothing (README Known issues), where the bank-2 effects read `---` (`cpu.c` `b2_present`) | P3, Thomas | Thomas's call: keep it, or a `---` name set when `!b2_present()` in `clipwin_register`. On `37loop/blackbox-t-018` the window maths is in bank 2 and 112 B are free; the `---` list (8 pointers and the `b2_present()` choice) measured +48 B, which would leave 64. Not done: kept for the headroom, short of the 200 B asked for. Since D-018 the question covers Slip and Region too (they need bank 2 now), and 1 424 B are free |
 
 ## 5. Where the notes disagree (read the later or executed one)
 

@@ -173,6 +173,12 @@ def main(argv):
         bank = cw_bank()
         hdr = peek(bank, 8 + 64 + 64 + 16)
         magic, scan = struct.unpack_from("<II", hdr)
+        if magic != CW_MAGIC:
+            # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
+            # bank set up this boot, every field below is a previous boot's, not live
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): "
+                     + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
+                        "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
         pads = struct.unpack_from("<16I", hdr, 72)
         valid = hdr[136:152]
@@ -182,13 +188,14 @@ def main(argv):
                 print(f"cell row {q >> 2} col {q & 3}: Slip row {slip[q]:+5} ticks (+ = ahead)  pad object {pads[q]:#010x}  "
                       f"latched slots {valid[q]:04b}")
     elif cmd == "knob":
-        # src/clipwin.c clipwin_turn leaves each Slip turn event's counts and the stock accelerator's speed m (1 .. 6,
-        # about 8/7 x the counts per ms) in cw_bank: which speeds a hand makes, against the tiers (KNOB_MEDIUM,
-        # KNOB_FAST there). Read only: nothing is written to the unit.
+        # src/clipwin_b2.c cw_turn (from clipwin.c's clipwin_turn) leaves each Slip turn event's counts and the stock
+        # accelerator's speed m (1 .. 6, about 8/7 x the counts per ms) in cw_bank: which speeds a hand makes, against
+        # the tiers (KNOB_MEDIUM, KNOB_FAST there). Read only: nothing is written to the unit.
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): another layout, no knob fields")
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): another layout, no knob fields "
+                     "- or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         counts, speed, zero_at, zero_dir, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
               + (f"{now - zero_at} ms ago, turning {'up' if zero_dir > 0 else 'down'}" if zero_dir else "none"))

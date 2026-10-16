@@ -107,6 +107,12 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
+- Slip, Region and Loop Len all run from the second file (`BBEXTRA.BIN`, flash bank 2), which has to come from the
+  same download as `BLACKBOX.bin`. Without it (or with one from another build) every Clip pad plays exactly as on
+  stock: the three rows are there and save, but do nothing; the Slip row shows a plain number of ticks instead of
+  beats.ticks and turns like any number row, and the Clip-mode waveform shows no loop bracket (its four knobs still
+  turn: Loop Start and Loop End move the loop points, which the pad then does not play; Slip and Loop Len there do
+  nothing). TOOLS shows the `!`.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
   waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, without its region
   or Loop Len, for up to two Sync steps, then as set.
@@ -124,8 +130,7 @@ From 3.1.n and earlier:
   stops forgets what it was looping: its next launch loops from the start of the clip. While it holds a shorter Sync,
   the Sync row still shows yours, and turning that knob puts yours back for a moment (up to 43 ms) before Loop Len sets
   it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
-  playhead line shows the position without Loop Len. Loop Len runs from the second file (`BBEXTRA.BIN`, flash bank 2):
-  without it the row is there and saves, but does nothing.
+  playhead line shows the position without Loop Len.
   Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
   loop, so the pad plays the whole file until they are apart again. With Region on File, or on Auto with Loop Mode None,
@@ -150,13 +155,14 @@ From 3.1.n and earlier:
 
 ### The second file
 
-Part of the mod (Prism, Confetti, the per-pad insert effects and Clip pads' Loop Len) is too big to fit beside
-1010music's firmware. The chip has a second block of flash that 1010music's installer never touches, so the mod keeps
-that code there and installs it itself from `BBEXTRA.BIN` the first time it starts. The file holds this project's own
-code and nothing of 1010music's. You can leave it on the card.
+Part of the mod (Prism, Confetti, the per-pad insert effects and Clip pads' Slip, Region and Loop Len) is too big to
+fit beside 1010music's firmware. The chip has a second block of flash that 1010music's installer never touches, so the
+mod keeps that code there and installs it itself from `BBEXTRA.BIN` the first time it starts. The file holds this
+project's own code and nothing of 1010music's. You can leave it on the card.
 
 - **`!` in front of the load figures on TOOLS** (for example `!62/75%`) means the second part is not installed or
-  does not match this build. Everything else works; those three effects and Loop Len are switched off.
+  does not match this build. Everything else works; those three effects are switched off, and Clip pads play as on
+  stock (Slip, Region and Loop Len do nothing).
 - **`---` in the Insert, Master FX or delay Type lists** is the same thing seen from the menus: the effect that
   belongs there is not installed. A preset that uses one keeps its setting and gets the effect back once it is.
 - To fix either: put the `BBEXTRA.BIN` **from the same download** as your `BLACKBOX.bin` in the root of the card and

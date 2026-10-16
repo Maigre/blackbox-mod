@@ -252,9 +252,9 @@ from the Pads LOOP knobs (P5) or CC (P6).
 
 Feature-only build is not practical (registration/defaults/SDRAM chain through the comp/master/duck sets) → Thomas's
 unit runs the **full JOEBOX 1 set + ours**, through P2 without `BBEXTRA.BIN`, **from P3 with the `BBEXTRA.BIN` of
-the same build** (D-017: Loop Len's take is in bank 2; without it Loop Len does nothing, and an older payload up
-there also switches Prism, Confetti and the inserts off); the feature is inert at default settings (pass-through
-everywhere), so behaviour = JOEBOX 1 until a row is changed.
+the same build** (D-017, D-018: the Clip Window's maths is in bank 2; without it Slip, Region and Loop Len do
+nothing, and an older payload up there also switches Prism, Confetti and the inserts off); the feature is inert at
+default settings (pass-through everywhere), so behaviour = JOEBOX 1 until a row is changed.
 
 ## PR strategy (upstream j3threejay/blackbox-mod)
 

@@ -19,10 +19,11 @@ clipwin_format / clipwin_turn in them, the stock ring push and speed, stepper an
 sites enter them; the Waveform screen's setup (FUN_080a54a0: its bind block, FUN_080a53a2 and the refresh, with
 clipwin_bind / clipwin_zoom / clipwin_wave in them), the view's two handlers (the knob event, the param-changed refresh,
 the forward to the app with JOEBOX's slice_forward in it, the zoom message), the waveform's slice-marker and zoom setters,
-and the app's SetCellParam (FUN_0809fa50) for what the forward sends; Loop Len's take in bank 2 (clipwin_b2.c), and a
-bank 2 whose header is gone. Every scenario also runs on this image with the clipwin hooks taken out at run time (or only
-Region's), and the Slip 0 ones on the stock 3.1.9 image, for the comparisons; a Region scenario also runs on the stock
-image with a file as long as its region.
+and the app's SetCellParam (FUN_0809fa50) for what the forward sends; the Clip Window's maths in bank 2 (clipwin_b2.c,
+every hook's since D-018), and a bank 2 whose header is gone from the start (every hook then stock's). Every scenario
+also runs on this image with the clipwin hooks taken out at run time (or only Region's), and the Slip 0 ones on the
+stock 3.1.9 image, for the comparisons; a Region scenario also runs on the stock image with a file as long as its
+region.
 Stubbed: the allocator, the log print, for the Waveform screen the app's copy of the pad's store into the view, the file
 name, icons, buttons and the mode list, SetCellParam's posts to the engine and the UI (recorded), the sample source (length, rate, ready, the prefetch hint - recorded, with the
 read it was made in - and the mono / stereo fetch, which serve a ramp: frame q holds (q + 1) * 2^-20, the right channel
@@ -458,6 +459,17 @@ POS, SID, AT, FET = 2, 6, 7, 12          # a read row: block, slot, POSition (vi
 #                                         sample it sounds AT; then return, used, frac, buffer, its FETches, clip_read ran
 
 
+def no_bank2(m, entered):
+    """bank 2's header wiped on emulator m before its first b2_live() (which caches the verdict for the boot), and every
+    entry into a bank-2 cw_* function appended to `entered`"""
+    m.uc.mem_write(0x08100000, bytes(16))
+    for fn in CW_FUNCS:
+        m.uc.hook_add(UC_HOOK_CODE, lambda *a, fn=fn: entered.append(fn), begin=S[fn] & ~1, end=S[fn] & ~1)
+
+
+CW_FUNCS = sorted(n for n in S if n.startswith("cw_") and 0x08100000 <= S[n] < 0x08200000)
+
+
 class Rig:
     """The class-B pad process block by block (notes/re/a2's Rig, with a1's Rig2 input-bank buffers), on an Emu.
 
@@ -467,13 +479,19 @@ class Rig:
     every segment start (H1 and H1'), each segment's mixed samples, the summed output, the messages to the app.
     h: the cell's class-H object too (real ctor, linked at pad + 8 as the graph builder links it; its block method runs
     after the pad's and reads the same queue, so loop points posted there land in it, notes/re/x3). bypass: every
-    clipwin hook taken out at run time; region_off: only Region's (H3, H3'), which leaves v1 (Slip)."""
+    clipwin hook taken out at run time; region_off: only Region's (H3, H3'), which leaves v1 (Slip). bank2=False: bank
+    2's header wiped before anything runs, so the first b2_live() (the first poll, or the first recompute) says no and
+    keeps saying it, as on a unit without this build's BBEXTRA.BIN; every entry into a cw_* function is counted in
+    b2_entered."""
 
     def __init__(self, frames=96000, src_rate=48000, bpm=120.0, stereo=False, cell=0, image=IMAGE, block=True,
-                 bypass=False, dc=False, h=False, region_off=False):
+                 bypass=False, dc=False, h=False, region_off=False, bank2=True):
         self.m = m = Emu(image, "out/cave.elf")
         uc = self.uc = m.uc
         maps(m)
+        self.b2_entered = []
+        if not bank2:
+            no_bank2(m, self.b2_entered)
         self.patched = image == IMAGE
         self.heap = HEAP
         self.len, self.src_rate, self.stereo, self.dc = frames, src_rate, stereo, dc
@@ -925,9 +943,9 @@ check(f"Beat Count 29, Sync 1 bar: {n_} steps of {tps} ticks ({tps * n_}, not 27
       (tps, n_) == (3977, 7) and got and all(x == (0, 1392000, slip_f(3840, 1392000, 27839)) for x in got)
       and slip_f(3840, 1392000, 27839) != slip_f(3840, 1392000, 27840), (tps, n_, got))
 
-# the cave writes nothing in the block but its own bank: every write from clipwin.o's code (its static helpers, latch
-# and bank, included: the link map gives the object's .text) and clipwin_b2.o's (Loop Len's take, in bank 2), a launch
-# on the seam (Slip 3839) and a live change
+# the cave writes nothing in the block but its own bank: every write from clipwin.o's code (its static helpers and
+# bank included: the link map gives the object's .text) and clipwin_b2.o's (the latch and the rest of the maths, in
+# bank 2), a launch on the seam (Slip 3839) and a live change
 w = []
 r = Rig(cell=0x102)
 cw_code = [(int(l.split()[1], 16), int(l.split()[1], 16) + int(l.split()[2], 16)) for l in open("out/cave.map")
@@ -1734,13 +1752,14 @@ def turn(path, per_ms, events=40, sign=1, start=0, fresh_knob=True, t0=10_000, p
 # stock accelerator's speed m (1 .. 6), slow = single ticks (40 counts a tick, twice that at speed 2), medium = one
 # KNOB_STEP_MEDIUM a turn event onto its grid, fast (the top speeds) = one 1/64 (60 ticks) a turn event onto the 1/64
 # grid; 0 is a detent: a turn that reaches it stops there, and passes ZERO_DETENT_MS after it ARRIVED. The numbers are
-# read from src/clipwin.c's #defines, so that tuning one on the unit leaves these checks about the shape. The detent's
-# state lives in cw_bank (SDRAM), as on the unit, so the block is there for these.
-_knob_src = open("src/clipwin.c").read()
+# read from src/clipwin_b2.c's #defines (the rule is bank 2's, cw_turn, since D-018), so that tuning one on the unit
+# leaves these checks about the shape. The detent's state lives in cw_bank (SDRAM), as on the unit, so the block is
+# there for these.
+_knob_src = open("src/clipwin_b2.c").read()
 KNOB_DEF = {n: int(re.search(rf"^#define {n}\s+(\d+)", _knob_src, re.M).group(1))
             for n in ("KNOB_MEDIUM", "KNOB_FAST", "KNOB_STEP_MEDIUM", "SLIP_GRID", "ZERO_DETENT_MS")}
 MED_AT, FAST_AT, MED_STEP, GRID, DETENT = KNOB_DEF.values()
-info(f"the knob's numbers (src/clipwin.c): medium from speed {MED_AT}, fast from {FAST_AT}, a medium step {MED_STEP} "
+info(f"the knob's numbers (src/clipwin_b2.c): medium from speed {MED_AT}, fast from {FAST_AT}, a medium step {MED_STEP} "
      f"ticks, the 1/64 grid {GRID}, the detent {DETENT} ms")
 
 
@@ -2969,26 +2988,40 @@ check(f"Loop Len 1/2 on a 5-beat clip with Sync 1/2 (steps of {r.made[0]['tps']}
       and all(x[2] == 48000 + 24000 * (((x[1] * 960 - 1920) % 1920) // 960) for x in sg) and {x[2] for x in sg} == {48000, 72000}
       and n_ > 80000 and err <= 0.02 and bad_ == 0 and same_starts and same_gain(st_, cw, 288300) == 0, (on, sg[:8], n_, err, bad_))
 
-# Loop Len's take and its window are in bank 2 (clipwin_b2.c, cw_looplen and cw_window): without this build's payload
-# there (its header gone, so b2_live() says no) Loop Len stays Off and is not taken. L2's run, Loop Len 1/16 set and then
-# Off: bit for bit the run where it is never set, the Sync never forced, and neither function entered
-entered = []
-
-
-def no_bank2(rr):
-    rr.uc.mem_write(0x08100000, bytes(16))
-    for fn in ("cw_looplen", "cw_window"):
-        rr.uc.hook_add(UC_HOOK_CODE, lambda *a: entered.append(1), begin=S[fn] & ~1, end=S[fn] & ~1)
-
-
+# Every Clip Window hook's maths is in bank 2 (clipwin_b2.c, D-018): without this build's payload there (its header wiped
+# before the first poll, so the first b2_live() says no for the whole run) every hook passes through to stock. L2's run,
+# Loop Len 1/16 set and then Off: bit for bit the run where it is never set, the Sync never forced, and no bank-2
+# function entered
 kw = dict(frames=96000, at=193000, blocks=1900, vals={P_SYNC: 3})
-nb = scenario(pre=ll_pre({1000: 1, 1750: 0}), setup=no_bank2, **kw)
+nb = scenario(pre=ll_pre({1000: 1, 1750: 0}), bank2=False, **kw)
 rf = scenario(pre=ll_pre({}), **kw)
 ok_, d_ = same(rf, nb)
-check(f"no bank 2 (its header wiped): Loop Len 1/16 set and then Off plays as if it had never been set, bit for bit "
-      f"({d_}), never taken ({sorted({x[1] for x in nb.llog})}), Sync never forced ({sorted({x[4] for x in nb.llog})}), and "
-      f"bank 2's cw_looplen and cw_window never entered ({len(entered)} entries)",
-      ok_ and {x[1] for x in nb.llog} == {0} and {x[4] for x in nb.llog} == {960} and not entered, (d_, len(entered)))
+check(f"no bank 2 (its header wiped before the first poll): Loop Len 1/16 set and then Off plays as if it had never been "
+      f"set, bit for bit ({d_}), never taken ({sorted({x[1] for x in nb.llog})}), Sync never forced "
+      f"({sorted({x[4] for x in nb.llog})}), and no bank-2 function entered ({len(nb.b2_entered)} entries of "
+      f"{len(CW_FUNCS)} functions)",
+      ok_ and {x[1] for x in nb.llog} == {0} and {x[4] for x in nb.llog} == {960} and not nb.b2_entered and len(CW_FUNCS) >= 14,
+      (d_, sorted(set(nb.b2_entered)), CW_FUNCS))
+# ...and with all three set from the start (Slip +480, Region Loop over [24 000, 72 000) in the class-H object, Loop Len
+# 1/4) and a live Slip change: every read, fetch, prefetch, mixed sample and message as with every clipwin hook taken out
+kw = dict(frames=96000, cell=0x102, blocks=900, slip=480, points=(24000, 72000, 1), region=LOOP, vals={P_SYNC: 3, P_LOOPLEN: 3},
+          pre=lambda rr: store(rr.m, rr.q, {0x4: 500, P_SLIP: -30, P_REGION: LOOP, P_SYNC: 3, P_LOOPLEN: 3}) if rr.block == 300 else None)
+nb = scenario(bank2=False, **kw)
+by = scenario(bypass=True, **kw)
+wb = scenario(**kw)
+ok_, d_ = same(nb, by)
+differs = not same(wb, by)[0]
+check(f"no bank 2, with Slip +480 (then -30), Region Loop [24 000, 72 000) and Loop Len 1/4 set: every Clip pad plays "
+      f"stock, bit for bit the run with every clipwin hook taken out ({d_}), no bank-2 function entered "
+      f"({len(nb.b2_entered)}), nothing latched (valid {bank_valid(nb.m, 6):#x}), no Sync forced ({nb.i64(nb.pad + 0x220)}); "
+      f"with bank 2 the same run is not stock's ({differs}: latched {bank_valid(wb.m, 6):#x})",
+      ok_ and not nb.b2_entered and bank_valid(nb.m, 6) == 0 and nb.i64(nb.pad + 0x220) == 960 and differs
+      and bank_valid(wb.m, 6), (d_, sorted(set(nb.b2_entered)), differs))
+# ...and Slip 0, Region File, Loop Len Off over a loop in the class-H object: the stock 3.1.9 image's run, bit for bit
+a = scenario(frames=96000, cell=0x102, blocks=900, points=REG, region=FILE, bank2=False)
+b = scenario(frames=96000, cell=0x102, blocks=900, points=REG, image=STOCK)
+ok_, d_ = same(a, b)
+check(f"no bank 2: Slip 0, Region File and Loop Len Off over a loop play as the stock 3.1.9 image, bit for bit ({d_})", ok_, d_)
 
 # ====================================================================================================== 12. the Waveform knobs
 # Clip mode on the Waveform screen (README section 3, notes/re/a3): stock unbinds all four knobs and never draws the loop
@@ -3012,11 +3045,19 @@ CLIP12 = {0x8B: 1, 0xEA: 0, 0x8E: 1, 0x8F: 0, 0x90: 0, 0x91: 24000, 0x92: 72000,
 
 
 class Screen:
-    """the Waveform view of pad (1, 2) on an emulator of `image`; bypass = the three Waveform hooks put back to stock"""
+    """the Waveform view of pad (1, 2) on an emulator of `image`; bypass = the three Waveform hooks put back to stock;
+    bank2=False: bank 2's header wiped before anything runs (entries into cw_* counted in b2_entered); stock_knob = the
+    knob's text and turn hooks (clipwin_format, clipwin_turn) put back to stock"""
 
-    def __init__(self, image=IMAGE, bypass=False):
+    def __init__(self, image=IMAGE, bypass=False, bank2=True, stock_knob=False):
         m = self.m = Emu(image, "out/cave.elf")
         maps(m)
+        self.b2_entered = []
+        if not bank2:
+            no_bank2(m, self.b2_entered)
+        if stock_knob:
+            for at in (0x080B0746, 0x080B0E18, 0x080B0DDE):
+                m.uc.mem_write(at, stock[at - BASE:at - BASE + 4])
         registrar(m, TABLE)
         if bypass:
             for at, _ in SITES12.values():
@@ -3301,6 +3342,27 @@ sl.open(CLIP12)
 w = sl.wave()
 check(f"a Clip pad with slice markers: the bracket beside them, the markers still shown (FUN_080c6edc would hide them) ({w})",
       w["on"] == 1 and w["slices"] == 1 and (w["ls"], w["le"]) == (24000, 72000), w)
+
+# ---- without bank 2 (D-018): the four rows are bound all the same (Loop Start and End are stock's own; Slip and Loop
+# Len are kept, as stored, and do nothing), but no bracket shows where Region plays the loop, and the Slip knob is
+# stock's: its text and every turn as with the knob's two hooks taken out (the turn's counts straight to the stepper)
+nb2, kref = Screen(bank2=False), Screen(stock_knob=True)
+runs = []
+for scr in (nb2, kref):
+    scr.open(CLIP12)
+    seq = [scr.turn(1, c, t=40_000 + 16 * i) for i, c in enumerate((400, 400, 1200, -400, 2000, -4000, -40, 9000))]
+    scr.stored(_1c9=-30)
+    runs.append(({n: scr.knob(n) for n in KN12}, list(scr.texts), seq, list(scr.binds), scr.shown("BL")))
+w_nb, w_ref = nb2.wave(), kref.wave()
+check(f"no bank 2: the Waveform's Slip knob (BL) is stock's - its text ({nb2.text('BL')!r}, not beats.ticks), eight turns "
+      f"(their posts and forwards, the value {runs[0][4]}) and every other knob, text and bind as with the knob's two hooks "
+      f"taken out; the four rows bound ({[hex(runs[0][0][n]['id']) for n in KN12]})",
+      runs[0] == runs[1] and nb2.text("BL") is not None and "." not in nb2.text("BL")
+      and [runs[0][0][n]["id"] for n in KN12] == [0x91, 0x1C9, 0x92, 0x1CA],
+      {i: (runs[0][i], runs[1][i]) for i in range(5) if runs[0][i] != runs[1][i]})
+check(f"  ...no bracket where Region Auto plays [24 000, 72 000) with bank 2 (shown without it {w_nb['on']}, with it "
+      f"{w_ref['on']}), and no bank-2 function entered ({len(nb2.b2_entered)})",
+      w_nb["on"] == 0 and w_ref["on"] == 1 and not nb2.b2_entered, (w_nb, w_ref, sorted(set(nb2.b2_entered))))
 
 # ---- the other modes: the screen exactly as with the three hooks taken out - Sample, Granular, Slicer, set up, zoomed,
 # refreshed, and Sample after Clip (the Clip binding leaves nothing behind)
