@@ -60,9 +60,9 @@ GUI_MS = 0x2402EEE0
 PMEM, PCHECK, KEY = 0x38800F70, 0x38800F74, 0x5052534D
 BLOCK = 0xC0000000                                   # master.c's boot-time SDRAM block, here
 BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
-B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x398, 0x3A8
-B_SIZE = 0x3C0                                       # sizeof(struct cw_bank)
-CW_MAGIC = 0x43574E31
+B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x4A8
+B_SIZE = 0x4C0                                       # sizeof(struct cw_bank)
+CW_MAGIC = 0x43574E32
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -128,8 +128,17 @@ def bank_valid(m, q):
     return m.r8(BANK + B_VALID + q)
 
 
+L_SIZE = 16                                          # struct cw_latch: rs, vlen, delta, len
+
+
 def latch(m, q, k):
-    return struct.unpack("<3i", m.uc.mem_read(BANK + B_LATCH + (q * 4 + k) * 12, 12))
+    """(rs, vlen, delta)"""
+    return struct.unpack("<3i", m.uc.mem_read(BANK + B_LATCH + (q * 4 + k) * L_SIZE, 12))
+
+
+def made_for(m, q, k):
+    """the file length a latch was made for"""
+    return m.r32(BANK + B_LATCH + (q * 4 + k) * L_SIZE + 12)
 
 
 def slip_f(slip, length, clip):
@@ -644,22 +653,23 @@ def window(ref, cw):
     return lo, {k: (cut(ref, k), cut(cw, k)) for k in ("frame", "gain", "sid")}
 
 
-def shifted(ref, cw, sf, length, edge=0):
+def shifted(ref, cw, sf, length, edge=0, since=None):
     """samples where one segment sounds in both runs: max |cw frame - (stock frame + slip_f) mod len| (circular), the
     count of samples off by more than 0.05 frame, and of samples whose summed gain differs. `edge` > 0 leaves out the
     samples within that many frames of the file's ends in either run (the kernel's support: there stock interpolates
-    into the silence after the file, the Clip Window into the file's start)."""
+    into the silence after the file, the Clip Window into the file's start). `since`: only the samples from there on."""
     lo, w = window(ref, cw)
     fs, fc = w["frame"]
     gs, gc = w["gain"]
-    ok = ~np.isnan(fs) & ~np.isnan(fc)
+    span = lo + np.arange(len(gs)) >= (since if since is not None else lo)
+    ok = ~np.isnan(fs) & ~np.isnan(fc) & span
     want = np.mod(fs + sf, length)
     near = lambda f: (f < edge) | (f > length - 1 - edge)
     if edge:
         ok &= ~near(fs) & ~near(want)
     err = np.abs(fc - want)
     err = np.minimum(err, length - err)[ok]
-    gdiff = np.abs(gs - gc) > 1e-6
+    gdiff = (np.abs(gs - gc) > 1e-6) & span
     if edge:
         gdiff &= ~(near(np.nan_to_num(fs, nan=length / 2)) | near(np.nan_to_num(fc, nan=length / 2)))
     return int(ok.sum()), float(err.max()) if len(err) else 9e9, int((err > 0.05).sum()), int(gdiff.sum())
@@ -967,6 +977,87 @@ check("  PLAY (msg 0x57) on the bar at 384 000: it sounds from 384 001 (stock's 
       (r.reads[0][AT] if r.reads else None, r.layer(), by.layer(), timing(r) == timing(by), r.posted == by.posted,
        r.reads[0][FET][:1] if r.reads else None, step1[0][FET][:1] if step1 else None))
 
+# ====================================================================================================== 5b. a new file
+# A new file under a playing pad: a load from the pad's Load screen, the browser's pre-listen (FUN_080a1560 loads each
+# highlighted file into the pad the browser was opened on too), a take landing in the pad. The chain, as notes/re/x3
+# sections 3 and 4 trace it: the pad's asset closes (fw_src_len answers 0), the pad load's full re-post makes the pad
+# recompute while the new slot is not open yet (0x90), the loader opens the new file (fw_src_len answers its length,
+# the source serves its frames), the app's 0xE handler posts 0x90 and the pad recomputes against it.
+SWAP, CLOSED = 265, 4                                         # sample 320 920, inside step 1 (312 000 .. 336 000)
+T_SWAP, T_OPEN = 287000 + SWAP * N, 287000 + (SWAP + CLOSED) * N
+
+
+def new_file(length):
+    def pre(rr):
+        if rr.block == SWAP:
+            rr.len = 0
+            rr.param(0x90, 0)
+        if rr.block == SWAP + CLOSED:
+            rr.len = length
+        if rr.block == SWAP + CLOSED + 1:
+            rr.param(0x90, length)
+    return pre
+
+
+strip = lambda x: x[:SID] + x[AT:-1]                         # a read row, segment numbering and clip_read flag aside
+for name, length, values in (("a shorter file (50 000 frames)", 50000, (960, -480)),
+                             ("a longer file (192 000 frames)", 192000, (960,)),
+                             ("a file of the same length (96 000 frames)", 96000, (960,))):
+    sc = dict(frames=96000, cell=0x102, blocks=900, pre=new_file(length))
+    st_r = scenario(image=STOCK, **sc)
+    st = decode(scenario(dc=True, image=STOCK, **sc), st_r)
+    t = st["base"] + np.arange(len(st["gain"]))
+    quiet = int(((t >= T_OPEN) & (np.abs(st["gain"]) < 1e-7)).sum())
+    on = [x for x in st_r.reads if x[0] == SWAP + CLOSED and st_r.made[x[SID] - 1]["step"] == 1]
+    at = T_SWAP - 312000 + 24000                              # step 1's position when the slot closes
+    check(f"stock 3.1.9, Slip 0, {name} under the playing pad from {T_SWAP}: no restart - the sounding step 1 stands "
+          f"still while the slot is closed (nothing read) and reads on from its position, {at}, in the new file; the "
+          f"pending step 2 keeps its start on the old grid (48 000), step 3 starts on the new one ({3 * length // 4}); "
+          f"{quiet} samples silent after the file opens (the reader reads nothing past len + 0xff)",
+          starts(st_r)[:5] == [(288000, 0, 0), (312000, 1, 24000), (336000, 2, 48000), (360000, 3, 3 * length // 4), (384000, 0, 0)]
+          and not [m_ for m_ in st_r.made if SWAP <= m_["block"] <= SWAP + CLOSED + 1]
+          and len(on) == 1 and on[0][POS] == at and on[0][FET][:1] == ((SWAP + CLOSED, at, N),),
+          (starts(st_r)[:6], [(m_["block"], m_["step"]) for m_ in st_r.made], on[:1]))
+    ok, d = same(scenario(**sc), st_r)
+    check("  Slip 0 on this image: every read, fetch, prefetch, mixed sample and message identical to stock through the "
+          "file change", ok, d)
+    for slip in values:
+        rr = scenario(slip=slip, **sc)
+        cw = decode(scenario(dc=True, slip=slip, **sc), rr)
+        sf_old, sf_new = slip_f(slip, 96000, 3840), slip_f(slip, length, 3840)
+        lo, w = window(st, cw)
+        gs, gc = w["gain"]
+        s = lo + np.arange(len(gs))
+        extra = int(((s >= T_SWAP) & (np.abs(gc) < 1e-7) & (np.abs(gs) > 1e-7)).sum())
+        past = lambda r_: {f for f in r_.fetches if f[0] >= SWAP + CLOSED and f[1] + f[2] > length}
+        old = {m_["sid"] for m_ in rr.made if m_["block"] < SWAP}
+        mine = [strip(x) for x in rr.reads if x[0] >= SWAP and x[SID] in old]
+        theirs = [strip(x) for x in st_r.reads if x[0] >= SWAP and x[SID] in old]
+        if length != 96000:
+            check(f"  Slip {slip}: the segments latched for the old file (the sounding step 1 and the pending step 2) read "
+                  f"as stock does from the file change on: {len(mine)} reads (position, n, rate, frac, used, buffer, "
+                  f"fetches) identical to stock's (the old mapping, + {sf_old} folded at 96 000, belongs to the old file)",
+                  len(mine) > 200 and mine == theirs, (len(mine), len(theirs), [(a, b) for a, b in zip(mine, theirs) if a != b][:2]))
+            check(f"  ...so no silence stock does not have ({extra} samples silent where stock sounds), and no read past "
+                  f"the new file's end that stock does not make ({len(past(rr))} fetches reaching past {length}, all stock's own)",
+                  extra == 0 and past(rr) <= past(st_r), (extra, sorted(past(rr) - past(st_r))[:3]))
+        else:
+            n, err, bad, gd = shifted(st, cw, sf_old, 96000)
+            check(f"  Slip {slip}: the file closes and one of the same length opens: the latches hold again (the same "
+                  f"length, the same shift), every sounding sample before and after plays stock + slip_f ({n} samples, max "
+                  f"{err:.4f} frame), summed gain = stock's, the closed blocks silent as stock's",
+                  n > 80000 and err <= 0.02 and bad == 0 and gd == 0 and extra == 0, (n, err, bad, gd, extra))
+        fresh = [m_ for m_ in rr.made if m_["block"] > SWAP + CLOSED + 1]
+        t_new = min((x[AT] for x in rr.reads if fresh and x[SID] == fresh[0]["sid"]), default=-1)
+        held = [(latch(rr.m, 6, k), made_for(rr.m, 6, k)) for k in range(4) if bank_valid(rr.m, 6) >> k & 1]
+        n, err, bad, gd = shifted(st, cw, sf_new, length, since=t_new + 256)
+        check(f"  the first segment made after the recompute (step {fresh[0]['step'] if fresh else None}, sounding from "
+              f"{t_new}) and the ones after it latch the new file: (0, {length}, {sf_new}), made for {length}; from the end "
+              f"of its crossfade with step 2 ({t_new + 256}) every sounding sample plays (stock frame + {sf_new}) mod "
+              f"{length} ({n} samples, max {err:.4f} frame), summed gain = stock's",
+              t_new == 360000 and held and all(x == ((0, length, sf_new), length) for x in held)
+              and n > 20000 and err <= 0.02 and bad == 0 and gd == 0, (t_new, held, n, err, bad, gd))
+
 # ====================================================================================================== 6. gating
 
 
@@ -1153,7 +1244,8 @@ def reader(image, rotate=None, length=LENU):
 
 
 def set_latch(m, k, delta, valid=True, q=QU, length=LENU):
-    m.uc.mem_write(BANK + B_LATCH + (q * 4 + k) * 12, struct.pack("<3i", 0, length, delta))
+    """slot k latched as H1 latches it for a file of `length` frames: (0, length, delta), made for that length"""
+    m.uc.mem_write(BANK + B_LATCH + (q * 4 + k) * L_SIZE, struct.pack("<4i", 0, length, delta, length))
     m.uc.mem_write(BANK + B_VALID + q, bytes([(1 << k) if valid else 0]))
 
 
@@ -1328,6 +1420,8 @@ for name, prep, kw in (("the latch is not valid", lambda m: set_latch(m, 1, 3000
                        ("&frac is not a segment's fraction", lambda m: set_latch(m, 1, 30000), dict(frac_at=RPAD + 0x30 + 0x70 + 0x20)),
                        ("&frac is past the fourth segment", lambda m: set_latch(m, 1, 30000), dict(frac_at=RPAD + 0x30 + 4 * 0x70 + 0x1C)),
                        ("the pad is cell 0x401", lambda m: (set_latch(m, 1, 30000), m.w32(RPAD + 0x18, 0x401)), {}),
+                       ("the latch was made for a 96 000-frame file and the pad's file is now 50 000 frames (a load since "
+                        "H1; the old mapping would read at 49 970)", lambda m: set_latch(m, 1, 30000, length=96000), {}),
                        ("no SDRAM block", lambda m: (set_latch(m, 1, 30000), sdram(m, False)), {})):
     m = reader(IMAGE)
     prep(m)
@@ -1370,10 +1464,10 @@ m.w32(BANK + B_SLIP + 4 * QU, 960)
 m.uc.mem_write(BANK + B_H1 + QU, b"\x03")                     # slot 3 last held a slice segment
 pf.clear()
 ok = enter(m, "clipwin_seg_start_b", RPAD, {4: 1, 0x20: 3})
-check("H1 thunk: the slot from [sp + 0x20]: slot 3 latched (0, 50 000, 12 500), marked made through H1, its seam hint "
-      "re-armed (hinted bit cleared), prefetched at 37 000 + 12 500 - 8",
-      ok and bits() == [0x0B, 0x0B, 0x07] and latch(m, QU, 3) == (0, LENU, 12500) and pf == [(RSRC, 49492)]
-      and u32(m, BANK + B_PAD + 4 * QU) == RPAD, ([hex(x) for x in bits()], latch(m, QU, 3), pf))
+check("H1 thunk: the slot from [sp + 0x20]: slot 3 latched (0, 50 000, 12 500) for the 50 000-frame file, marked made "
+      "through H1, its seam hint re-armed (hinted bit cleared), prefetched at 37 000 + 12 500 - 8",
+      ok and bits() == [0x0B, 0x0B, 0x07] and latch(m, QU, 3) == (0, LENU, 12500) and made_for(m, QU, 3) == LENU
+      and pf == [(RSRC, 49492)] and u32(m, BANK + B_PAD + 4 * QU) == RPAD, ([hex(x) for x in bits()], latch(m, QU, 3), pf))
 
 # ====================================================================================================== 8. rate, stereo
 
