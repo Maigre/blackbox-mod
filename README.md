@@ -45,12 +45,14 @@ New since 3.1.n:
   into time over one pass, with one step doubled. Saved with the preset.
 - **Loop Len on Clip pads**: a "Loop Len" row on a Clip pad's Pos tab, after Slip: Off, 1/16, 1/8, 1/4, 1/2, 1 bar,
   2 bars or 4 bars. Only that much of the clip loops, in time, and it is the part that was playing when you turned it
-  on, like a KP3's loop: 1/4 repeats the beat that was playing, 1/16 a sixteenth of it. Turned Off and on again
-  before the next Sync step, it takes the same beat back. Changing the length while it is on keeps the same start and
-  moves the end. Off goes back to the whole loop, in phase, as if it had played on all along. A length shorter than
-  the pad's Sync step sets Sync to fit, and your Sync comes back as soon as the length fits it again, or at Off. It
-  works over Region and with Slip, which shifts what the window plays. A change is heard at the pad's next Sync step.
-  Saved with the preset.
+  on, like a KP3's loop: 1/4 repeats the beat that was playing, 1/16 a sixteenth of it. It is taken once the knob
+  rests on a value (about 0.2 s), so turning from Off to 1/4 engages 1/4 on the beat playing then, not the 1/16 it
+  passed on the way; stepped through slowly, it takes each value in turn. Off is immediate. Turned Off and on again,
+  it takes the beat playing when the knob comes to rest: the same one if that beat is still playing then. Changing
+  the length while it is on keeps the same start and moves the end. Off goes back to the whole loop, in phase, as if
+  it had played on all along. A length shorter than the pad's Sync step sets Sync to fit, and your Sync comes back as
+  soon as the length fits it again, or at Off. It works over Region and with Slip, which shifts what the window
+  plays. A change is heard at the pad's next Sync step. Saved with the preset.
 - **Knobs on a Clip pad's waveform**: stock leaves all four blank in Clip mode. Top-left is Loop Start and top-right
   Loop End, the same loop points as Sample mode's, which Region plays: one step is one pixel of the waveform, so zoom
   in for finer steps. The white loop bracket shows the loop Region plays, as soon as you turn: a playing pad takes the
@@ -133,7 +135,8 @@ From 3.1.n and earlier:
   stops forgets what it was looping: its next launch loops from the start of the clip. While it holds a shorter Sync,
   the Sync row still shows yours, and turning that knob puts yours back for a moment (up to 43 ms) before Loop Len sets
   it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
-  playhead line shows the position without Loop Len.
+  playhead line shows the position without Loop Len. A slow, steady turn (about 0.2 s on each value) takes the values
+  it passes, and the first of them sets where the window starts.
   Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
   loop, so the pad plays the whole file until they are apart again. With Region on File the two knobs still move the

@@ -95,8 +95,9 @@ BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
 B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x4A8
 B_WRAP, B_REGION, B_GOOD, B_ORIGIN, B_LL, B_FORCED, B_SF = 0x4BE, 0x4C0, 0x540, 0x5C0, 0x600, 0x610, 0x620
 B_ZERO_AT, B_ZERO_DIR, B_KNOB_COUNTS, B_KNOB_SPEED = 0x4B8, 0x4BC, 0x720, 0x722   # the Slip knob's (clipwin_turn)
-B_SIZE = 0x724                                       # sizeof(struct cw_bank)
-CW_MAGIC = 0x43574E35
+B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, and polls since it changed
+B_SIZE = 0x744                                       # sizeof(struct cw_bank)
+CW_MAGIC = 0x43574E36
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -2654,9 +2655,23 @@ def want_first(m_, sf=0, vlen=None):
     return f % vlen if vlen else f
 
 
-def ll_pre(events, slip=0, sync=3, region=None, then=None):
+LL_SETTLE = int(re.search(r"#define LL_SETTLE\s+(\d+)", open("src/clipwin_b2.c").read()).group(1))
+SETTLE_BLOCKS = 16 * LL_SETTLE                       # a pad is polled every 16 blocks
+
+
+def ll_pre(events, slip=0, sync=3, region=None, then=None, settled=True):
     """pre_block: the pad's store as the app keeps it (Sync, Slip, Loop Len) with Loop Len set at the blocks in
-    `events` {block: value}; the bank's Loop Len state after each block's poll in rr.llog"""
+    `events` {block: value}; the bank's Loop Len state after each block's poll in rr.llog. Since Gate 3 finding 8 a value
+    other than Off is taken once it has settled, LL_SETTLE polls after the one that saw it. settled: such a value is
+    written SETTLE_BLOCKS earlier (but a poll after the event before it), as a hand that stopped on it that long before,
+    so that the poll takes it where 37.2.x took the value written at the block; Off is taken at once, at its block"""
+    if settled:
+        moved, last = {}, -17
+        for b_ in sorted(events):
+            nb = max(b_ - SETTLE_BLOCKS, last + 17, 0) if events[b_] else b_   # each value polled once at least
+            moved[nb], last = events[b_], nb
+        events = moved
+
     def pre(rr):
         if not hasattr(rr, "llog"):
             rr.llog = []
@@ -2924,16 +2939,17 @@ check(f"Loop Len 1/16 set on a pad stopped by Toggle (taken at sample {on and 28
 # the first half (origin 0, signed; an unsigned difference gave 186 992 640, a frame 78 247 window); the re-indexed
 # segment plays on to 384 000, then every step replays frame 0. Frames read back as the reader gives them at this rate:
 # 1 frame on, +-0.1 (the run without Loop Len reads the same way)
-def late_sync(rr):
+def late_sync(rr, ll=None):
+    """the app sends Sync 1/2 and stores it (its store keeps the pad's Loop Len, `ll`, if set)"""
     if rr.block == 370:
         rr.param(P_SYNC, 2)
-        store(rr.m, rr.q, {0x4: 500, P_SLIP: 0, P_SYNC: 2})
+        store(rr.m, rr.q, {0x4: 500, P_SLIP: 0, P_SYNC: 2, **({} if ll is None else {P_LOOPLEN: ll})})
 
 
 kw = dict(frames=88200, src_rate=44100, at=287000, blocks=1300, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 374
 RT = 44100 / 48000
 ref_ = audio(pre=ll_pre({}, sync=2, then=late_sync), **kw)
-cw = audio(pre=ll_pre({371: 4}, sync=2, then=late_sync), **kw)
+cw = audio(pre=ll_pre({371: 4}, sync=2, then=lambda rr: late_sync(rr, 4)), **kw)
 r = cw["rig"]
 on = taken(r, 4)
 sg, sr = seg_firsts(cw, 300000, RT), seg_firsts(ref_, 300000, RT)
@@ -2951,7 +2967,9 @@ check(f"Loop Len 1/2 on a 44.1 kHz file, taken where stock's re-index has put th
 
 # Off, then on again within the same Sync step (the stutter gesture): after Off the sounding segment still plays the
 # window (frames 26 000 .. 34 000 at 362 000 .. 370 000), so the new engage takes its in-point from that frame, not from
-# stock's unlooped position (72 000 + ..., which would give 2 880): the same beat, 24 000, from 384 000 on. Then Off at
+# stock's unlooped position (72 000 + ..., which would give 2 880): the same beat, 24 000, from 384 000 on. (The value
+# turned on again 18 blocks after Off settles LL_SETTLE polls after the poll that sees it, block 630: still inside that
+# step.) Then Off at
 # 415 000 (step 1: the steps after it play their own, 48 000 at 432 000) and on again at 453 400, inside step 2, where
 # the sounding segment plays its own step: the in-point is where stock plays (1 920), 48 000 from 456 000 on
 kw = dict(frames=96000, at=287000, blocks=1700, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 214 + 16k
@@ -2967,7 +2985,7 @@ check(f"Loop Len 1/4 on, Off and on again inside one Sync step (taken at blocks 
       f"{tr[4][0] if len(tr) > 4 else None}): the in-point where stock plays (origin {tr[4][2] if len(tr) > 4 else None}) "
       f"({[x[::2] for x in sg if 384000 <= x[0] <= 480000]}); every sample its segment's ({n_}, max {err:.4f})",
       len(tr) == 5 and [x[1:3] for x in tr] == [(3, 960), (0, 960), (3, 960), (0, 960), (3, 1920)]
-      and tr[1][0] < 627 < tr[2][0] < 640 and 1300 < tr[4][0] < 1320 and fr == [26000.0, 30000.0, 34000.0]
+      and tr[1][0] < 627 < tr[2][0] < 640 + SETTLE_BLOCKS and 1300 < tr[4][0] < 1320 and fr == [26000.0, 30000.0, 34000.0]
       and [x[::2] for x in sg if 384000 <= x[0] <= 480000] == [(384000, 24000), (408000, 24000), (432000, 48000),
                                                                 (456000, 48000), (480000, 48000)]
       and n_ > 150000 and err <= 0.02 and bad_ == 0, (tr, sg[:16], fr, n_, err, bad_))
@@ -3017,6 +3035,53 @@ for length in (50000, 192000):
           on and on[2] == 0 and len(rows) > 200 and not moved and held and set(held) == {length}
           and t_new == 360000 and sg[:3] and all(x[2] == 0 for x in sg[:3]) and n_ > 20000 and err <= 0.02 and bad_ == 0,
           (on, len(rows), moved[:2], held, t_new, sg[:4], n_, err, bad_))
+
+# Gate 3 finding 8: the value is taken once it has settled. A turn from Off to 1/4 at speed 3 (one list value every
+# 43 blocks, 115 ms: its fast end) passes 1/16 and 1/8: 37.2.x took 1/16 at once, inside beat 2 (in-point 2 160, a 1/16
+# boundary), kept it for 1/4 and forced Sync 1/16, the window not starting on a beat (the bench's reading). Now only 1/4
+# is taken, LL_SETTLE polls after the one that saw it, on the beat playing then (an in-point of whole beats), the
+# user's Sync left alone, and every step from the next one replays that beat. A slow step-through (each value held 100
+# blocks, 267 ms) still takes each value in turn, the in-point from the first; Off is taken at once
+def ll_turn(events):
+    kw = dict(frames=96000, at=287000, blocks=1500, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 214 + 16k
+    d = audio(pre=ll_pre(events, settled=False), **kw)
+    r_ = d["rig"]
+    return d, [x for i, x in enumerate(r_.llog) if i and x[1] != r_.llog[i - 1][1]]
+
+
+cw, tr = ll_turn({450: 1, 493: 2, 536: 3})
+tb = tr[0][0] if tr else None
+beat = (287000 + tb * N - 288000) % 96000 // 24000 if tr else None
+sg = [x for x in seg_firsts(cw, 287000 + (tb or 0) * N + 24000)][:6]
+syncs = {x[4] for x in cw["rig"].llog}
+check(f"Loop Len turned Off -> 1/16 -> 1/8 -> 1/4 at blocks 450, 493, 536 (speed 3): only 1/4 is taken ({[x[:4] for x in tr]}), "
+      f"at block {tb} (the poll {LL_SETTLE} polls after the one that saw it), in-point {tr[0][2] if tr else None} = beat "
+      f"{beat} of the clip, the one playing then (a multiple of 960), the Sync never forced (pad +0x220 {sorted(syncs)}); "
+      f"the steps after it replay frame {beat * 24000 if tr else None}: {[x[::2] for x in sg]}",
+      [x[1] for x in tr] == [3] and tr[0][2] == beat * 960 and tr[0][3] == 0 and syncs == {960}
+      and 536 + SETTLE_BLOCKS <= tb <= 536 + SETTLE_BLOCKS + 16 and len(sg) >= 3 and all(x[2] == beat * 24000 for x in sg),
+      (tr, sg, syncs))
+# ...a value every 56 blocks (149 ms: the slow end of speed 3) or 64 (171 ms: speed 2's fast half), at four phases of
+# the pad's poll: still only 1/4, on a whole beat. LL_SETTLE 3 took 1/16 or 1/8 on the way at every one of them (the
+# in-point 2 400, Sync forced); at 64 blocks every value is seen by exactly LL_SETTLE polls, one short of being taken
+sl = {}
+for gap in (56, 64):
+    for ph in (0, 4, 8, 12):
+        cw, tr = ll_turn({450 + ph: 1, 450 + gap + ph: 2, 450 + 2 * gap + ph: 3})
+        sl[gap, ph] = [x[:4] for x in tr]
+check(f"...a value every 56 or 64 blocks (149, 171 ms: speed 3's slow end, speed 2's fast half) at four poll phases: only "
+      f"1/4 is taken, on a whole beat, Sync not forced ({sl})",
+      all([x[1] for x in t_] == [3] and t_[0][2] % 960 == 0 and t_[0][3] == 0 for t_ in sl.values()), sl)
+cw, tr = ll_turn({450: 1, 550: 2, 650: 3})
+check(f"...a slow step-through (each value held 100 blocks): each is taken in turn ({[x[:4] for x in tr]}), the in-point "
+      "from the first (a 1/16 boundary inside beat 2) kept, as a value that stays is taken (D-004: changing it keeps the "
+      "in-point)",
+      [x[1] for x in tr] == [1, 2, 3] and len({x[2] for x in tr}) == 1 and tr[0][2] % 240 == 0 and tr[0][2] % 960
+      and 1920 < tr[0][2] < 2880
+      and all(e + 1 <= x[0] <= e + SETTLE_BLOCKS + 16 for e, x in zip((450, 550, 650), tr)), tr)
+cw, tr = ll_turn({450: 3, 800: 0})
+check(f"...and Off is taken at once, at the first poll after it ({[x[:4] for x in tr]})",
+      [x[1] for x in tr] == [3, 0] and 800 < tr[1][0] <= 816, tr)
 
 # every write clipwin.c (and its bank 2 part, clipwin_b2.c, where Loop Len's take is) makes in a Loop Len run (engaged
 # with Sync forced, changed, Off with Sync given back) lands in the bank; the param-set it calls writes the pad, as a 0x39

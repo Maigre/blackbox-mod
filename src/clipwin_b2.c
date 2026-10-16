@@ -337,6 +337,17 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k)
     }
 }
 
+/* Loop Len is taken once its value has settled (Gate 3 finding 8): a turn from Off to 1/4 passes 1/16 and 1/8, and
+   37.2.x took the in-point at the first of them, a 1/16 boundary (and forced Sync 1/16 for a 1/4 window that did not
+   start on a beat). A value is taken after LL_SETTLE more polls of the pad (16 blocks apart: 43 ms at 48 kHz) with the
+   store unchanged, 171 .. 213 ms after the knob stopped on it; Off is taken at once. Each value of a list knob is 400
+   counts, and the stock accelerator's speed m is trunc(8/7 x counts a ms), so a turn at speed m stays 400 / (7m / 8)
+   .. 400 / (7(m + 1) / 8) ms on each value: speed 3 114 .. 152 ms, speed 2 152 .. 229, speed 1 more (the knob log,
+   notes/bench/2026-10-16-gate3-part1.md: 142, 184 and 241 ms at its mean rates). Speeds 3 and up never settle on a
+   value they pass, speed 2 only in its slow half, and a slow step-through (speed 1) takes each value in turn, as
+   before. 3 polls (128 .. 171 ms) took 1/16 or 1/8 on the way at speed 2 and at the slow end of speed 3. */
+#define LL_SETTLE 4
+
 /* clipwin_tick, pad q: slip and ll as its store has them, sync its Sync (read only when Loop Len is set or taken),
    engine = the clock (0: no Loop Len). Bit 0 = the pad's pending segments must be made again (cw_drop), bit 1 = send
    msg to the pad (Loop Len's Sync). The row reads + = AHEAD, like a CDJ jog (Thomas, D-016): clockwise pushes the loop
@@ -347,6 +358,14 @@ int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t s
     slip = slip < -SLIP_MAX ? -SLIP_MAX : slip > SLIP_MAX ? SLIP_MAX : slip;
     if (ll > LOOPLEN_MAX)
         ll = 0;
+    if (ll != b->llv[q]) {
+        b->llv[q] = (uint8_t)ll;
+        b->llc[q] = 0;
+    } else if (ll && b->llc[q] < LL_SETTLE) {
+        b->llc[q]++;                 /* (Off needs no settling: a pad left Off writes nothing here) */
+    }
+    if (ll && b->llc[q] < LL_SETTLE)
+        ll = b->ll[q];               /* not settled: what is taken stays */
     int moved = slip != b->slip[q];
     b->slip[q] = slip;
     const uint8_t *pad = b->pad[q];

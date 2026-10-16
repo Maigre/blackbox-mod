@@ -119,7 +119,7 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E35            # "CWN5": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E36            # "CWN6": src/clipwin.h's cw_bank layout this tool reads
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
@@ -176,7 +176,7 @@ def main(argv):
         if magic != CW_MAGIC:
             # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
             # bank set up this boot, every field below is a previous boot's, not live
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN6, 37.3.0 on): "
                      + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
                         "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -194,7 +194,7 @@ def main(argv):
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): another layout, no knob fields "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN6, 37.3.0 on): another layout, no knob fields "
                      "- or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         counts, speed, zero_at, zero_dir, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
