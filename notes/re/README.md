@@ -465,11 +465,13 @@ corrected accordingly.
   - Kept from stock: the dead travel at the top of a 0xD knob (open question 16; no exact-count call, an estimated 30 B
     more), and Sample mode's ranges, so Loop Start turned up to Loop End empties the loop and Region falls back to File
     until they part (README Known issues).
-  - Code space: the knobs cost about 510 B against 48 free. Loop Len's take (`looplen()`'s maths: the pending-launch
-    test, the in-point, the forced-Sync search) moved to bank 2 as `cw_looplen` in `src/clipwin_b2.c`. That code is
-    leaf, gets the bank and the pad and returns what to send, and bank 1 sends the Sync. `clipwin_tick` calls it only
-    when `b2_live()` says yes, so without bank 2 Loop Len stays Off (checked: header wiped, bit for bit the run where it
-    is never set). `cw_bank` and the pad layout moved to `src/clipwin.h`; the layout is unchanged (still `CWN3`).
+  - Code space, as first built on `feat/region`: the knobs cost about 510 B against 48 free. Loop Len's take
+    (`looplen()`'s maths: the pending-launch test, the in-point, the forced-Sync search) moved to bank 2 as
+    `cw_looplen` in `src/clipwin_b2.c`. That code is leaf, gets the bank and the pad and returns what to send, and
+    bank 1 sends the Sync. `clipwin_tick` calls it only when `b2_live()` says yes, so without bank 2 Loop Len stays Off
+    (checked: header wiped, bit for bit the run where it is never set). `cw_bank` and the pad layout moved to
+    `src/clipwin.h`; the layout is unchanged (still `CWN3` there; on this branch both came with the bank 1 room,
+    under `CWN4`, and the knobs against 216 B free: next bullet).
     `_Static_assert`s there pin every offset `cw_looplen` is compiled against (no bytes), so moving one, which needs a
     reflashed bank 2, cannot happen by accident. Bank 2's id still hashes the `.c` files only: the pairing is on the
     payload's sum, and a bank-1-only edit of the header (a comment, a field appended) leaves bank 2's bytes and so
