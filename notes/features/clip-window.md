@@ -1,36 +1,42 @@
 # Clip Window: Slip, Region, Loop Len, Fit, Loop Fade and the Clip-mode Waveform knobs
 
-Release **37.2.0** (dev build 37.2.0d), branch `37loop/blackbox-t-018`; the Slip knob's v2 (the detent and three
-speed tiers, §2) is 37.2.1 (37.2.1d), branch `37loop/blackbox-t-021`. It sits on Slip (release 37.1.1) and its
-stale-latch fix (`37loop/blackbox-t-004`), and adds Region, Loop Len and the Waveform knobs (P3's three commits, first
-built on `feat/region`, ported onto the fix), a "bank 1 room" commit before the knobs, and JOEBOX's pre-listen cell fix.
-The Gate 3 fix batch (for 37.3.0, the same branch; `notes/bench/2026-10-16-gate3-part1.md`) follows: the Waveform's
-short names (finding 2), Region Auto without Loop Mode (7), no endless wrap-grid hold (5), Loop Len taken when it
-settles (8), the Waveform's file length (12, and the view that froze), the knob's v3 (1, hub #t-021), and the pad the
-browser left stuck (9, 10). Fit and Loop Fade follow it (hub #t-022, findings 3, 4 and 6; the design and Thomas's
-answers: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`, outside the repo).
+Release **37.3.0** (dev build 37.3.0d), branch `37loop/blackbox-t-021`; the release notes are
+`notes/releases/37.3.0.md`. Its history:
+
+- **37.2.0** (branch `37loop/blackbox-t-018`): Slip (release 37.1.1) and its stale-latch fix (`37loop/blackbox-t-004`),
+  then Region, Loop Len and the Waveform knobs (P3's three commits, first built on `feat/region`, ported onto the
+  fix), a "bank 1 room" commit before the knobs, and JOEBOX's pre-listen cell fix.
+- **37.2.1**: the Slip knob's v2 (a detent on 0 and three speed tiers).
+- **37.3.0**, after Gate 3 part 1 on the unit (`notes/bench/2026-10-16-gate3-part1.md`): the Clip Window's maths moved
+  to bank 2 (D-018); the Gate 3 fix batch: the Waveform's short names (finding 2), Region Auto without Loop Mode (7),
+  no endless wrap-grid hold (5), Loop Len taken when it settles (8), the Waveform's file length (12, and the view that
+  froze), the knob's v3 (1, hub #t-021), and the pad the browser left stuck (9, 10); then Fit and Loop Fade (hub
+  #t-022, findings 3, 4 and 6, D-026; the design and Thomas's answers: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`,
+  outside the repo).
+
 Status on 2026-10-16:
 
-- All six parts pass under Unicorn: `test_clipwin.py` 426 checks, `test_bank2.py` 43, `./check.sh` 31 suites,
-  0 failed (with Fit and Loop Fade).
+- Every part passes under Unicorn: `test_clipwin.py` 426 checks, `test_bank2.py` 43, `./check.sh` 31 suites,
+  0 failed.
 - Slip v1 was measured on the unit at Gate 2 (37.1.0d, `notes/bench/2026-10-15-gate2-slip.md`).
-- The knob rework and the CDJ sign (37.1.1), Region, Loop Len and the Waveform knobs have not been on the unit yet.
-  That is Gate 3, and §6 is its recipe.
+- Gate 3 part 1 (37.2.0d, then 37.2.1d) ran on the unit: the first bank-2 install, Region by the knobs, Slip on a
+  region, Loop Len 1/4, Off and 1/16, save / power-cycle / reload, the load and the pre-listen, all measured to the
+  sample, and ten findings. 37.3.0 answers them. **Nothing of 37.3.0 has been on the unit yet**: §7 is Gate 3b's run.
 - The knob on the unit, 37.2.0d (2026-10-16), Thomas: "blocking at 0 is not great. maybe just a small "pause" not
   a complete block break would help. also accelerator is too fast it seems". The v2 (37.2.1d) answered both; on it,
   at Gate 3, Thomas: "the detent could be a bit stronger at low speed: when approaching 0 i still endup slightly on
-  the other side", "acceleration could be smoother too". The v3 (this batch) answers those; its feel is for Gate 3b.
-- **This build needs both files from the same build on the card**: `BLACKBOX.bin` and `BBEXTRA.BIN`. The maths of
-  every Clip Window hook runs in flash bank 2 (D-017, D-018, §3.5): without the matching `BBEXTRA.BIN` every Clip
-  pad plays as on stock, and Slip, Region, Loop Len, Fit and Loop Fade do nothing.
-- Fit and Loop Fade pass under Unicorn (`test_clipwin.py` §11b, §11c) and have not been on the unit: Gate 3b, §6
-  checks 20–26. Fit's
-  polymetric rule rests on what the emulated stock render does with a clip that is no whole number of bars (§1 Fit),
-  which the Gate 3 report's 14-beat take did not show on the unit: check 21 measures it again.
+  the other side", "acceleration could be smoother too". The v3 (37.3.0) answers those; its feel is for Gate 3b.
+- **This build needs both files from the same build on the card**: `BLACKBOX.bin` and `BBEXTRA.BIN` (payload id
+  `0x2a0e4094`, §3.5). The maths of every Clip Window hook runs in flash bank 2 (D-017, D-018, §3.5): without the
+  matching `BBEXTRA.BIN` every Clip pad plays as on stock, and Slip, Region, Loop Len, Fit and Loop Fade do nothing.
+  37.2.x's `BBEXTRA.BIN` does not match: the first boot of 37.3.0 with its own file rewrites bank 2 and restarts once.
+- Fit and Loop Fade pass under Unicorn (`test_clipwin.py` §11b, §11c) and have not been on the unit: §6 checks 20–26.
+  Fit's polymetric rule rests on what the emulated stock render does with a clip that is no whole number of bars
+  (§1 Fit), which the Gate 3 report's 14-beat take did not show on the unit: check 21 measures it again.
 
-Other documents: the decisions are `notes/decisions.md` (D-002, D-003, D-004, D-016, D-017, D-018) and the reverse
-engineering behind it is `notes/re/README.md` §2–§3 (step notes a1, a2, a3, x3). Users read the README bullets and
-Known issues. The research model of the hooks is outside the repo, in `/srv/dev/firmware/re-scratch/a2/r2/cw2.py`
+Other documents: the decisions are `notes/decisions.md` (D-002, D-003, D-004, D-016, D-017, D-018, D-026) and the
+reverse engineering behind it is `notes/re/README.md` §2–§3 (step notes a1, a2, a3, x3). Users read the README bullets
+and Known issues. The research model of the hooks is outside the repo, in `/srv/dev/firmware/re-scratch/a2/r2/cw2.py`
 (with `k_region.py`, `k_looplen.py`, `k_seam.py`).
 
 ## 1. What it does on the unit
@@ -160,8 +166,8 @@ At their defaults the pad plays exactly as stock (bit for bit, under emulation).
 - **Changing it:**
   - Changing the length while it is on keeps the in-point and moves the end.
   - Off goes back to the whole loop in phase, as if it had played on all along.
-  - Off and on again within one Sync step takes the same window back (the value turned on again is taken about
-    150 ms later: within a 1/4 step, not within a 1/16 one).
+  - Off and on again within one Sync step takes the same window back (the value turned on again is taken 171 to
+    213 ms after the knob rests: within a 1/4 step at 120 BPM, not within a 1/16 or a 1/8 one).
   - A change is heard at the pad's next Sync step.
 - **The knob.** It is a list knob: one name per 400 counts, no acceleration (a stock list). It is the same row on the
   Pos tab and on the Waveform's BR.
@@ -292,8 +298,11 @@ loop with no Trim.
 5. **Cut the loop on the Waveform screen.**
    - Turn TL Loop Start to where the loop should begin and TR Loop End to where it should end. Zoom in for finer steps.
    - The bracket shows the cut at once, and the pad plays it from its next wrap.
-   - Beat Count Auto rounds the region to whole beats at the clock's tempo. If the cut is far from a whole number of
-     beats, set Beat Count to what it should be.
+   - Beat Count Auto rounds the region to whole beats at the clock's tempo, but stock never stretches: a cut that is
+     not a whole number of beats stutters at every Sync step (Gate 3 findings 3, 4). Set **Fit Auto** (Pos row 8): the
+     loop then lasts the nearest whole number of beats, a little faster or slower (and higher or lower), and a cut
+     that is not a whole number of bars plays as a polyrhythm against the bar. Or a Fit length, to force one.
+   - A click at the loop point (the cut's end and start do not meet): **Loop Fade** (Pos row 9) a few %.
    - **Or the stock way, with audition**, before step 3: in Sample mode set Pos Loop Mode Forward, set Waveform BL/BR
      to Loop Start/End, and press Trigger until the turnaround is clean. Then set Pad Mode → Clip with Region Auto:
      the loop comes along, because Sample → Clip keeps it. Do not go back to Sample mode afterwards: stock clears the
@@ -304,7 +313,7 @@ loop with no Trim.
 7. **Refine, if needed.**
    - Move TL/TR again. A change is heard at the next wrap.
    - Loop Len (BR) 1/4 or 1/16 loops a beat or a sixteenth of what is playing. Off returns to the whole loop, in phase.
-8. **PSET Save.** The preset holds Region, Slip, Loop Len and the loop points.
+8. **PSET Save.** The preset holds Region, Slip, Loop Len, Fit, Loop Fade and the loop points.
 
 ## 3. How it is built
 
@@ -341,8 +350,8 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H1 | `0x0806578C` (`FUN_08065550`, segment start) | `bl 0x0806375C` prefetch | `clipwin_seg_start_b` → `clipwin_seg_start(src, pos, k = [sp+0x20], pad = r4)` | latch slot k (bank 2's `cw_latch`: Slip, region, Loop Len window, the file's length), prefetch where it will really read |
 | H1′ | `0x0806541A` (`FUN_08065290`, slice-marker segment) | `bl 0x0806375C` | `clipwin_slice_start_b` → `clipwin_slice_start(src, pos, k = [sp+4], pad)` | invalidate slot k, clear its `h1` bit (`cw_slice`), prefetch unchanged |
 | H2 | `0x08066622` (`FUN_08066454`, segment reader; already JOEBOX's `clip_read_b`) | `bl 0x080662E4` | `src/filter_thunk.S` `clip_read_b` now ends in `b.w clipwin_read` | mapped read (`cw_map`: the real position, the seam hint): stock's reader at the real position, or its work done over two fetches at a seam; machine modes through `filter.c`'s `clip_read_ring`; stock's read when the file's length is not the latch's |
-| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | `cw_len`: adopt a new region (at this pad's wrap, or when no layer plays; the three store rows read here for it); answer the region's length (Beat Count Auto, frames per step) |
-| H3 site 3 | `0x08064C5A` (recompute, second length) | `bl 0x080636F0` | `clipwin_len_steps_b` (r3 = r9 = the clip in output samples) | the region's length; a synced clip of one step gets `+0x204` = the clip, not the length |
+| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | `cw_len`: adopt a new region, Fit and Loop Fade (at this pad's wrap, or when no layer plays; the five store rows Region, Loop Start, Loop End, Fit, Loop Fade read here for it); answer the region's length (Beat Count Auto, frames per step); the file's length kept as `flen` for the Waveform |
+| H3 site 3 | `0x08064C5A` (recompute, second length) | `bl 0x080636F0` | `clipwin_len_steps_b` (r3 = r9 = the clip in output samples) | the region's length; a synced clip of one step gets `+0x204` = the clip, not the length; a fitted pad gets Fit's step fields and rate (`cw_fit`, §3.4) |
 | H3 site 0 | `0x0806561E` (`FUN_08065550`'s `> 0` check) | `bl 0x080636F0` | `clipwin_len_b` | the region's length |
 | H3 site 2 | `0x08065690` (the last step's end, `len − 1`) | `bl 0x080636F0` | `clipwin_len_end_b` | seamless wrap: 1 (end = 0) when Loop On and not Trigger; else the region's length |
 | H3′ | `0x08066FAC` (render, the synced wrap) | `bl 0x08064A94` recompute | `clipwin_wrap_b` (r2 = sp + 0x58, the next pass's tick) → `clipwin_wrap(pad, clock, t)` | the recompute with this pad marked wrapping (it adopts); put a grid-moving region back until a wrap on its grid (`cw_hold`) |
@@ -352,12 +361,12 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
-| P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0` | `0x1C8, 0x1C9, 0x1CA` | the three rows in slots 5–7 |
+| P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0, 0, 0` | `0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA` | the five rows in slots 5–9 (stock's own Loop Fade `0xFA` in slot 9) |
 | tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); the segments its file no longer reaches retired (`cw_retire`, with the source's `fw_src_len`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
 | H4 | none: `clipwin_tick` sends `cw_looplen`'s message | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
-| R | `master_register` (`src/master.c`) | — | `clipwin_register(table)` | `fw_register_list` Region (3 names), `fw_register_num` Slip (type 1, ±3840), `fw_register_list` Loop Len (8 of stock's own strings) |
-| D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the three ids at 0; a pad store holds 85 of JOEBOX's 96 |
-| M | `master_alloc` (`src/master.c`) | — | `EXTRA_BYTES` `0x2D900` (includes `0x800` for `cw_bank`) | the bank's magic cleared at `block + 0x83900` every boot |
+| R | `master_register` (`src/master.c`) | — | `clipwin_register(table)` | `fw_register_list` Region (3 names), `fw_register_num` Slip (type 1, ±3840), `fw_register_list` Loop Len (8 of stock's own strings), `fw_register_list` Fit (10 names, stock's strings but "3 beats" and "6 beats") |
+| D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the four ids `0x1C8..0x1CB` at 0 (`0xFA` is stock's own); a pad store holds 86 of JOEBOX's 96 |
+| M | `master_alloc` (`src/master.c`) | — | `EXTRA_BYTES` `0x2E100` (includes `0x1000` for `cw_bank` since Fit; `0x2D900` and `0x800` before) | the bank's magic cleared at `block + 0x83900` every boot |
 
 H5, the playhead message `0x4A` at `0x080668FC`, is not built. The playhead stays stock's.
 
@@ -383,7 +392,7 @@ exclusive access anywhere (D-013).
 
 | offset | field | meaning |
 |---|---|---|
-| `0x000` | `u32 magic, scan` | `CWN9`; the poll's pad counter (`q = scan++ & 15`) |
+| `0x000` | `u32 magic, scan` | `CWNA`; the poll's pad counter (`q = scan++ & 15`) |
 | `0x008` | `i32 slip[16]` | Slip as last polled, ticks (+ = ahead) |
 | `0x048` | `u8 *pad[16]` | the class-B pad object, cached by H1 (validated before use: class `0x4C`, same cell) |
 | `0x088` | `u8 valid[16]` | bit k: `latch[q][k]` holds |
@@ -614,7 +623,8 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
   edit of `clipwin.h` leaves bank 2's bytes, and so needs no reflash.
 
 **Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 56 744 of 57 736 B (992 free) and `.bank2`
-16 652 B. The bank-2 payload header is id `0x2a0e4094`, len `0x4120`, sum `0x2cbfbf38`. Loop Fade took 144 B of the
+16 652 B; the release build (`RELEASE=1`: no USB peek / poke) 56 616 (1 120 free), the same bank 2. The bank-2
+payload header is id `0x2a0e4094`, len `0x4120`, sum `0x2cbfbf38` (37.3.0 and 37.3.0d). Loop Fade took 144 B of the
 cave (its store row, the second fetch, the hint's place and its second hint at rs, the count before the machine
 readers) and 268 B of bank 2 (`cw_fade`, F in `cw_map`, `cw_hint`). Fit before it: `.cave` 56 600 (1 136 free),
 `.bank2` 16 384, id `0xd926e3db`, len `0x4020`, sum `0x1c35c65c`; it took 128 B of the cave (its row and names, the
@@ -708,7 +718,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   position at Off.
 - **Without this build's bank 2**, the row is there, turns and saves, but does nothing, as Slip and Region (D-018).
   An older payload in bank 2 also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open
-  question 30, Thomas's call: it measured +48 B, which the cave now has (1 256 B free).
+  question 30, Thomas's call: it measured +48 B, which the cave now has (992 B free in the dev build, 1 120 in the
+  release build).
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
 - A take right after a file change (review F1, release 37.2.0): Loop Len turned Off and on again within two Sync
@@ -772,7 +783,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 
 **Space**
 
-- Bank 1 has 992 B free (`.cave` 56 744 of 57 736) after Loop Fade (+144 B, §3.5), 1 136 after Fit (+128), 1 264
+- Bank 1 has 992 B free (`.cave` 56 744 of 57 736, the dev build; 1 120 in the release build) after Loop Fade
+  (+144 B, §3.5), 1 136 after Fit (+128), 1 264
   after the Gate 3 fix batch;
   1 424 B after D-018
   moved the Clip Window's maths to bank 2 (−1 312 B;
@@ -833,23 +845,30 @@ has one.
 - Save, power-cycle and reload kept `+0.120`.
 - There was no fault.
 
-**Not checked anywhere yet:**
+Gate 3 part 1 ran on 37.2.0d and 37.2.1d, with bank 2 (`notes/bench/2026-10-16-gate3-part1.md`):
 
-- the D-016 sign and the knob rework, by ear;
-- Region, Loop Len and the Waveform knobs on hardware;
-- the bank-2 install of this build;
-- SD streaming at a seam;
-- a negative Slip through preset save / load (question 3);
-- the app's loader and Pad Mode change feeding the class-H object (posted in emulation as the app posts them);
-- the knob's counts per revolution;
-- the bracket as drawn;
-- CPU cost on the chip.
+- the first bank-2 install: written at the first boot, one restart by itself, no `!`, unchanged over two
+  power-cycles;
+- a region set by the Waveform knobs: shift −Loop Start exactly (−6 144); Slip on it under the D-016 sign: `+0.060`
+  → −1 500, `−0.120` → +3 000;
+- Loop Len 1/4 a one-beat stutter in time, Off back in phase (shift 0), 1/16 forcing Sync 1/16 and Off giving it back;
+- a negative Slip (−120) and the region through save, power-cycle and reload (question 3 settled);
+- the load: 24–25 % with pads playing, and the ten findings 37.3.0 answers.
 
-## 6. How to bench it: Gate 3 recipe
+**Not checked on the unit yet** (Gate 3b, §7): all of 37.3.0 (the bank-2 move of D-018, the fix batch, the knob's
+v3, Fit, Loop Fade, its bank-2 install); Region live and Region Auto through Sample mode (the Pad Mode change feeding
+the class-H object, posted in emulation as the app posts it); on/off/on within a beat; Loop Len over a region with
+Slip; SD streaming at a seam; the Waveform knobs' steps and dead travel; the workflow on a real song; the pre-listen
+cell fix; the knob's counts per revolution; the CPU cost of bank 2's calls on the chip.
 
-**Unit and tools.** Use the dev build 37.2.0d (USB peek in), with **`BLACKBOX.bin` and `BBEXTRA.BIN` from the same
-build**. Cable the power jack to mgr-ran's USB. Measurements come from `bench/bbusb.py` over the USB audio (Outs 1–3,
-24-bit / 48 kHz) and the peek.
+## 6. How to bench it: the Gate 3 recipe
+
+The full list of checks, numbered as the bench reports cite them. Gate 3 part 1 ran it on 37.2.0d / 37.2.1d; what is
+left, and what 37.3.0 changed, is §7 (Gate 3b), which points back at these rows.
+
+**Unit and tools.** Use the dev build of the release under test (USB peek in: 37.2.0d at Gate 3 part 1, 37.3.0d at
+Gate 3b), with **`BLACKBOX.bin` and `BBEXTRA.BIN` from the same build**. Cable the power jack to mgr-ran's USB.
+Measurements come from `bench/bbusb.py` over the USB audio (Outs 1–3, 24-bit / 48 kHz) and the peek.
 
 **Setup.**
 
@@ -868,21 +887,34 @@ build**. Cable the power jack to mgr-ran's USB. Measurements come from `bench/bb
 
 - `bbusb.py slip` prints the bank address, the polled Slip per pad and the latched slots.
 - `bbusb.py knob [SECONDS]` prints the Slip knob's last turn event (counts, the accelerator's speed 1..6) and the
-  detent's last arrival on 0; with SECONDS it samples while you turn and ends with how often each speed was seen.
-  Read only.
-- For pad q = 4 × row + col, with `B` the bank address it prints:
+  detent's last arrival on 0, slow or fast; with SECONDS it samples while you turn and ends with how often each speed
+  was seen. Read only.
+- `bbusb.py fit` prints, per pad with Fit or Loop Fade set, Fit as taken, the tempo it was fitted at, Auto's beats
+  and the length it counted, Loop Fade, and the pad's step fields (`+0x1f0` rate, `+0x204`, `+0x208`, `+0x210`,
+  `+0x230`). Read only.
+- All three refuse a bank whose magic is not `CWNA` (37.3.0's layout): 0 means the bank was not set up this boot (no
+  matching bank 2, TOOLS shows `!`), and whatever else is in it is a previous boot's.
+- For pad q = 4 × row + col (rows counted from the bottom: B at row 3 col 1 is q = 13), with `B` the bank address
+  `slip` prints:
 
-| what | address |
-|---|---|
-| region | `B + 0x4C0 + 8q` (rs, vlen) |
-| origin | `B + 0x5C0 + 4q` |
-| `ll` | `B + 0x600 + q` (a byte) |
-| `forced` | `B + 0x610 + q` (a byte) |
-| latch, slot k | `B + 0x98 + 64q + 16k` (rs, vlen, delta, len) |
+| what | address | B's (q = 13) |
+|---|---|---|
+| region | `B + 0x4C0 + 8q` (rs, vlen) | `B + 0x528` |
+| origin | `B + 0x5C0 + 4q` | `B + 0x5F4` |
+| `ll` | `B + 0x600 + q` (a byte) | `B + 0x60D` |
+| `forced` | `B + 0x610 + q` (a byte) | `B + 0x61D` |
+| latch, slot k | `B + 0x98 + 64q + 16k` (rs, vlen, delta, len) | `B + 0x3D8` |
+| `llv`, `llc` (Loop Len's settle) | `B + 0x723 + q`, `B + 0x733 + q` (bytes) | `B + 0x730`, `B + 0x740` |
+| `flen` (the Waveform's file length) | `B + 0x744 + 4q` | `B + 0x778` |
 
-- `peek` prints little-endian words, so byte q is byte `q % 4` (lowest first) of word `q / 4`.
+- `peek` prints little-endian words, so byte q is byte `q % 4` (lowest first) of word `q / 4`; `peek ADDR N` reads N
+  bytes from ADDR (any address, any length up to what you ask).
 - The pad object is the `pad object` printed by `slip`. Its `+0x220` is the Sync step in ticks (960 = 1/4, 240 =
-  1/16).
+  1/16). Its four segment slots are at `+0x30 + 0x70 k`: `+0` active, `+1` done, `+0x08` the position (i64),
+  `+0x20` the start delay, `+0x34` the step j (`peek PAD+30 448` reads all four; notes/re/a1).
+- **The load, without TOOLS**: `cpu.c`'s meter is at `0x2405FFD0`. `peek 2405FFE4` gives the blocks measured (low
+  half) and the **peak** in per mille (high half) since TOOLS last drew its bar; `peek 2405FFF0`'s byte 2 is the late
+  blocks since then. TOOLS' own figure is the same peak, rounded to a percent (and its draw clears both).
 
 **The test take.**
 
@@ -897,7 +929,7 @@ loop point is the mod's.
 
 | # | check | how | expect |
 |---|---|---|---|
-| 0 | install | both files on the card, BACK + INFO at power-on; let the first boot restart itself once (bank 2 written) | TOOLS shows `37.2.0d` with **no `!`** before the load figures; `bbusb.py crash`: no fault or watchdog record |
+| 0 | install | both files on the card, BACK + INFO at power-on; let the first boot restart itself once (bank 2 written) | TOOLS shows the build's name (`37.2.0d` at part 1) with **no `!`** before the load figures; `bbusb.py crash`: no fault or watchdog record |
 | 1 | reference | A alone → `a.wav`; then B alone on Region Auto (= File), Slip 0, Loop Len Off → `b_file.wav` | sounds as stock; `shift a.wav b_file.wav` gives the Resam's own offset (note it; every check below is against `b_file.wav`) |
 | 2 | Region by the knobs | Region **Loop**; Waveform TL Loop Start to L ≈ 6 000, then TR Loop End to L + 96 000 (one bar; the knob shows frames and moves in whole steps from its range's start, so zoom in until it lands; note L) → `region.wav` | the bracket shows at once and is heard from the next wrap; `shift b_file.wav region.wav` **−L** (−6 000 = −240.0 ticks for L = 6 000); peek region[q] = (L, 96 000); no click, flam or gap at the loop point |
 | 3 | Slip on the region | Slip `+0.060` → `rslip1.wav`; `−0.120` → `rslip2.wav` | **−L − 1 500** and **−L + 3 000** (−7 500 and −3 000 for L = 6 000; the D-016 sign: `+` comes earlier); the seam now falls mid-step (Sync 1/4): still no click |
@@ -932,7 +964,47 @@ not. Three things to answer along the way:
 - whether the bracket's lead over what you hear is acceptable;
 - whether Loop Len (and now Slip and Region) without bank 2 should read `---` (question 30).
 
-## 7. Files
+## 7. Gate 3b: the run on 37.3.0d
+
+What Gate 3 part 1 left (§6 checks 5, 6, 10, 12, 16, 18; 11 and 14 are not in its report either), what 37.3.0
+changed (the knob's v3, findings 1, 2, 5, 7, 8, 9, 10 and 12, D-018's move to bank 2), and Fit and Loop Fade (§6
+checks 19–26). Same unit, cabling, setup, pads and takes as §6: 120 BPM, Metro Out = Out 2, pads on Out 1, pad A the
+1-bar drum loop, pad B the 2-bar Resam take of A (192 000 frames, row 3 col 1, q = 13), pad 1 the 14.015-beat take
+(336 359 frames, row 0 col 0, q = 0). L is Loop Start, in frames; `shift` is `bbusb.py shift` (+ = later), `peek` is
+`bbusb.py peek`, and the bank addresses are §6's table (B's column). Takes and readings go to
+`/data/dev/gate3b/` on mgr-ran.
+
+**The pair.** `/data/dev/release/37.3.0d/`: `BLACKBOX.bin` and `BBEXTRA.BIN` from one build (sha256 in its
+`SHA256SUMS` and in `notes/releases/37.3.0.md`), payload id `0x2a0e4094`, len `0x4120`, sum `0x2cbfbf38`.
+
+| # | check | how | expect |
+|---|---|---|---|
+| 3b-0 | install (D-018) | before: `peek 08100000 16` (37.2.x's header: `21324242 2c4676ca 00003500 73f8a581`); both files on the card, BACK + INFO at power-on; then two power-cycles | the first boot rewrites bank 2 and restarts itself once; `peek 08100000 16` → `21324242 2a0e4094 00004120 2cbfbf38`; TOOLS `37.3.0d` with no `!`; `bbusb.py slip` prints magic `0x43574e41` (`CWNA`); `bbusb.py sdram` about 1 491 200 B free (Gate 3: 1 493 248; the bank is 0x1000 now, −2 048); `bbusb.py crash`: no fault, no watchdog record; the power-cycles: the header unchanged, no rewrite |
+| 3b-1 | references (§6 check 1) | A alone → `a.wav`; B alone on Region File, Slip 0, Loop Len Off, Fit Off, Loop Fade 0 → `b_file.wav` | `shift a.wav b_file.wav` +192, as at Gate 3 (the Resam's latency): with all five at their defaults B is stock. Every shift below is against this `b_file.wav` |
+| 3b-2 | the Waveform's names (finding 2) | B on the Clip Waveform with Region Loop over [6 000, 102 000); then pad 1 with Loop End at its end; photo | `LpS 6000`, `LpE 102000`, `Slip +0.000`, `LpLen Off`, every value whole and clear of the other knob's name; on pad 1 `LpE 336359` |
+| 3b-3 | the knob's v3 (finding 1; §6 check 4) | Waveform BL and Pos Slip: slowly, a bit faster, fast, then into and through 0, slowly and fast; `bbusb.py knob 60` while turning → `knob-log-3b.txt` | no step you can feel between speeds; at the knob log's median counts an event moves 0.5, 1.6, 3.8, 9.7, 22.5 and 60 ticks at speeds 1..6, only speed 6 on the 1/64 grid (`+0.025` → `+0.060`); a slow arrival on 0 prints `arrived on 0 (slow)` and holds about 0.4 s, a fast one about 0.15 s, then the same turn goes on. Thomas's feel decides; the speeds seen are what `KNOB_GAIN`, `KNOB_GAIN_STEP`, `KNOB_TOP` and the holds are retuned on (a new `BBEXTRA.BIN`, D-018 (5)) |
+| 3b-4 | Region live (§6 check 5) | Slip 0; B playing Region Loop [L, L + 96 000) (L ≈ 6 000), then File, then Loop again; record after each | each change heard at a wrap, never doubled; File `shift` **0**, Loop again **−L** |
+| 3b-5 | Region Auto without Loop Mode (finding 7) | B on Region **Auto** (a Resam take: Sample mode's Loop Mode None); on the Clip Waveform TL to L ≈ 6 000, then TR to L + 96 000 → `auto_k.wav` | the bracket shows at once (37.2.x: none, the pad stayed on File); from the next wrap `shift` **−L**; `peek B+528 8` = (L, 96 000) |
+| 3b-6 | Region Auto through Sample mode (§6 check 6) | as §6 row 6 | the bracket; `shift` **−L′**. The Pad Mode change feeding the class-H object, never run on the unit |
+| 3b-7 | a region grown from under half a beat (finding 5) | B, Region Loop, Beat Count Auto, Quant 1 bar, Sync 1/16: TR to L + 9 000 (3/8 beat) and play; then TR to L + 48 000 (2 beats) without stopping → `grow.wav` (20 s from the change) | the 2-beat loop is heard from the next time round, no stop / play needed (37.2.x held the old one until a relaunch); one pass out of time, a short gap and one 1/16 doubled (emulated: 496 samples of gap, then 6 903 samples at gain 2), then in time: from the next pass `grow.wav` matches a take of the same region launched from stop (`shift` **0**); `peek B+528 8` = (L, 48 000) |
+| 3b-8 | Loop Len taken when it settles (finding 8; §6 checks 7, 9) | Region File, Slip 0: from Off turn BR at an ordinary speed to 1/4 while beat 3 plays → `ll4b.wav`; then Off; then step Off → 1/16 → 1/8 → 1/4 slowly, resting about 1 s on each | 1/4 engages on the beat playing about 0.2 s after the knob rests: `peek B+600 32`: `ll` byte 13 = 3, `forced` byte 13 = 0; `peek B+5F4` origin a multiple of 960 (1 920 or 5 760 when taken in beat 3); `peek B+730` byte 0 (`llv`) 3, `peek B+740` byte 0 (`llc`) 4; pad `+0x220` 960 (Gate 3: in-point 2 160, Sync forced 1/16); `shift b_file.wav ll4b.wav` **0**. The slow step-through takes each value in turn (1/16: `forced` 1, `+0x220` 240); Off: `forced` 0, `+0x220` 960 |
+| 3b-9 | on / off / on within a beat (§6 check 10) | 1/4 on and taken; Off, then 1/4 again within about 0.3 s | the same beat comes back (origin unchanged), since 1/4 is taken again 171..213 ms after the knob rests and a beat is 500 ms |
+| 3b-10 | Loop Len over a region with Slip (§6 check 11, never run) | the region of 3b-5, Slip `+0.060`, Loop Len 1/4 → `llr.wav` | `shift` **−L − 1 500**; the beat repeated is the one that was playing |
+| 3b-11 | the Waveform knobs and the pad's length (§6 checks 12, 19; finding 12) | pad 1, Region Loop over part of it: TR turned to its top, then back; TL / TR at several zooms; `peek B+744 4` (`flen[0]`); then §6 row 19's browser round trip and load | TR's top reads `LpE 336359` (37.2.x stopped at 192 000), `flen[0]` = 336 359 (`0x000521e7`); the view follows the playhead to the loop's end; one step = one pixel; the dead travel at the top counted (question 16); after the round trip and after a load, TR's top and `flen` are the file's length then (a stale one is review F3: §4) |
+| 3b-12 | SD at a seam (§6 checks 14, 26; question 9) | `peek 24013930` before and after 30 s of each: B on File; Region Loop with Slip `+0.060`; a 4-bar clip with Loop Len 1/16, Off, on; the region of 3b-17 at Loop Fade 5 % and 25 %, Slip 0 and `+0.060` | no more misses than B on File (Gate 3: 0 in normal play); no dropout on the step after Loop Len Off |
+| 3b-13 | the pad the browser left stuck (finding 9; §6 check 17 again) | visit TOOLS (it clears the meter); B on Region File, Slip `+0.060`, Sync 1/4, playing; open the browser from B, highlight pad 1's file and stay on it 9 s or more (its 16 beats: B plays into its last step), then leave → record 20 s → `prelisten3b.wav`; while it plays `peek PAD+30 448` twice, 1 s apart; `peek 24013930` before and after; `peek 2405FFE4` and `peek 2405FFF0` before going back to TOOLS; then the same at Slip 0 | B plays its own file again from its next pass, in time, with no stop / play: `shift b_file.wav prelisten3b.wav` **−1 500** (at Slip 0: **0**); no slot active and not done at a position past 192 000 (Gate 3: slot 0 at 315 848 for 1.4 s, step 0 restarting every 2 beats); the misses as Gate 3's browse (0 → 176: stock streaming) |
+| 3b-14 | the load (finding 10; §6 check 15) | the peak of 3b-13 (`peek 2405FFE4`'s high half, per mille; the late count `2405FFF0` byte 2), then TOOLS; TOOLS at boot and with the Gate 3 preset playing; then four pads on Fit Auto over 3.74-beat regions (rate 0.935), and the same four at Loop Fade 5 %; `bbusb.py crash` at the end | the browse's peak near the clean browse's 24 %, no late block (Gate 3: 99 % peak during the stuck episode); 8/13 % at boot and 24–25 % playing as on 37.2.1d (bank 2's calls: about +110 instructions a block a playing Clip pad under emulation, far under 1 %); the four fitted pads a few % more than at Fit Off (emulated +4 352 instructions a block a pad through the interpolating reader; Loop Fade 5 % about +180 more); no fault or watchdog record |
+| 3b-15 | the pre-listen voice is no pad (§6 check 18) | as §6 row 18 | as there |
+| 3b-16 | Fit (§6 checks 20–24) | as §6 rows 20–24; and Fit 3 beats and 6 beats on B's 1-bar region [L, L + 96 000) at Quant 1 bar, Sync 1/4 → `fit3.wav`, `fit6.wav` | as there; 3 beats: `fit` `+0x1f0` 1.333333, `+0x210` 3, `+0x230` 960, a pass every 72 000 samples; 6 beats: 0.666667, 6, 1920, every 144 000; each in time against the metronome, no doubled or silent step. They stay in the list only if they behave (D-026) |
+| 3b-17 | Loop Fade (§6 check 25; finding 6) | as §6 row 25: B, Region Loop [L, L + 89 760) with L ≥ 4 488, Fit Off; Loop Fade 0 → `fade0.wav`, 5 % → `fade5.wav` | as there; at 5 % F = 4 488 frames; `fit`: Loop Fade 5 % |
+| 3b-18 | the workflow, for real (§6 check 16) | §2 on a phone recording of a real song, no Trim, with Fit Auto and a few % of Loop Fade | sits in the groove; report by ear |
+
+Answer along the way, beside §6's three: whether the knob's v3 feels right; whether 3 and 6 beats stay in Fit's list;
+whether stock wraps pad 1's 14-beat take cleanly at Quant 1 bar (check 21: the emulation says it does not); whether
+Fit Auto's count outlives a preset load (check 21's second half: the review's F3). Report as
+`notes/bench/2026-10-1x-gate3b.md`, in the form of the Gate 3 part 1 report.
+
+## 8. Files
 
 - `src/clipwin.c`: bank 1, the hooks and their stock calls (the poll, the reader, the knob, the Waveform's binding).
 - `src/clipwin_b2.c`: bank 2, the maths and the policy of every hook (§3.5).

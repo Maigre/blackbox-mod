@@ -30,8 +30,9 @@ export PATH=/srv/dev/toolchains/arm-gnu-14.2/bin:$PATH
 Release images (what goes on the card): `RELEASE=1 ./build.sh && python3 patch.py cave` (cave-only) or the
 full set `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi master fault cave`.
 `RELEASE=1` compiles the USB peek/poke out and shows `RELEASE_NAME` (`src/release.h`, 37.x.y; dev builds `DEV_NAME`, 37.x.yd) on TOOLS.
-**Rebuild without `RELEASE=1` before running the suites** (they expect the dev build). The two Gate 0 images of
-2026-10-15 sit in `out/gate0/{cave,full}/BLACKBOX.bin`; `BBEXTRA.BIN` is not installed for now (D-008).
+**Rebuild without `RELEASE=1` before running the suites** (they expect the dev build). Since 37.2.0 the Clip Window
+runs from bank 2 (D-017, D-018): `out/BBEXTRA.BIN` from the same build goes on the card beside `BLACKBOX.bin` (D-008's
+install without it is over).
 
 Ghidra (the RE helpers in `ghidra/`): the scripts default to the Homebrew paths and read `GHIDRA_INSTALL_DIR`,
 `JAVA_HOME` and `GHIDRA_PROJ` (where the analysed project lives; default `ghidra/`) from the environment. Keep the
@@ -59,16 +60,24 @@ the hub's `verify:`.
 
 ## Branches, worktrees, releases
 
+The model is D-019 (Thomas, 2026-10-16): `main` is a pure mirror of upstream, each feature's PR-shaped branch is that
+feature's source of truth, and `maigre` is upstream plus every feature as if accepted plus a thin fork-only layer,
+moved only by merges.
+
 | branch | from | what | goes upstream? |
 |---|---|---|---|
-| `main` | upstream `main` | a mirror, fast-forward only, never committed to | — |
-| `maigre` | `main` | the fork's integration: every landed feature + `notes/` + `bench/` + `FORK.md` + the 37.x names | no (features go as their own PRs) |
-| `37loop/blackbox-t-NNN` | `maigre` (or the unlanded branch it stacks on) | one hub task's work; lands on `maigre` when Thomas taps it | no |
-| `feat/<name>`, `fix/<name>` | upstream `main` | ONE feature as a PR: `src/<f>.c` + `patches/<f>.py` + `test_<f>.py` + its README bullet; no `notes/`, no fork names; comments cite `notes/re/...` as "in github.com/Maigre/blackbox-mod" | yes, opened by Thomas |
+| `main` | upstream `main` | a pure mirror, fast-forward only, never committed to | — |
+| `feat/<name>`, `fix/<name>` | upstream `main` | ONE feature as a PR, and that feature's source of truth: `src/<f>.c` + `patches/<f>.py` + `test_<f>.py` + its README bullet; no `notes/`, no fork names; comments cite `notes/re/...` as "in github.com/Maigre/blackbox-mod" | yes, opened by Thomas |
+| `maigre` | `main` | upstream `main` + every feature branch merged, as if its PR were accepted + the fork-only layer (`notes/`, `bench/`, `FORK.md`, the 37.x names in `src/release.h`); moved **only by merges** (a feature branch, upstream `main`, a landed task branch), never a commit of feature code made on it | no (features go as their own PRs) |
+| `37loop/blackbox-t-NNN` | `maigre` (or the unlanded branch it stacks on) | one hub task's work, one commit per feature or fix; lands on `maigre` when Thomas taps it | no |
 
 A PR branch is cut from upstream `main`, the feature's commits cherry-picked without committing
 (`git cherry-pick -n <sha>…`), fork-only wording taken out of the comments (D-0xx ids, names), then `./check.sh` on
-upstream's base before ONE commit. On this box before `feat/linux-dev` is upstream, a branch from his `main` needs a
+upstream's base before ONE commit. From then on a fix to that feature is made on its branch first, and reaches
+`maigre` by merging the branch. When Justin accepts a PR: fast-forward `main` to his, merge it into `maigre`, and
+resolve every conflict toward his version (what he took, as he took it, replaces ours). How a task branch that carries
+several features and notes (`37loop/blackbox-t-021`) is split into its feature branches at landing is not settled
+yet (D-019). On this box before `feat/linux-dev` is upstream, a branch from his `main` needs a
 `clang` on the PATH (`mkdir /dev/shm/x && ln -s /usr/bin/gcc /dev/shm/x/clang && PATH=/dev/shm/x:$PATH`) and shows
 `test_machine.py`'s four S950 Lo misses (no FMA) — both are what `feat/linux-dev` fixes.
 
@@ -79,3 +88,8 @@ A release: bump `src/release.h` (`RELEASE_NAME` 37.x.y, `DEV_NAME` 37.x.yd) in i
 `RELEASE=1 ./build.sh && python3 patch.py <the full set>` → `out/<set>/BLACKBOX.bin` (+ `out/BBEXTRA.BIN` when bank 2
 holds code: both files from the SAME build run, or the pair is refused), copied out of `out/` with its sha256 and
 release notes; then a dev rebuild before the suites again. Never commit an image (README "What is and isn't").
+`python3 make_patch.py out/<set>/BLACKBOX.bin 37.x.y --extra out/BBEXTRA.BIN --out <outside the clone>` makes the
+release's patch for `apply.py` from the same run (it refuses a pair that was not linked together); without `--out` it
+writes into `docs/`, which is upstream's patcher folder. When bank 2's code changed, build with `BANK2_NEW=1`
+(`build.sh`). On mgr-ran the images go to `/data/dev/release/<version>/` with a `SHA256SUMS`, dev builds to
+`/data/dev/release/<version>d/`.
