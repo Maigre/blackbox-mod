@@ -9,8 +9,8 @@
  * and take, then everything else that is maths or policy. clipwin.c keeps the hooks, every stock call (the settings
  * lookup, the source's length and prefetch, the readers, the param-set, the recompute, the knob's ring, stepper and
  * text) and the bank's set-up, and calls in here only when b2_live() says the payload up there is this build's.
- * Without it every hook is a straight pass to stock: Slip, Region, Loop Len and Fit do nothing, the Slip row shows
- * stock's plain number and the waveform no bracket.
+ * Without it every hook is a straight pass to stock: Slip, Region, Loop Len, Fit and Loop Fade do nothing, the Slip
+ * row shows stock's plain number and the waveform no bracket.
  */
 #include <stdint.h>
 
@@ -56,11 +56,12 @@ static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, i
 /* The region pad q plays from now: its Region setting over the loop points. From the cell's class-H object, which
    stores them in queue order with everything else the pad hears; from the app's store (set, which clipwin.c read)
    when that link does not hold, keeping the last pair that made sense there (the app writes Loop Start and Loop End
-   one at a time). Fit comes with it, from the store; the one the pad had is kept for cw_hold. */
+   one at a time). Fit and Loop Fade come with it, from the store; the Fit the pad had is kept for cw_hold. */
 static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len, const int32_t *set)
 {
     b->pfit[q] = b->fit[q];
     b->fit[q] = (uint8_t)((uint32_t)set[CW_SET_FIT] <= FIT_MAX ? set[CW_SET_FIT] : 0);
+    b->fade[q] = (uint16_t)((uint32_t)set[CW_SET_FADE] <= LOOP_FADE_MAX ? set[CW_SET_FADE] : 0);
     const uint8_t *h = *(uint8_t *const *)(pad + PAD_SIBLING);
     int32_t ls, le;
     if (h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
@@ -521,21 +522,59 @@ const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_
     return off % SEG_SIZE || k > 3 || !(b->valid[q] & (1u << k)) ? 0 : &b->latch[q][k];
 }
 
-/* ...and with that latch l holding for the file the pad has: *real = where segment position pos really reads (rs +
-   ((pos mod vlen) + delta) mod vlen). 1 when rs must be hinted now: the segment's content crosses the region end
-   mid-segment, where stock never hints, so it is hinted once, as soon as the seam is inside the hint's sure reach
-   (notes/re/a2: 3 blocks of 8192 frames from the hinted one). */
-int cw_map(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t pos, int32_t *real)
+/* ...and with that latch l holding for the file the pad has: at[0] = where segment position pos really reads (rs +
+   ((pos mod vlen) + delta) mod vlen), at[1] = Loop Fade's frames F: the region's last F frames crossfade into the F
+   before Loop Start, as stock's Sample mode reckons them (FUN_08056fd0 at 0x08057146: (int)((Loop End - Loop Start) x
+   row / 1000), at most Loop Start), for a region that wraps seamlessly (Loop On, Launch not Trigger; a whole file has
+   nothing before its start) and is 2 048 frames or more (a read's window and its copy, up to 512 frames each, must
+   not wrap twice), while Loop Len is not taken (a window goes back to its own start, never on into Loop Start: on the
+   region's last beat its repetitions would each end on the audio before Loop Start); 0 = none. */
+void cw_map(const struct cw_bank *b, unsigned q, const uint8_t *pad, const struct cw_latch *l, int32_t pos,
+            int32_t *at)
+{
+    unsigned fade = b->fade[q];
+    int32_t rs = l->rs, vlen = l->vlen, f = 0;
+    if (fade && fade <= LOOP_FADE_MAX && !b->ll[q] && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1 && vlen >= 2048) {
+        f = (int32_t)((float)vlen * ((float)fade / 1000.0f));
+        f = f < rs ? f : rs;
+    }
+    at[0] = rs + fold2(fold2(pos, vlen) + l->delta, vlen);
+    at[1] = f;
+}
+
+/* ...the read at real takes `fade` of those frames (clipwin_read: none in a machine mode, or above a rate of ~3.9):
+   1 when the seam hint must be made now: at rs, and at rs - fade where the fade's copy starts (clipwin_read). The
+   segment's content crosses the region end mid-segment, where stock never hints, so it is hinted once, as soon as the
+   seam, or the fade, is inside the hint's sure reach (notes/re/a2: 3 blocks of 8192 frames from the hinted one). */
+int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t real, int32_t fade)
 {
     unsigned k = (unsigned)(l - b->latch[q]);
-    int32_t rs = l->rs, vlen = l->vlen;
-    int32_t at = rs + fold2(fold2(pos, vlen) + l->delta, vlen);
-    *real = at;
-    if (rs + vlen - at <= 16384 && !(b->hinted[q] & (1u << k))) {
+    if (l->rs + l->vlen - fade - real <= 16384 && !(b->hinted[q] & (1u << k))) {
         b->hinted[q] |= (uint8_t)(1u << k);
         return 1;
     }
     return 0;
+}
+
+/* Loop Fade (Gate 3 finding 6: the region's seam is a hard splice, a single-sample step at every wrap): the
+   equal-gain, linear crossfade stock's Sample mode makes over the same frames (FUN_0805fc08 / FUN_0805fc38's ramps,
+   then a sum), over the source frames of one read's window: l (r) = the window as read over the region, its first
+   frame i0 frames into the fade (negative: before it); l + count (r + count) = the same window read vlen earlier in
+   the file, before Loop Start. The gain is 0 before the fade, (i - (le - F)) / F in it, and 1 from the region's end
+   on, where the copy is the region's start itself. */
+void cw_fade(float *l, float *r, int count, int32_t i0, int32_t fade)
+{
+    float dg = 1.0f / (float)fade;
+    for (int i = 0; i < count; i++) {
+        float g = (float)(i0 + i) * dg;
+        if (g <= 0.0f)
+            continue;
+        if (g > 1.0f)
+            g = 1.0f;
+        l[i] += g * (l[count + i] - l[i]);
+        if (r)
+            r[i] += g * (r[count + i] - r[i]);
+    }
 }
 
 /* ---- the Slip knob ---- */

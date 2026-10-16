@@ -65,6 +65,7 @@
 #define FIT_AUTO    1                /* Fit: Off, Auto, then 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2, 4 and 8 bars */
 #define FIT_MAX     9
 #define FIT_AUTO_MAX 1024            /* Fit Auto's most beats (an 8.5-minute loop at 120 BPM) */
+#define LOOP_FADE_MAX 1000           /* stock's Loop Fade row (0xfa): 0 .. 1000 = 0 .. 100 % of the loop */
 
 struct cw_latch {
     int32_t rs, vlen, delta;         /* the region (v1: the whole file) and the shift, frames */
@@ -105,8 +106,9 @@ struct cw_bank {
     int32_t alen[16];                /* ... for this length, frames (0: none counted) */
     float bpm[16];                   /* the tempo a fitted pad's step fields were made at */
     const uint8_t *engine;           /* the engine (the clock) as the poll last had it: cw_fit's tempo */
+    uint16_t fade[16];               /* Loop Fade as taken with the region: 0 .. LOOP_FADE_MAX */
 };
-#define CW_MAGIC  0x43574e39u        /* "CWN9": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e41u        /* "CWNA": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's EXTRA_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's EXTRA_BYTES gives the bank CW_BYTES");
@@ -116,7 +118,7 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
                offsetof(struct cw_bank, fit) == 0x784 && offsetof(struct cw_bank, fon) == 0x7a4 &&
                offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
-               offsetof(struct cw_bank, bpm) == 0x814 && sizeof(struct cw_bank) == 0x858,
+               offsetof(struct cw_bank, bpm) == 0x814 && sizeof(struct cw_bank) == 0x878,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*
@@ -130,7 +132,8 @@ int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, els
 #define CW_SET_START  1
 #define CW_SET_END    2
 #define CW_SET_FIT    3
-#define CW_SET_ROWS   4
+#define CW_SET_FADE   4
+#define CW_SET_ROWS   5
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set);
 /* ...cw_len's at site 3: a fitted pad's step fields over len (its region or its file); 1 = stored, 0 = not fitted */
 int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len);
@@ -142,10 +145,14 @@ int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t
 /* H1: latch slot k, return where to prefetch (pos < 0: from the segment's own start); H1': a slice segment in slot k */
 int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_t len, int32_t pos);
 void cw_slice(struct cw_bank *b, unsigned q, unsigned k);
-/* H2: the latch of the segment whose fraction is at frac (0: none, read as stock); its real position for pos, 1 = hint
-   rs now */
+/* H2: the latch of the segment whose fraction is at frac (0: none, read as stock); at[0] = its real position for pos,
+   at[1] = Loop Fade's frames before the region's end (0 none); 1 = hint now: rs, and rs - fade (the read takes fade);
+   Loop Fade's crossfade over a read's window */
 const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_t *pad, const float *frac);
-int cw_map(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t pos, int32_t *real);
+void cw_map(const struct cw_bank *b, unsigned q, const uint8_t *pad, const struct cw_latch *l, int32_t pos,
+            int32_t *at);
+int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t real, int32_t fade);
+void cw_fade(float *l, float *r, int count, int32_t i0, int32_t fade);
 /* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg, bit 2 =
    the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source), bit 3 = recompute it
    (Fit: its step fields were made at another tempo) */
@@ -172,7 +179,7 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                offsetof(struct cw_bank, forced) == 0x610 && offsetof(struct cw_bank, sf) == 0x620 &&
                offsetof(struct cw_bank, llv) == 0x723 && offsetof(struct cw_bank, llc) == 0x733 &&
                offsetof(struct cw_bank, flen) == 0x744 && offsetof(struct cw_bank, pfit) == 0x794 &&
-               offsetof(struct cw_bank, engine) == 0x854,
+               offsetof(struct cw_bank, engine) == 0x854 && offsetof(struct cw_bank, fade) == 0x858,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
                SEG_STEP == 0x34 && SEG_FIRST == 0x3c && SEG_END == 0x10 && PAD_FPS == 0x1fc && PAD_TPS == 0x208 &&
@@ -188,8 +195,8 @@ _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC =
 _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START == 0x18 && WAVE_DIRTY == 0x32 &&
                WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
-               CW_SET_END == 2 && CW_SET_FIT == 3 && CW_SET_ROWS == 4 && CW_WAS_GRID == 2 && CW_WAS_CLIP == 3 &&
-               FIT_AUTO == 1 && FIT_MAX == 9 && FIT_AUTO_MAX == 1024,
+               CW_SET_END == 2 && CW_SET_FIT == 3 && CW_SET_FADE == 4 && CW_SET_ROWS == 5 && CW_WAS_GRID == 2 &&
+               CW_WAS_CLIP == 3 && FIT_AUTO == 1 && FIT_MAX == 9 && FIT_AUTO_MAX == 1024 && LOOP_FADE_MAX == 1000,
                "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch, cw_hold) is compiled against the "
                "knob's and the waveform's fields, these settings and values, clipwin_len's row order and "
                "clipwin_wrap's: changing one reprograms bank 2");

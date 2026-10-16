@@ -508,7 +508,7 @@ corrected accordingly.
   - The Gate 3 fix batch (37.3.0): 56 472 B used (1 264 free), `.bank2` 15 684 B (`cw_retire` and the knob's v3 in
     it).
   - Fit (#t-022): 56 600 B used (1 136 free), `.bank2` 16 384 B (`cw_fit`); `cw_bank` grew past 0x800 (0x858), so
-    `EXTRA_BYTES` gives it 0x1000.
+    `EXTRA_BYTES` gives it 0x1000. Loop Fade: 56 744 B used (992 free), `.bank2` 16 652 B (`cw_hint`, `cw_fade`).
 - **Workflow traps**: Clip → Sample wipes the loop points (X3 ✓ t4); a Clip pad saved/trimmed by stock writes no
   `smpl` loop; an imported `acid` beat count refers to the whole file (rule needed when Region resolves to Loop).
 

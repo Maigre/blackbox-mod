@@ -42,7 +42,8 @@ PATCHES = [
     hook(0x080A53B0, 0x080A52C4, "clipwin_zoom"),
     hook(0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8
-    (0x080EF998, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
-    (0x080EF290, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
+    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8, and
+    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9
+    (0x080EF998, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
+    (0x080EF290, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
 ]

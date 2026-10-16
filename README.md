@@ -66,6 +66,10 @@ New since 3.1.n:
   while the pad plays is heard from the next time the loop comes round; one that moves where the loop can start (1 bar
   to 2 bars on a Quant of 4 bars) waits for a point where a launch would start it, as a Region change does. Saved with
   the preset; Off is stock.
+- **Loop Fade on a Region**: Sample mode's Loop Fade row is on a Clip pad's Pos tab too, after Fit. On a pad playing a
+  Region it smooths the loop point as Sample mode does: the end of the loop (that share of its length, at most as long
+  as what lies before Loop Start) crossfades into the audio just before Loop Start, so a loop whose end and start do
+  not meet no longer clicks each time it comes round. Heard from the next time round; 0 is stock.
 - **Knobs on a Clip pad's waveform**: stock leaves all four blank in Clip mode. Top-left is Loop Start and top-right
   Loop End, the same loop points as Sample mode's, which Region plays: one step is one pixel of the waveform, so zoom
   in for finer steps. The white loop bracket shows the loop Region plays, as soon as you turn: a playing pad takes the
@@ -125,12 +129,12 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Slip, Region, Loop Len and Fit all run from the second file (`BBEXTRA.BIN`, flash bank 2), which has to come from
-  the same download as `BLACKBOX.bin`. Without it (or with one from another build) every Clip pad plays exactly as on
-  stock: the four rows are there and save, but do nothing; the Slip row shows a plain number of ticks instead of
-  beats.ticks and turns like any number row, and the Clip-mode waveform shows no loop bracket (its four knobs still
-  turn: Loop Start and Loop End move the loop points, which the pad then does not play; Slip and Loop Len there do
-  nothing). TOOLS shows the `!`.
+- Slip, Region, Loop Len, Fit and a Region's Loop Fade all run from the second file (`BBEXTRA.BIN`, flash bank 2),
+  which has to come from the same download as `BLACKBOX.bin`. Without it (or with one from another build) every Clip
+  pad plays exactly as on stock: the rows are there and save, but do nothing; the Slip row shows a plain number of
+  ticks instead of beats.ticks and turns like any number row, and the Clip-mode waveform shows no loop bracket (its
+  four knobs still turn: Loop Start and Loop End move the loop points, which the pad then does not play; Slip and Loop
+  Len there do nothing). TOOLS shows the `!`.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
   waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, without its region
   or Loop Len, for up to two Sync steps, then as set. (A pad that the file browser gave its own file back while it
@@ -165,6 +169,12 @@ From 3.1.n and earlier:
   (half a bar for 14 beats at Sync 1 bar, a beat for 5 beats at Sync 1/2). Auto's count is kept while the pad's file
   stays open: a preset at another tempo that plays the same file may keep the count made at the old tempo (not yet
   checked on the unit). To count it again at the tempo now, play a pass with Fit on another value, then Auto.
+- Loop Fade does nothing on a loop that starts at the very beginning of the file (there is nothing before Loop Start
+  to fade from), on a whole file, on a pad that never loops round (Launch Trigger, or Loop Off), on a loop shorter than
+  2 048 samples, in Fidelity's machine modes, above about four times the speed (two octaves up), or while Loop Len is
+  on (its short loop goes back to its own start, not on into Loop Start). While the fade plays, the pad reads its file
+  in two places at once; whether the card keeps up with a long fade is not yet measured on the unit. The Loop Fade row
+  also shows on a Clip pad that plays its whole file, where it does nothing.
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
   loop, so the pad plays the whole file until they are apart again. With Region on File the two knobs still move the
   loop points but nothing is heard and no bracket shows.
