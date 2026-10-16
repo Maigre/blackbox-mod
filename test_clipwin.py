@@ -96,8 +96,9 @@ B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x
 B_WRAP, B_REGION, B_GOOD, B_ORIGIN, B_LL, B_FORCED, B_SF = 0x4BE, 0x4C0, 0x540, 0x5C0, 0x600, 0x610, 0x620
 B_ZERO_AT, B_ZERO_DIR, B_KNOB_COUNTS, B_KNOB_SPEED = 0x4B8, 0x4BC, 0x720, 0x722   # the Slip knob's (clipwin_turn)
 B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, and polls since it changed
-B_SIZE = 0x744                                       # sizeof(struct cw_bank)
-CW_MAGIC = 0x43574E36
+B_FLEN = 0x744                                       # fw_src_len at each pad's last recompute (the Waveform's length)
+B_SIZE = 0x784                                       # sizeof(struct cw_bank)
+CW_MAGIC = 0x43574E37
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -2018,6 +2019,20 @@ for n_, what in ((0, "not open"), (0x10000000, "the provider reported 0 frames")
 ulen[0] = 96000
 check(f"fw_src_len 0 / 0x10000000: no region, the length passed on as it is at every site ({rows})",
       rows == [(0, 0, 0, 0), (0x10000000, 0, 0x10000000, 0x10000000)], rows)
+flens = []
+for n_ in (336359, 0):
+    ulen[0] = n_
+    ulen_call(1)
+    flens.append(u.r32(BANK + B_FLEN + 4 * UQ))
+    ulen[0] = 7
+    ulen_call(0)
+    ulen_call(2)
+    flens.append(u.r32(BANK + B_FLEN + 4 * UQ))
+ulen[0] = 96000
+ulen_call(1)
+check(f"site 1 (the recompute) keeps fw_src_len's answer for the Waveform screen (cw_bank flen), the other sites do not "
+      f"touch it ({flens}, then {u.r32(BANK + B_FLEN + 4 * UQ)})",
+      flens == [336359, 336359, 0, 0] and u.r32(BANK + B_FLEN + 4 * UQ) == 96000, flens)
 ulen_call(1)
 rows = {}
 for what, at, val, want in (("Clip", None, None, (48000, 48000, 1)),
@@ -3214,9 +3229,11 @@ class Screen:
                           begin=0x080C3B98, end=0x080C3B98)
         else:
             m.stub(0x080C3B98, lambda: self.texts.append((m.arg(0) - VIEW, m.cstr(m.arg(1)))))
-        for a in (0x080A5480, 0x080A3DEC, 0x080C6078, 0x080C4DD6, 0x080C4DF0, 0x080A401C, 0x080BD398, 0x080BD74E,
+        for a in (0x080A5480, 0x080A3DEC, 0x080C6078, 0x080C4DD6, 0x080A401C, 0x080BD398, 0x080BD74E,
                   0x080C6004, 0x080A5210) + (() if compose else (0x080B0480,)):
             m.stub(a)
+        self.ov = []                                         # the overview strip's length set (FUN_080c4df0), recorded
+        m.stub(0x080C4DF0, lambda: self.ov.append((m.arg(0) - VIEW, m.arg(1))))
         m.stub(0x080A331A, lambda: m.uc.mem_write(m.arg(0) + 0x30, bytes([m.arg(1) & 0xFF])))   # a knob's grey flag
         m.stub(0x080AED14, lambda: self.posts.append((m.r16(m.arg(1)), m.r32(m.arg(1) + 0xC), m.r32(m.arg(1) + 0x10))))
         m.uc.hook_add(UC_HOOK_CODE, lambda *a: self.binds.append((m.arg(0), m.arg(1), m.arg(2) - VIEW)),
@@ -3494,6 +3511,50 @@ check(f"SetCellParam on the Clip pad's store (mode {CLIP12[0x8B]}) stores what t
 eng12 = {pid: [x[1:] for x in got[pid][1] if x[0] == "engine"] for pid, _ in sets12}
 check(f"  each posted to the engine as cell 0x102 (row 1, col 2), the id and the value ({ {hex(k): v for k, v in eng12.items()} })",
       all(eng12[pid] == [(0x102, pid, v & 0xFFFFFFFF)] for pid, v in sets12), eng12)
+
+# ---- Gate 3 finding 12: the length is the pad's file's. The view's own (+0x2390, FUN_0809a830's copy of the app's
+# store + 0x20) is what the app's 0xE handler FUN_080a121c wrote into the first cell whose record names the asset just
+# opened (row 0 col 0 first): on the unit both pad stores read 192 000, while pad 1 plays a 336 359-frame file - TR stopped
+# at 192 000, and Loop End 192 000 (Loop Start 0) read as the whole file, so no bracket. Here the view holds another
+# pad's 192 000 and the engine's last recompute of this pad (cw_bank flen, H3 site 1) 336 359
+lv = Screen()
+lv.m.w32(BANK, CW_MAGIC)
+lv.m.w32(BANK + B_FLEN + 4 * 6, 336359)                     # pad (1, 2), as the recompute leaves it
+lv.open({**CLIP12, P_REGION: LOOP, 0x91: 0, 0x92: 192000})
+tr_, wv = lv.knob("TR"), lv.wave()
+check(f"a view whose own length is another pad's (192 000) and a pad file of 336 359 frames: TR Loop End ranges "
+      f"{tr_['lo']} .. {tr_['hi']}, the bracket at [0, 192 000) shows ({wv['on']}: not the whole file), the waveform's "
+      f"length (+0x254, its playhead's clamp) {lv.m.r32(WV + 0x254)} and the overview strip's {lv.ov[-1:]}",
+      (tr_["lo"], tr_["hi"]) == (0, 336359) and wv["on"] == 1 and (wv["ls"], wv["le"]) == (0, 192000)
+      and lv.m.r32(WV + 0x254) == 336359 and lv.ov[-1:] == [(0x2168, 336359)], (tr_, wv, lv.m.r32(WV + 0x254), lv.ov))
+lv.stored(_92=300000)
+check(f"  ...and Loop End turned up past 192 000 is kept and drawn there ({lv.knob('TR')['hi']}, {lv.wave()['le']})",
+      lv.shown("TR") == 300000 and lv.wave()["le"] == 300000 and lv.wave()["on"] == 1, (lv.knob("TR"), lv.wave()))
+l0 = Screen()
+l0.open({**CLIP12, P_REGION: LOOP, 0x91: 0, 0x92: 192000})
+check(f"  with no recompute measured yet (flen 0), the view's own length as before: TR up to {l0.knob('TR')['hi']}, the "
+      f"bracket {l0.wave()['on']} ([0, 192 000) is that whole file)", l0.knob("TR")["hi"] == 192000 and l0.wave()["on"] == 0,
+      (l0.knob("TR"), l0.wave()))
+
+
+# (h) Thomas: the Waveform view of pad 1 "freezes before the end of the audio loop" (the overview's rectangle stops, the
+# detail view stops in the middle; the pad's +0x248 tracks the whole file). The waveform's tick FUN_080c6c34 (real)
+# clamps the playhead the app reports (FUN_0809a810) to its + 0x254, which the bind block's FUN_080c6f44 sets from the
+# view's own length: at 192 000 of 336 359 frames it stops at 57 %. Following the playhead (+0x1e0 = 1), at 300 000
+def follows_to(scr, at):
+    m = scr.m
+    m.stub(0x0809A96C)
+    m.stub(0x0809A810, lambda: (m.uc.reg_write(UC_ARM_REG_R1, 0), m.ret(at)))
+    m.stub(0x080C6A78)
+    m.stub(0x080C6ACC)
+    m.uc.mem_write(WV + 0x1E0, b"\x01")
+    m.call(0x080C6C34, WV, 0x2407D000)
+    return m.r32(WV + 0x244)
+
+
+check(f"  (h) the waveform's tick following the playhead at 300 000: the view goes there ({follows_to(lv, 300000)}); with "
+      f"the view's own 192 000 it stops at {follows_to(l0, 300000)} (37.2.x, stock: the freeze at 57 %)",
+      follows_to(lv, 300000) == 300000 and follows_to(l0, 300000) == 192000)
 
 # ---- the zoom: msg 0xe5 (no refresh follows it) re-steps the pair, keeping range and value, as Sample mode's
 for s_ in (sc, sm):

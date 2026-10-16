@@ -103,11 +103,14 @@ static __attribute__((noinline)) int32_t region_of(const struct cw_bank *b, unsi
 }
 
 /* H3 (clipwin_len): the clip's length stock is told at site 0 .. 3, len = fw_src_len's. At site 1 (the recompute's
-   first length) the pad takes its region when it is at its wrap (clipwin_wrap) or stopped: set = the four rows of its
-   store (CW_SET_*), read only for that site. */
+   first length) the pad takes its region when it is at its wrap (clipwin_wrap) or stopped: set = the three rows of
+   its store (CW_SET_*), read only for that site. Site 1 also keeps len for the Waveform screen (flen: the view's own
+   copy of the file's length is the app's, which can be another pad's, Gate 3 finding 12). */
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set)
 {
     int32_t rs;
+    if (site == 1)
+        b->flen[q] = len;
     if (site == 1 && (b->wrap == q + 1 || !(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])))
         adopt(b, q, pad, len, set);
     int32_t v = region_of(b, q, pad, len, &rs);

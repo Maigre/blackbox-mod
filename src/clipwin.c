@@ -431,21 +431,35 @@ void clipwin_turn(uint8_t *stepper, int counts)
    and End from the queue as in Sample mode, where Region reads them: no code. The white bracket shows the loop when
    Region plays it.
    The view (FUN_080a54a0's): + 0x38 the waveform widget, + 0x1a0 its zoom (f32 frames per pixel), knobs TL + 0x670,
-   BL + 0x950, TR + 0xc30, BR + 0xf10, + 0x2370 its copy of the pad's store (refreshed at each setup), + 0x2390 the
-   file's length. */
+   BL + 0x950, TR + 0xc30, BR + 0xf10, + 0x2168 the overview strip, + 0x29c its pad's cell (row << 4 | col), + 0x2370
+   its copy of the pad's store (FUN_0809a830 at each setup: its rows, then + 0x20 = the store's + 0x20, the app's file
+   length, as + 0x2390).
+   That length is not always the pad's file (Gate 3 finding 12, pad 1 = a 336 359-frame file: TR stopped at 192 000
+   and Loop End 192 000 hid the bracket; the view froze at 57 % of the loop, finding (h)). The app writes the store's
+   + 0x20 only in its 0xE handler FUN_080a121c (0x080a12d0), into the first cell (row 0 col 0 first, FUN_0809a9c4) whose
+   pad record holds the asset just opened, and the pad load FUN_080a0ac8 zeroes it: a file that two pads' records name
+   (the browser loads its files into the pad it was opened from) gives its length to the first of them only. Both pad
+   stores read 192 000 on the unit, B's take. Stock's Sample screen reads it too; the Clip screen here takes the
+   engine's: what fw_src_len answered at the pad's last recompute (cw_bank's flen, H3 site 1), the length Region's
+   rule and the reader use. */
 typedef void (*bind_fn)(int param, int value, uint8_t *knob);
 typedef void (*range_fn)(uint8_t *knob, int lo, int hi);
 typedef void (*view_zoom_fn)(uint8_t *view, int zoom);
 typedef void (*wave_fn)(uint8_t *wave, const void *slices);
+typedef void (*range_fn1)(uint8_t *widget, int32_t len);
 #define fw_bind         ((bind_fn)FN(0x080a7ee0))        /* the view's binder: label, type, range from the table; value */
 #define fw_revalue      ((bind_fn)FN(0x080a7fe6))        /* the view's re-value: a list's position, else knob_value */
 #define fw_knob_range   ((range_fn)FN(0x080b09e4))
 #define fw_knob_value   ((knob_value_fn)FN(0x080b0790))
 #define fw_view_zoom    ((view_zoom_fn)FN(0x080a52c4))   /* the position knobs' step, range, value: not for Clip */
 #define fw_wave_slices  ((wave_fn)FN(0x080c6e8c))
+#define fw_overview_len ((range_fn1)FN(0x080c4df0))      /* the overview strip's length (as len / 16, f32) */
 #define VIEW_WAVE   0x38
+#define VIEW_OVERVIEW 0x2168
+#define VIEW_CELL   0x29c
 #define VIEW_STORE  0x2370
 #define VIEW_LEN    0x2390
+#define WAVE_LEN    0x254            /* the waveform's length: its tick clamps the playhead (and its scroll) to it */
 #define VIEW_BR     0xf10
 #define P_PAD_MODE  0x8b             /* Pad Mode: Sample, Clip, Slicer, Granular, New Rec, New Multi */
 #define PAD_MODE_CLIP 1
@@ -480,6 +494,18 @@ void clipwin_bind(int param, int value, uint8_t *knob)
     }
 }
 
+/* The length of the view's pad's file: the engine's (flen), when its bank is up and a recompute has measured it; else
+   the view's own (stock's). */
+static int32_t clip_len(const uint8_t *view)
+{
+    int32_t len = *(const int32_t *)(view + VIEW_LEN);
+    unsigned cell = *(const uint16_t *)(view + VIEW_CELL), row = (cell & 0xff) >> 4, col = cell & 0xf;
+    struct cw_bank *b = !(cell & 0x1f00) && row < 4 && col < 4 ? bank() : 0;
+    if (b && b->flen[row * 4 + col] > 0 && b->flen[row * 4 + col] < SRC_BAD)
+        len = b->flen[row * 4 + col];
+    return len;
+}
+
 /* The knobs and the bracket from the view's store; step = frames per pixel for the two position knobs, 0 = as they
    are. The binder leaves a type-0xd knob at the table's range (0 .. 1000) with its value only pending, and one turn
    would post the clamped value (notes/re/a3): the step goes first (the range is counted in steps of it), then the
@@ -495,7 +521,7 @@ static void clip_view(uint8_t *view, int step, int was)
         *(int32_t *)(tr + KNOB_STEP) = step;
     }
     const void *st = view + VIEW_STORE;
-    int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = *(int32_t *)(view + VIEW_LEN);
+    int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = clip_len(view);
     fw_knob_range(tl, 0, le);
     fw_knob_value(tl, ls);
     fw_knob_range(tr, ls, len);
@@ -517,12 +543,21 @@ static void clip_view(uint8_t *view, int step, int was)
 
 /* Replaces bl FUN_080a52c4 @0x080a53b0, in FUN_080a53a2 (r1 = (int)zoom): every bind of the screen, every zoom change
    (msg 0xe5, which no refresh follows). Stock returns at once for Clip. Only in Clip mode: New Rec and New Multi bind
-   nothing, so after Clip the knobs still hold these rows there (as they hold Sample's after Sample, on stock). */
+   nothing, so after Clip the knobs still hold these rows there (as they hold Sample's after Sample, on stock). The
+   bind block has just given the waveform (FUN_080c6f44: + 0x254, its playhead's clamp) and the overview strip
+   (FUN_080c4df0) the view's own length; they take the pad's file's here (finding 12, and (h): a 336 359-frame loop
+   whose view stopped scrolling at 192 000). */
 void clipwin_zoom(uint8_t *view, int zoom)
 {
     fw_view_zoom(view, zoom);
-    if (fw_setting(view + VIEW_STORE, P_PAD_MODE) == PAD_MODE_CLIP)
-        clip_view(view, zoom > 0 ? zoom : 1, view[VIEW_WAVE + WAVE_LOOP_ON]);
+    if (fw_setting(view + VIEW_STORE, P_PAD_MODE) != PAD_MODE_CLIP)
+        return;
+    int32_t len = clip_len(view);
+    if (len > 0) {
+        *(int32_t *)(view + VIEW_WAVE + WAVE_LEN) = len;
+        fw_overview_len(view + VIEW_OVERVIEW, len);
+    }
+    clip_view(view, zoom > 0 ? zoom : 1, view[VIEW_WAVE + WAVE_LOOP_ON]);
 }
 
 /* Replaces bl FUN_080c6e8c @0x080a5b0e (the slice markers), the Clip case of the screen's refresh: every setup and every

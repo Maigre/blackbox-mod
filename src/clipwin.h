@@ -90,14 +90,15 @@ struct cw_bank {
     uint8_t knob_speed;              /* ...and the accelerator's speed for it (1 .. 6): bbusb.py knob reads both */
     uint8_t llv[16];                 /* Loop Len as the poll last read it from the store, */
     uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
+    int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform screen's length */
 };
-#define CW_MAGIC  0x43574e36u        /* "CWN6": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e37u        /* "CWN7": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
 _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_bank, zero_dir) == 0x4bc &&
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
-               sizeof(struct cw_bank) == 0x744, "bench/bbusb.py knob and test_clipwin.py read the knob's fields here");
+               sizeof(struct cw_bank) == 0x784, "bench/bbusb.py knob and test_clipwin.py read the knob's fields here");
 
 /*
  * clipwin_b2.c, in bank 2: the maths and the policy of every hook (D-018). Call only when b2_live() holds (clipwin.c's
@@ -142,7 +143,8 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                sizeof(struct cw_region) == 8 && offsetof(struct cw_bank, good) == 0x540 &&
                offsetof(struct cw_bank, origin) == 0x5c0 && offsetof(struct cw_bank, ll) == 0x600 &&
                offsetof(struct cw_bank, forced) == 0x610 && offsetof(struct cw_bank, sf) == 0x620 &&
-               offsetof(struct cw_bank, llv) == 0x723 && offsetof(struct cw_bank, llc) == 0x733,
+               offsetof(struct cw_bank, llv) == 0x723 && offsetof(struct cw_bank, llc) == 0x733 &&
+               offsetof(struct cw_bank, flen) == 0x744,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
                SEG_STEP == 0x34 && SEG_FIRST == 0x3c && PAD_FPS == 0x1fc && PAD_TPS == 0x208 && PAD_STEPS == 0x210 &&
