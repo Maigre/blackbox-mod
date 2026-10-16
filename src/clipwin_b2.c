@@ -377,7 +377,29 @@ int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t s
         return 0;
     if (engine && (ll | b->ll[q]))
         moved |= cw_looplen(b, q, pad, ll, sync, msg);
-    return moved;
+    return moved | 4;
+}
+
+/* The poll, after cw_tick's bit 2: a pad whose file changed under it while it played (Gate 3 finding 9: the browser
+   loads each highlighted file into the pad it was opened from and gives the pad its own back at the end). Stock does
+   not restart the voice: each segment reads on at its position in the new file. A segment with an end - the last
+   step, which stops on the length - 1 of the file it was made for - whose position is past the new file's end can
+   never get there: the reader reads nothing past the end, so it never moves, and it holds its layer, which then plays
+   only its step 0, once each time that comes round, until a stop (on the unit: a slot at 315 848 of a 192 000-frame
+   file, the pad repeating its first beat every 2 beats; at Slip 0 as well, stock's own). Such a segment is marked
+   done: the render retires it after this block's read (it reads nothing there: no click), and the layer goes on from
+   its next segment. Never a launch waiting for its Quant point (+0x3c), which marking done would sound at once. len =
+   the source's (0, the sentinel: a file not open, nothing to judge by). */
+void cw_retire(uint8_t *pad, int32_t len)
+{
+    if (len <= 0 || len >= SRC_BAD)
+        return;
+    for (unsigned k = 0; k < 4; k++) {
+        uint8_t *seg = pad + SEG0 + k * SEG_SIZE;
+        if (seg[0] && !seg[1] && !seg[SEG_FIRST] && *(const int64_t *)(seg + SEG_END) &&
+            *(const int64_t *)(seg + SEG_POS) >= len)
+            seg[1] = 1;
+    }
 }
 
 /* The guarded drop, after a change (cw_tick's bit 0, and after the Sync was sent): a segment made but not started yet

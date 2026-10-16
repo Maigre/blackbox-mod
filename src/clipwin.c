@@ -29,7 +29,9 @@
  * step, through stock's crossfade.
  * A new file under a playing pad (a load, the browser's pre-listen into the pad, a take landing in it): stock does not
  * restart the voice; its segments read on at their positions in the new file. A segment latched for another file
- * length reads as stock does (H2), and the next one made latches the new file.
+ * length reads as stock does (H2), and the next one made latches the new file. A last step whose position is past
+ * the new file's end would never end, and holds the pad on its step 0 (Gate 3 finding 9, stock's own): the poll
+ * retires it (cw_retire).
  * Not covered: Slicer pads and Clip pads on Sync = Slice with markers (their segments start in H1': no shift); the
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
@@ -50,8 +52,9 @@
  * launch would start it: elsewhere stock snaps that pass's end into the past and doubles. When no such wrap can come
  * (the passes before had no grid, or never meet the new one) it is taken at once. Seamless wrap: with a region, Loop
  * On and Launch not Trigger the last step has no end, so it crossfades into the next pass like any step: no notch,
- * no gap when the region is shorter than its beats, no doubling when longer; a clip of one Sync step has that step timed by the clip (H3 site 3), as stock times steps when
- * there are more. A region under half a beat on Beat Count Auto is a clip of 0 ticks: no grid, it loops on its length.
+ * no gap when the region is shorter than its beats, no doubling when longer; a clip of one Sync step has that step
+ * timed by the clip (H3 site 3), as stock times steps when there are more. A region under half a beat on Beat Count
+ * Auto is a clip of 0 ticks: no grid, it loops on its length.
  * Setting: "Region:" Auto | File | Loop before Slip, saved as "clipregion". Auto = Loop: the loop points when 0 <=
  * start < end <= length and they are not the whole file ([0, length - 1] or more: what a load leaves, x3 t13); Sample
  * mode's Loop Mode is not asked (Gate 3 finding 7). File = stock.
@@ -289,11 +292,11 @@ void clipwin_slice_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
 }
 
 /* duck_block calls this once per engine block, before the pads render, with the engine (the clock): one pad's Slip
-   and Loop Len per call (16 within 43 ms), cw_tick's. Loop Len's Sync, when it asks for one, goes to the pad as the
-   app would set it: the class-B param-set with {0x39, cell, 0x94, idx}, the clock and its context (the only caller,
-   0x080685d2, passes exactly these). It re-grids the playing segments from their own positions and marks the pending
-   ones done (notes/re/a1). Then, on a change, the guarded drop (cw_drop), and the launches waiting for their Quant
-   point latched again in place. */
+   and Loop Len per call (16 within 43 ms), cw_tick's; the segments the pad's file no longer reaches retired
+   (cw_retire). Loop Len's Sync, when it asks for one, goes to the pad as the app would set it: the class-B param-set
+   with {0x39, cell, 0x94, idx}, the clock and its context (the only caller, 0x080685d2, passes exactly these). It
+   re-grids the playing segments from their own positions and marks the pending ones done (notes/re/a1). Then, on a
+   change, the guarded drop (cw_drop), and the launches waiting for their Quant point latched again in place. */
 void clipwin_tick(uint8_t *engine)
 {
     struct cw_bank *b = bank();
@@ -306,6 +309,8 @@ void clipwin_tick(uint8_t *engine)
     uint32_t msg[6];
     int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
     uint8_t *pad = b->pad[q];
+    if (r & 4)                           /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
+        cw_retire(pad, fw_src_len(*(void **)(pad + PAD_SOURCE)));
     if (r & 2)
         fw_pad_param(pad, engine, msg, engine + CLOCK_CTX);
     if (!(r & 1))
@@ -447,14 +452,14 @@ typedef void (*bind_fn)(int param, int value, uint8_t *knob);
 typedef void (*range_fn)(uint8_t *knob, int lo, int hi);
 typedef void (*view_zoom_fn)(uint8_t *view, int zoom);
 typedef void (*wave_fn)(uint8_t *wave, const void *slices);
-typedef void (*range_fn1)(uint8_t *widget, int32_t len);
+typedef void (*len_fn)(uint8_t *widget, int32_t len);
 #define fw_bind         ((bind_fn)FN(0x080a7ee0))        /* the view's binder: label, type, range from the table; value */
 #define fw_revalue      ((bind_fn)FN(0x080a7fe6))        /* the view's re-value: a list's position, else knob_value */
 #define fw_knob_range   ((range_fn)FN(0x080b09e4))
 #define fw_knob_value   ((knob_value_fn)FN(0x080b0790))
 #define fw_view_zoom    ((view_zoom_fn)FN(0x080a52c4))   /* the position knobs' step, range, value: not for Clip */
 #define fw_wave_slices  ((wave_fn)FN(0x080c6e8c))
-#define fw_overview_len ((range_fn1)FN(0x080c4df0))      /* the overview strip's length (as len / 16, f32) */
+#define fw_overview_len ((len_fn)FN(0x080c4df0))      /* the overview strip's length (as len / 16, f32) */
 #define VIEW_WAVE   0x38
 #define VIEW_OVERVIEW 0x2168
 #define VIEW_CELL   0x29c

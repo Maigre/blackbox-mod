@@ -4,16 +4,21 @@ Release **37.2.0** (dev build 37.2.0d), branch `37loop/blackbox-t-018`; the Slip
 speed tiers, §2) is 37.2.1 (37.2.1d), branch `37loop/blackbox-t-021`. It sits on Slip (release 37.1.1) and its
 stale-latch fix (`37loop/blackbox-t-004`), and adds Region, Loop Len and the Waveform knobs (P3's three commits, first
 built on `feat/region`, ported onto the fix), a "bank 1 room" commit before the knobs, and JOEBOX's pre-listen cell fix.
+The Gate 3 fix batch (for 37.3.0, the same branch; `notes/bench/2026-10-16-gate3-part1.md`) follows: the Waveform's
+short names (finding 2), Region Auto without Loop Mode (7), no endless wrap-grid hold (5), Loop Len taken when it
+settles (8), the Waveform's file length (12, and the view that froze), the knob's v3 (1, hub #t-021), and the pad the
+browser left stuck (9, 10).
 Status on 2026-10-16:
 
-- All four parts pass under Unicorn: `test_clipwin.py` 363 checks, `test_bank2.py` 39, `./check.sh` 31 suites,
-  0 failed (after D-018's move of the maths to bank 2).
+- All four parts pass under Unicorn: `test_clipwin.py` 382 checks, `test_bank2.py` 40, `./check.sh` 31 suites,
+  0 failed (after the Gate 3 fix batch).
 - Slip v1 was measured on the unit at Gate 2 (37.1.0d, `notes/bench/2026-10-15-gate2-slip.md`).
 - The knob rework and the CDJ sign (37.1.1), Region, Loop Len and the Waveform knobs have not been on the unit yet.
   That is Gate 3, and §6 is its recipe.
 - The knob on the unit, 37.2.0d (2026-10-16), Thomas: "blocking at 0 is not great. maybe just a small "pause" not
-  a complete block break would help. also accelerator is too fast it seems". The v2 (37.2.1d) answers both; its feel
-  is not yet approved.
+  a complete block break would help. also accelerator is too fast it seems". The v2 (37.2.1d) answered both; on it,
+  at Gate 3, Thomas: "the detent could be a bit stronger at low speed: when approaching 0 i still endup slightly on
+  the other side", "acceleration could be smoother too". The v3 (this batch) answers those; its feel is for Gate 3b.
 - **This build needs both files from the same build on the card**: `BLACKBOX.bin` and `BBEXTRA.BIN`. The maths of
   every Clip Window hook runs in flash bank 2 (D-017, D-018, §3.5): without the matching `BBEXTRA.BIN` every Clip
   pad plays as on stock, and Slip, Region and Loop Len do nothing.
@@ -87,6 +92,14 @@ their defaults the pad plays exactly as stock (bit for bit, under emulation).
   positions in the new file. The segments made for the old file (the sounding one and the pending one) then read as
   stock reads them, unslipped and without the region or the window, and the next segment latches the new file. So
   for up to two Sync steps the pad plays as stock would, then as set.
+- **The pad gets its file back from the browser** (Gate 3 finding 9). The browser hands the pad its own file when it
+  is left. If the file it had loaded was longer and the pad had played into that file's last step, the step reads at
+  a position past the end of the pad's own file: the reader reads nothing there, the position never moves, and the
+  step, which stops only on the longer file's end, never ends. Stock then plays only the pad's step 0, once each time
+  it comes round, until a stop (on the unit: slot 0 at 315 848 of B's 192 000 frames, the first beat every 2 beats;
+  at Slip 0 too). The poll retires such a step at once (`cw_retire`: an active segment with an end whose position is
+  past the file's end is marked done, never a launch waiting for its bar), and the pad plays its own file from its
+  next pass, in time.
 
 ### Region
 
@@ -278,7 +291,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0` | `0x1C8, 0x1C9, 0x1CA` | the three rows in slots 5–7 |
-| tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
+| tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); the segments its file no longer reaches retired (`cw_retire`, with the source's `fw_src_len`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
 | H4 | none: `clipwin_tick` sends `cw_looplen`'s message | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
 | R | `master_register` (`src/master.c`) | — | `clipwin_register(table)` | `fw_register_list` Region (3 names), `fw_register_num` Slip (type 1, ±3840), `fw_register_list` Loop Len (8 of stock's own strings) |
 | D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the three ids at 0; a pad store holds 85 of JOEBOX's 96 |
@@ -474,7 +487,8 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 | `cw_latch`, `cw_window` | H1, the poll | the latch: Slip's shift, the region or the file, Loop Len's window; the prefetch point |
 | `cw_slice` | H1′ | clear slot k's bits |
 | `cw_slot`, `cw_map` | H2 | the slot the reader's fraction belongs to and its latch; the real position and the one seam hint per crossing segment |
-| `cw_tick`, `cw_looplen`, `cw_drop` | the poll | the clamps, the pad check, Loop Len's take and its Sync message (R6), the guarded drop and the launches to latch again |
+| `cw_tick`, `cw_looplen`, `cw_drop` | the poll | the clamps, Loop Len's settle, the pad check, Loop Len's take and its Sync message (R6), the guarded drop and the launches to latch again |
+| `cw_retire` | the poll | a segment with an end, past the end of the pad's file (a file swapped under it), marked done (finding 9) |
 | `cw_turn` | K | the knob's gain curve and its detent (`KNOB_*`, `SLIP_GRID`, `ZERO_DETENT_*` live here) |
 | `cw_text` | F | `+b.ttt`, as `"%c%d.%03d"` would print it |
 | `cw_bracket` | W | Region's rule over the view's store, the bracket's fields and dirty flag |
@@ -491,11 +505,18 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 - Slip 0, Region File and Loop Len Off stay bit-identical to stock with bank 2 and without it (`test_clipwin.py` §3,
   §11). What costs: one `b2_live()` (three reads of `cpu.c`'s state) per hook call, and bank 1's argument set-up:
   about +95 instructions per block per playing Clip pad, measured under Unicorn (D-018 (6)), not yet on the unit.
+  The Gate 3 fix batch adds about 13 more (the poll's settle and `cw_retire`, one pad a block): 453.5 → 466.2 a block
+  at Slip 0 / File, 568.5 → 581.3 at Slip 480, 633.6 → 646.4 with a region, 502.9 → 515.4 with Loop Len 1/4.
 - Bank 2's id hashes its `.c` files only (`build.sh`). Bank 1 pairs with the payload on its sum, and a bank-1-only
   edit of `clipwin.h` leaves bank 2's bytes, and so needs no reflash.
 
-**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 56 312 of 57 736 B (1 424 free) and `.bank2`
-15 412 B. The bank-2 payload header is id `0x78b96508`, len `0x3c60`, sum `0xc8978c56`. Before D-018 (37.2.1):
+**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 56 480 of 57 736 B (1 256 free) and `.bank2`
+15 684 B. The bank-2 payload header is id `0xd0ad4d78`, len `0x3d60`, sum `0x398eb45a`. The Gate 3 fix batch (the
+labels, Region's rule, the hold, Loop Len's settle, the Waveform's length, the knob's v3, `cw_retire`) took 168 B of
+the cave (the labels +56, Region's rule −8, the hold's old grid and clip +8, the Waveform's length +88, the poll's
+retire +24) and 272 B of bank 2 (Region's rule −28, the hold +44, the settle +56, `flen` +8, the knob's v3 +112,
+`cw_retire` +80). Before it (D-018):
+`.cave` 56 312 (1 424 free), `.bank2` 15 412, id `0x78b96508`, len `0x3c60`, sum `0xc8978c56`. Before D-018 (37.2.1):
 `.cave` 57 624 (112 free), `.bank2` 13 540, id `0x2c4676ca`, len `0x3500`, sum `0x73f8a581`. The previous payloads,
 release 37.1.1 (and 37.1.x with the stale-latch fix), id `0xf5f0171b`, len `0x3280`; `feat/region`'s 37.2.0 build,
 id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md question 5.
@@ -527,6 +548,11 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   here: before the fix the pad kept mapping its latches over the old length until its next segment, silent past a
   shorter file's end or with the old shift (`37loop/blackbox-t-004` `9ac8c24`, ported into each P3 step). The
   streaming misses and stock's own gaps after a file change are stock's and stay.
+- **The pad stuck after the browser** (finding 9, stock's own, with or without Slip): fixed by `cw_retire` (§1),
+  with this build's bank 2. The 99 % load peak seen during it (finding 10): under emulation the stuck pad's block
+  costs about 28 % more (4 456 against 3 471 instructions a block, the stock code included) and asks a prefetch every
+  other block, of a position past the file's end (none once it has recovered); what those do on the SD side is the
+  unit's to measure.
 
 **Region**
 
@@ -572,7 +598,7 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   position at Off.
 - **Without this build's bank 2**, the row is there, turns and saves, but does nothing, as Slip and Region (D-018).
   An older payload in bank 2 also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open
-  question 30, Thomas's call: it measured +48 B, which the cave now has (1 424 B free).
+  question 30, Thomas's call: it measured +48 B, which the cave now has (1 256 B free).
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
 - A take right after a file change (review F1, release 37.2.0): Loop Len turned Off and on again within two Sync
@@ -602,7 +628,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 
 **Space**
 
-- Bank 1 has 1 424 B free (`.cave` 56 312 of 57 736), after D-018 moved the Clip Window's maths to bank 2 (−1 312 B;
+- Bank 1 has 1 256 B free (`.cave` 56 480 of 57 736) after the Gate 3 fix batch (+168 B, §3.5); 1 424 B after D-018
+  moved the Clip Window's maths to bank 2 (−1 312 B;
   `clipwin.o` 3 561 → 2 243 B, `clipwin_b2.o` 644 → 2 516 B). Before it: 112 B, after the "bank 1 room" commit took
   216 B back (Loop Len's window to bank 2, −116 B; a stale bank cleared with a word loop, −64 B; `pad_store()` one
   multiply, −24 B; `clipwin_defaults()` a loop, −8 B). The size of the id check in `b2_ok` / `header_ok` moves by a
@@ -636,7 +663,7 @@ frame it plays and the gain it plays at.
 | 3 off = stock | Slip 0 on the matched file, an 88 615-frame file, a late launch, Sync None | every read, fetch, prefetch, output sample and message identical to the hooks out **and** to stock 3.1.9 |
 | 4 Slip | Slip 0, 960, −30, 7, 3839 on 96 000 / 88 615 frames; a late launch; Quant 1 beat < Sync 1 bar; Sync 1/16; a retrigger; a live Sync change; a tempo change; `clip = tps × n` | every sounding sample plays `(stock frame + slip_f) mod len` (max error 0.0106 frame) at stock's summed gain; every write lands in `cw_bank`; the seam hint fires from exactly the crossing segments |
 | 5 live change | 0 → 480 and 0 → −7 in a step; the sign; Sync None; a pending launch; armed while stopped | stock-identical up to the step boundary, slipped after, no added silence; the launch keeps its bar (`+0x140` 11 520, msg `0x1D`) and plays slipped from its first read |
-| 5b new file | the load chain (the slot closes, a recompute while closed, the new file opens, the 0xE handler's `0x90`) under a playing pad, with a shorter, a longer and a same-length file; Slip 0, 960, −480; a latch made for another length in the reader unit | stock as measured (no restart, the pending step on the old grid); Slip 0 bit for bit stock; the segments latched before the change read exactly as stock's, no added silence, no read past the new end stock does not make; the next segment latches the new file and plays stock + slip_f; the same length keeps the latch |
+| 5b new file | the load chain (the slot closes, a recompute while closed, the new file opens, the 0xE handler's `0x90`) under a playing pad, with a shorter, a longer and a same-length file; the browser's round trip (finding 9: a 168 000-frame file played into its last step, then the pad's own 96 000 back: stuck on stock 3.1.9 and without `cw_retire`, in time again with it, Slip 0 and 960; the block's cost in both states); Slip 0, 960, −480; a latch made for another length in the reader unit | stock as measured (no restart, the pending step on the old grid); Slip 0 bit for bit stock; the segments latched before the change read exactly as stock's, no added silence, no read past the new end stock does not make; the next segment latches the new file and plays stock + slip_f; the same length keeps the latch |
 | 6 gating | Slicer with and without markers, Sync Slice + markers, cell `0x401`, `fw_src_len` 0 / sentinel, no SDRAM | plays exactly as with the hooks out, no latch |
 | 7 reader | seam reads mono and stereo, rate 1 / 0.7 / 2.3 / 8, a 40-frame file; every machine mode at, before and after the seam; the filter object's rate | bit for bit what the stock reader (or `filter.c`'s `clip_read`) makes of the file turned circular |
 | 8 rate, stereo | a 44.1 kHz file, stereo 48 and 44.1 kHz, Pitch +7 | every sample stock + slip_f, the same gain |

@@ -40,6 +40,7 @@
 #define SEG0        0x30
 #define SEG_SIZE    0x70
 #define SEG_POS     0x08
+#define SEG_END     0x10             /* i64 the frame it stops on (the last step: its file's length - 1), 0 none */
 #define SEG_FRAC    0x1c
 #define SEG_DELAY   0x20
 #define SEG_STEP    0x34
@@ -90,7 +91,7 @@ struct cw_bank {
     uint8_t knob_speed;              /* ...and the accelerator's speed for it (1 .. 6): bbusb.py knob reads both */
     uint8_t llv[16];                 /* Loop Len as the poll last read it from the store, */
     uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
-    int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform screen's length */
+    int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform's length */
 };
 #define CW_MAGIC  0x43574e38u        /* "CWN8": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
@@ -123,9 +124,11 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k);
    rs now */
 const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_t *pad, const float *frac);
 int cw_map(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t pos, int32_t *real);
-/* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg */
+/* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg, bit 2 =
+   the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source) */
 int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg);
 unsigned cw_drop(const struct cw_bank *b, unsigned q, uint8_t *pad);
+void cw_retire(uint8_t *pad, int32_t len);
 /* Loop Len's take (from cw_tick) and its window (from cw_latch) */
 int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, uint32_t *msg);
 int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t clip);
@@ -148,7 +151,8 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                offsetof(struct cw_bank, flen) == 0x744,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
-               SEG_STEP == 0x34 && SEG_FIRST == 0x3c && PAD_FPS == 0x1fc && PAD_TPS == 0x208 && PAD_STEPS == 0x210 &&
+               SEG_STEP == 0x34 && SEG_FIRST == 0x3c && SEG_END == 0x10 && PAD_FPS == 0x1fc && PAD_TPS == 0x208 &&
+               PAD_STEPS == 0x210 &&
                PAD_SYNC == 0x220 && PAD_CLASS == 0x04 && PAD_SIBLING == 0x08 && PAD_ID == 0x18 && PAD_ON == 0x29 &&
                PAD_LOOP == 0x1f4 && PAD_SYNCED == 0x1f5 && PAD_LAUNCH == 0x1f8 && PAD_STEP_OUT == 0x204 &&
                PAD_WRAP_GRID == 0x230 && PAD_SLICES == 0x250 && PAD_SLICER == 0x254 && LAYER0 == 0x260 &&

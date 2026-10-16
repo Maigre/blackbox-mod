@@ -121,7 +121,9 @@ From 3.1.n and earlier:
   nothing). TOOLS shows the `!`.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
   waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, without its region
-  or Loop Len, for up to two Sync steps, then as set.
+  or Loop Len, for up to two Sync steps, then as set. (A pad that the file browser gave its own file back while it
+  played a longer file's last step no longer sticks on its first beat: it plays on from its next pass. That needs the
+  second file too.)
 - Region does nothing on those pads either, and the playhead line is wrong on a pad playing a region. Switching a Clip
   pad to Sample mode clears its loop points (stock does that), so a pad sent back to Sample mode to adjust the loop
   needs it set again. A Beat Count that is not Auto, including one read from the WAV when it was loaded, is taken as
@@ -129,7 +131,8 @@ From 3.1.n and earlier:
   next launch after it has stopped, and so does a stopped pad: until that launch, the length it reports for Beat Count
   Auto is the old one. A region shorter than half a beat counts 0 beats on Beat Count Auto, as a file that short does
   on stock: it loops on its own length, restarting slightly early with a short overlap, and Slip does nothing there.
-  Give it a Beat Count.
+  Give it a Beat Count. Such a region made longer while it plays has no grid to wait for: the new one starts the next
+  time round and falls into time over one pass, with a short gap and one step doubled.
 - Loop Len needs a Quant and a Sync (with Quant None or Sync None it does nothing), does nothing on the pads Slip
   ignores, and a length of the whole loop or more does nothing. It is taken from what the pad plays: set while a launch
   waits for its bar, it starts once the pad plays; on a pad not played since power-on, at its first launch. A pad that

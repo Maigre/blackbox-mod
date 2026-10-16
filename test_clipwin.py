@@ -1236,6 +1236,104 @@ for name, length, values in (("a shorter file (50 000 frames)", 50000, (960, -48
               t_new == 360000 and held and all(x == ((0, length, sf_new), length) for x in held)
               and n > 20000 and err <= 0.02 and bad == 0 and gd == 0, (t_new, held, n, err, bad, gd))
 
+# Gate 3 finding 9: the browser's own chain. The browser loads each highlighted file into the pad it was opened from, and
+# gives the pad its own file back when it is left: here a longer file (168 000 frames: 7 beats, Beat Count Auto 8) is
+# swapped in inside step 1 of the 4-beat clip, played on into its last step (step 7, from frame 147 000, ending on
+# 167 999), and the pad's own 96 000 frames come back inside it. That step's position is past the file's end and its
+# end beyond it: the reader reads nothing there, so it never moves and never ends, and holds the layer, which only
+# plays its step 0, once each time it comes round (the unit, 37.2.1d: a slot at 315 848 of a 192 000-frame file, the
+# pad repeating its first beat every 2 beats; at Slip 0 too). Stock 3.1.9 does exactly that; so does this image with
+# cw_retire taken out (37.2.x). With it, the poll retires that segment (marks it done) and the pad plays its own file
+# again from the next pass, in time.
+LONG9, T9A, T9B = 168000, 265, 1355                 # the browsed file; swapped in inside step 1, back inside step 7
+
+
+def browse(rr):
+    """the browsed file in through 5b's whole chain (its slot closes, opens 4 blocks on); the pad's own back as a file
+    whose slot is still open (the key map keeps the pad's asset: no closed blocks). With 4 closed blocks there too the
+    recompute that sees no file ends the voice (stock's msg 0x1e): no stuck state, and the pad simply stops; the unit's
+    pad kept playing, so its own file came back open"""
+    for at, length, closed in ((T9A, LONG9, CLOSED), (T9B, 96000, 0)):
+        if rr.block == at and closed:
+            rr.len = 0
+            rr.param(0x90, 0)
+        if rr.block == at + closed:
+            rr.len = length
+        if rr.block == at + closed + 1:
+            rr.param(0x90, length)
+
+
+def stuck_log(rr):
+    rr.segs9 = getattr(rr, "segs9", [])
+    rr.segs9.append([(rr.m.r8(rr.pad + 0x30 + k * 0x70), rr.m.r8(rr.pad + 0x31 + k * 0x70),
+                      rr.i64(rr.pad + 0x38 + k * 0x70), u32(rr.m, rr.pad + 0x64 + k * 0x70)) for k in range(4)])
+
+
+def run9(old=False, **kw):
+    sc_ = dict(frames=96000, cell=0x102, blocks=2300, pre=lambda rr: (browse(rr), stuck_log(rr)), **kw)
+    if old and kw.get("image", IMAGE) == IMAGE:
+        sc_["setup"] = lambda r_: r_.m.stub(S["cw_retire"])
+    return audio(**sc_)
+
+
+T9_BACK = 287000 + T9B * N                         # the pad's own file back
+runs9 = {"stock 3.1.9": run9(image=STOCK), "37.2.x (no cw_retire)": run9(old=True), "this build": run9(),
+         "this build, Slip 960": run9(slip=960)}
+for name, d in runs9.items():
+    r = d["rig"]
+    after = [x for x in starts(r) if x[0] > T9_BACK]
+    held = [b for b, segs in enumerate(r.segs9) if b > T9B + 20 and any(a and not dn and p >= 96000 for a, dn, p, _ in segs)]
+    if "this build" not in name:
+        pos9 = {segs[k][2] for segs in r.segs9[T9B + 20:] for k in range(4) if segs[k][0] and segs[k][2] >= 96000}
+        check(f"{name}: the pad's own file back inside the browsed file's last step: a segment past its end ({sorted(pos9)}) "
+              f"stays active and never moves, to the end of the run ({len(held)} blocks), and the pad only plays its step 0 "
+              f"from then on ({[x[:2] for x in after][:6]})",
+              len(held) > 800 and len(pos9) == 1 and after and all(x[1] == 0 for x in after) and len(after) >= 2,
+              (len(held), sorted(pos9), after[:6]))
+    else:
+        gone = next((b for b, segs in enumerate(r.segs9) if b > T9B and not any(a and not dn and p >= 96000
+                                                                              for a, dn, p, _ in segs)), None)
+        t0 = next((x[0] for x in after if x[1] == 0 and x[0] % 96000 == 0), None)
+        seq = [x for x in after if t0 is not None and x[0] >= t0][:12]
+        seq = seq[:len(seq) // 4 * 4 + 1] if len(seq) > 4 else seq
+        slip9 = 960 if "Slip" in name else 0
+        sf9 = slip_f(slip9, 96000, 3840) if slip9 else 0
+        lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
+        check(f"{name}: the segment past the end retired by the poll at block {gone} (the file back at block "
+              f"{T9B}); from the next bar on ({t0}) the pad plays its own file in time again: steps "
+              f"{[x[1] for x in seq]} at {[x[0] - (t0 or 0) for x in seq][:8]} from frames {[x[2] for x in seq][:8]}"
+              + (f", latched {lat[:2]} (slip_f {sf9})" if sf9 else ""),
+              gone is not None and gone <= T9B + 1 + 16 and len(seq) >= 5
+              and [x[1] for x in seq] == [i % 4 for i in range(len(seq))]
+              and [x[0] - t0 for x in seq] == [24000 * i for i in range(len(seq))]
+              and [x[2] for x in seq] == [24000 * (i % 4) for i in range(len(seq))]
+              and (not sf9 or (lat and all(x == (0, 96000, sf9) for x in lat))), (gone, t0, seq, lat))
+# the load (finding 10: TOOLS read 99 % once, in this state): the instructions the pad's block costs, the stuck pad
+# against the recovered one, over the same blocks
+from unicorn import UC_HOOK_CODE as _HC
+
+
+def per_block(old):
+    r = scenario(frames=96000, cell=0x102, blocks=T9B + 200, pre=browse,
+                 setup=(lambda r_: r_.m.stub(S["cw_retire"])) if old else None)
+    n = [0]
+    r.uc.hook_add(_HC, lambda *a: n.__setitem__(0, n[0] + 1), begin=0x08040000, end=0x081FFFFF)
+    out, pf, ft = [], len(r.prefetches), len(r.fetches)
+    for _ in range(300):
+        before = n[0]
+        r.step_block()
+        out.append(n[0] - before)
+    return sum(out) / len(out), max(out), (len(r.prefetches) - pf) / 300, (len(r.fetches) - ft) / 300
+
+
+c_old, c_new = per_block(True), per_block(False)
+check(f"finding 10 (TOOLS read 99 % once, in this state): the pad's block, the 300 blocks from 200 after the file came "
+      f"back, stuck (37.2.x, cw_retire out): {c_old[0]:.0f} instructions on average (max {c_old[1]}), {c_old[2]:.2f} "
+      f"prefetches and {c_old[3]:.2f} fetches a block (the stuck step's position is past the file's end); recovered: "
+      f"{c_new[0]:.0f} (max {c_new[1]}), {c_new[2]:.2f}, {c_new[3]:.2f}: the extra work ends with the stuck state "
+      "(its SD side, the prefetches past the end, is the unit's to measure)",
+      c_new[0] < c_old[0] and c_new[2] < c_old[2], (c_old, c_new))
+
 # ====================================================================================================== 6. gating
 
 

@@ -133,7 +133,8 @@ def cw_bank():
 
 def knob_state(bank):
     """(counts, speed, zero_at, zero_dir, zero_slow, now): cw_bank + 0x720 i16 knob_counts, u8 knob_speed; + 0x4b8 u32
-    zero_at, i8 zero_dir, u8 zero_slow (cw_turn, v3: 1 = the arrival was slow, held ZERO_DETENT_SLOW_MS); the GUI clock"""
+    zero_at, i8 zero_dir, u8 zero_slow (cw_turn, v3: 1 = the arrival was slow, held ZERO_DETENT_SLOW_MS); the GUI
+    clock"""
     zero_at, zero_dir, zero_slow = struct.unpack("<IbB2x", peek(bank + 0x4B8, 8))
     counts, speed = struct.unpack("<hBx", peek(bank + 0x720, 4))
     return counts, speed, zero_at, zero_dir, zero_slow, word(GUI_MS)
