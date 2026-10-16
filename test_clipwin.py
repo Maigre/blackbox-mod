@@ -3047,9 +3047,10 @@ CLIP12 = {0x8B: 1, 0xEA: 0, 0x8E: 1, 0x8F: 0, 0x90: 0, 0x91: 24000, 0x92: 72000,
 class Screen:
     """the Waveform view of pad (1, 2) on an emulator of `image`; bypass = the three Waveform hooks put back to stock;
     bank2=False: bank 2's header wiped before anything runs (entries into cw_* counted in b2_entered); stock_knob = the
-    knob's text and turn hooks (clipwin_format, clipwin_turn) put back to stock"""
+    knob's text and turn hooks (clipwin_format, clipwin_turn) put back to stock; compose: the knob's real redraw
+    (FUN_080b0480, its "%s %s" line of name and value, recorded at the knob's + 0xf4 text), else stubbed"""
 
-    def __init__(self, image=IMAGE, bypass=False, bank2=True, stock_knob=False):
+    def __init__(self, image=IMAGE, bypass=False, bank2=True, stock_knob=False, compose=False):
         m = self.m = Emu(image, "out/cave.elf")
         maps(m)
         self.b2_entered = []
@@ -3068,9 +3069,13 @@ class Screen:
         self.vals, self.texts, self.posts, self.binds = {}, [], [], []
         m.stub(0x0809A830, lambda: self.copy(self.vals))
         m.stub(0x0809AD74, lambda: m.uc.mem_write(m.arg(2), b"loop.wav\0"))
-        m.stub(0x080C3B98, lambda: self.texts.append((m.arg(0) - VIEW, m.cstr(m.arg(1)))))
+        if compose:                                          # the text set for real (the line reads the widgets back)
+            m.uc.hook_add(UC_HOOK_CODE, lambda *a: self.texts.append((m.arg(0) - VIEW, m.cstr(m.arg(1)))),
+                          begin=0x080C3B98, end=0x080C3B98)
+        else:
+            m.stub(0x080C3B98, lambda: self.texts.append((m.arg(0) - VIEW, m.cstr(m.arg(1)))))
         for a in (0x080A5480, 0x080A3DEC, 0x080C6078, 0x080C4DD6, 0x080C4DF0, 0x080A401C, 0x080BD398, 0x080BD74E,
-                  0x080C6004, 0x080B0480, 0x080A5210):
+                  0x080C6004, 0x080A5210) + (() if compose else (0x080B0480,)):
             m.stub(a)
         m.stub(0x080A331A, lambda: m.uc.mem_write(m.arg(0) + 0x30, bytes([m.arg(1) & 0xFF])))   # a knob's grey flag
         m.stub(0x080AED14, lambda: self.posts.append((m.r16(m.arg(1)), m.r32(m.arg(1) + 0xC), m.r32(m.arg(1) + 0x10))))
@@ -3164,10 +3169,66 @@ check(f"Clip setup: stock's three unbinds (TL, TR, BL), then the hook at BR bind
       f"Slip = 480, BR Loop Len = 3 through the stock binder with the store's values ({[(hex(i), v, hex(o)) for i, v, o in b_]})",
       b_ == [(0, 0, 0x670), (0, 0, 0xC30), (0, 0, 0x950), (0x91, 24000, 0x670), (0x92, 72000, 0xC30), (P_SLIP, 480, 0x950),
              (P_LOOPLEN, 3, 0xF10)], b_)
-check(f"  labels {[sc.text(n, 0x44) for n in ('TL', 'TR', 'BL', 'BR')]}, texts {[sc.text(n) for n in ('TL', 'TR', 'BL', 'BR')]} "
-      "(Slip as beats.ticks, Loop Len its name)",
-      [sc.text(n, 0x44) for n in ("TL", "TR", "BL", "BR")] == ["Loop Start:", "Loop End:", "Slip:", "Loop Len:"]
+check(f"  names {[sc.text(n, 0x44) for n in ('TL', 'TR', 'BL', 'BR')]} (the binder's, from the table, then this screen's: "
+      f"{[x for a, x in sc.texts if a in (0x670 + 0x44, 0xC30 + 0x44, 0x950 + 0x44, 0xF10 + 0x44)]}), texts "
+      f"{[sc.text(n) for n in ('TL', 'TR', 'BL', 'BR')]} (Slip as beats.ticks, Loop Len its name)",
+      [sc.text(n, 0x44) for n in ("TL", "TR", "BL", "BR")] == ["LpS", "LpE", "Slip", "LpLen"]
       and [sc.text(n) for n in ("TL", "TR", "BL", "BR")] == ["24000", "72000", "+0.480", "1/4"], sc.texts[-12:])
+
+# ---- the knobs' lines fit (Gate 3 finding 2: "Loop Start", "Loop End", "Slip", "Loop Len" too long, the values hidden
+# by the neighbour's name). A knob draws "name value" (FUN_080b0480, real here) in its + 0xf4 text: the box and the
+# alignment from the knob's own set-rect FUN_080afeb2 (real) on the rects and styles the view's constructor FUN_080a5b90
+# gives them (TL (0, 74, 157, 73) style 1, BL (0, 0, ...) 2, TR (158, 74, ...) 3, BR (158, 0, ...) 4, its text size
+# 0x10), the width of a line from the text draw's own measure (FUN_0808ed28: length x the font's width x 2 at size 0x10,
+# the font's width a u16 at 0x240000d4, its .data image at 0x080f1d80 + 0xd4)
+CHAR_W = struct.unpack_from("<H", img, 0x080F1D80 + 0xD4 - BASE)[0] * 2
+geom = {}
+for name, (x, y, style) in {"TL": (0, 0x4A, 1), "BL": (0, 0, 2), "TR": (0x9E, 0x4A, 3), "BR": (0x9E, 0, 4)}.items():
+    kn = 0x24068000
+    e.uc.mem_write(kn, bytes(0x300))
+    e.uc.mem_write(kn + 0x32, bytes([style]))
+    e.uc.mem_write(kn + 0x98, b"\x10")
+    e.uc.mem_write(0x24068400, struct.pack("<4i", x, y, 0x9D, 0x49))
+    e.stub(0x080AEC44)
+    e.call(0x080AFEB2, kn, 0x24068400)
+    del e.stubs[0x080AEC44]
+    geom[name] = (e.r32(kn + 0xF4 + 4), e.r32(kn + 0xF4 + 0xC), e.r8(kn + 0xF4 + 0x51))   # x, w, alignment (1 left, 3 right)
+
+
+def extent(name, line):
+    x, w, al = geom[name]
+    n = len(line) * CHAR_W
+    return (x, x + n) if al == 1 else (x + w - n, x + w)
+
+
+def lines(scr):
+    return {n: [x for a, x in scr.texts if a == KN12[n] + 0xF4][-1] for n in KN12}
+
+
+def fits(ln):
+    """each line inside its box, and the two of a row clear of each other"""
+    ex = {n: extent(n, ln[n]) for n in ln}
+    inside = all(geom[n][0] <= ex[n][0] and ex[n][1] <= geom[n][0] + geom[n][1] for n in ln)
+    return inside and ex["TL"][1] <= ex["TR"][0] and ex["BL"][1] <= ex["BR"][0], ex
+
+
+big = {**CLIP12, 0x91: 99999998, 0x92: 99999999, P_SLIP: -3840, P_LOOPLEN: 7}
+mid = {**CLIP12, 0x91: 1000000, 0x92: 1234567}
+for what, vals_, length in (("the setup's values", CLIP12, 192000),
+                            ("positions of seven digits (a loop past 21 s of a 30 s file)", mid, 1440000),
+                            ("the widest ones (positions of eight digits, Slip -4.000, Loop Len 4 bars)", big, 100000000)):
+    scl = Screen(compose=True)
+    scl.m.w32(VIEW + 0x2390, length)
+    scl.open(vals_)
+    ln = lines(scl)
+    ok_, ex = fits(ln)
+    check(f"  the four lines with {what}: {ln}; {CHAR_W} px a character, each inside its {geom['TL'][1]}-px box "
+          f"(left from x {geom['TL'][0]}, right ending at {geom['TR'][0] + geom['TR'][1]}) and clear of its neighbour: {ex}",
+          ok_ and geom["TL"][2] == 1 and geom["TR"][2] == 3 and geom["BL"][2] == 1 and geom["BR"][2] == 3
+          and ln["TL"].startswith("LpS ") and ln["BR"].startswith("LpLen "), (ln, ex, geom))
+old_names = {"TL": "Loop Start:", "TR": "Loop End:", "BL": "Slip:", "BR": "Loop Len:"}
+old_ok, old_ex = fits({n: f"{old_names[n]} {v}" for n, v in (("TL", 24000), ("TR", 72000), ("BL", "+0.480"), ("BR", "1/4"))})
+check(f"  ...where the table's names (the binder's, 37.2.x) did not fit even the setup's values: {old_ex}", not old_ok, old_ex)
 tl, tr = st["TL"], st["TR"]
 check(f"  TL Loop Start: type 0xd, a step of the setup's zoom (256 frames a pixel), 0 .. Loop End, at 24 000 (stock's binder "
       f"alone leaves 0 .. 1000 with 1 000 shown: {tl}); TR Loop End: 24 000 .. the length 192 000, at 72 000 ({tr})",

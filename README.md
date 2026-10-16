@@ -53,7 +53,8 @@ New since 3.1.n:
   Loop End, the same loop points as Sample mode's, which Region plays: one step is one pixel of the waveform, so zoom
   in for finer steps. The white loop bracket shows the loop Region plays, as soon as you turn: a playing pad takes the
   new loop the next time its loop comes round, as with any Region change, so while you turn, the bracket is ahead of
-  what you hear. Bottom-left is Slip and bottom-right Loop Len, the same rows as on the Pos tab.
+  what you hear. Bottom-left is Slip and bottom-right Loop Len, the same rows as on the Pos tab. The four read
+  `LpS`, `LpE`, `Slip` and `LpLen` there, short enough that each value stays clear of its neighbour.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.

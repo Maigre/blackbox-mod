@@ -30,10 +30,10 @@ Known issues. The research model of the hooks is outside the repo, in `/srv/dev/
 | where | control | id | values | default | saved as |
 |---|---|---|---|---|---|
 | Clip pad, Pos tab, row 5 | `Region:` | `0x1c8` | Auto, File, Loop | Auto | `clipregion` |
-| Clip pad, Pos tab, row 6; Clip Waveform BL | `Slip:` | `0x1c9` | −4.000 … +4.000 (−3840 … +3840 ticks) | +0.000 | `clipslip` |
-| Clip pad, Pos tab, row 7; Clip Waveform BR | `Loop Len:` | `0x1ca` | Off, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Off | `cliplooplen` |
-| Clip Waveform TL | `Loop Start:` | stock `0x91` | 0 … Loop End, frames | stock's | stock's |
-| Clip Waveform TR | `Loop End:` | stock `0x92` | Loop Start … the file's length, frames | stock's | stock's |
+| Clip pad, Pos tab, row 6; Clip Waveform BL (`Slip`) | `Slip:` | `0x1c9` | −4.000 … +4.000 (−3840 … +3840 ticks) | +0.000 | `clipslip` |
+| Clip pad, Pos tab, row 7; Clip Waveform BR (`LpLen`) | `Loop Len:` | `0x1ca` | Off, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Off | `cliplooplen` |
+| Clip Waveform TL | `LpS` | stock `0x91` | 0 … Loop End, frames | stock's | stock's |
+| Clip Waveform TR | `LpE` | stock `0x92` | Loop Start … the file's length, frames | stock's | stock's |
 
 The Pos tab now reads Loop Mode, Beat Count, Quant Size, Sync, Region, Slip, Loop Len. As on every stock pad page,
 TL/TR move the selection and BL/BR turn the selected row. All three rows are per pad and saved with the preset. At
@@ -150,6 +150,14 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   - The ranges are Sample mode's: Loop Start 0 … Loop End, and Loop End Loop Start … the file's length.
   - Turned all the way into each other, they leave no loop, and the pad plays the whole file until they part.
 - **BL Slip and BR Loop Len.** These are the Pos tab's rows, with the same text and feel.
+- **The names.** A knob there draws one line, "name value", 12 px a character (the 6 × 8 font at double size), in a
+  151-px box: left-aligned from x 6 on the left, right-aligned to x 309 on the right. Twelve characters stay in the
+  box. The rows' own names ("Loop Start:", "Loop End:", "Loop Len:", 37.2.x) ran the left value under the right
+  knob's name (Gate 3 finding 2), so this screen renames them after binding, as stock's Sample mode renames its own
+  four ("Str:", "Len:", "LpStr:", "LpEnd:"): `LpS`, `LpE`, `Slip`, `LpLen`. The positions get three letters so
+  that eight digits still fit: "LpS 12345678" is 12 characters (a file of up to 99 999 999 frames, 34 minutes at
+  48 kHz), where "LpStr 1234567" would already cross into its neighbour from 1 000 000 frames (21 s). "Slip -4.000"
+  and "LpLen 4 bars" fit as well.
 - **The white bracket.** It shows the loop Region plays, using the engine's own rule, as soon as you turn. A playing
   pad takes the new loop the next time its loop comes round, so while you turn, the bracket is ahead of what you hear.
   There is no bracket (and the loop points are not heard) on Region File, or on Auto with Loop Mode None. Slice
@@ -235,7 +243,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H3′ | `0x08066E9E` (render, the unsynced wrap) | `bl 0x08064A94` | `clipwin_wrap_free_b` (r2 = 0) | the same, no grid check |
 | F | `0x080B0746` (set value) and `0x080B0E18` (type-1 turn) | `bl 0x080B0528` formatter | `clipwin_format(knob)` | Slip's beats.ticks text (`cw_text`; type 1 or 9, id `0x1C9`, not frozen) |
 | K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob (`cw_turn`): slow ticks, medium 10-tick grid, fast 1/64 grid, a detent on 0 |
-| W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values |
+| W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0` | `0x1C8, 0x1C9, 0x1CA` | the three rows in slots 5–7 |
@@ -571,7 +579,7 @@ frame it plays and the gain it plays at.
 | 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path: each speed 1..6 and its tier's step, the grid snaps, the clamps, the detent (held for the events under `ZERO_DETENT_MS` after the arrival, a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest, medium and slow arrivals), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against 37.2.0d's knob 23 of these fail (the wall: a steady stream never passed 0) |
 | 10 Region | the rule over 20 cases; each H3 site; adoption only at the wrap; the wrap-grid hold; the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
 | 11 Loop Len | `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
-| 12 Waveform | the bind order, the four rows and texts, the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
+| 12 Waveform | the bind order, the four rows, names and texts, the lines' width (the real redraw, the knob's set-rect on the constructor's rects, the text draw's measure: each line in its box, clear of its neighbour), the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
 
 **Elsewhere.** `test_bank2.py` (39 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of
 an instruction from a planted `bl`, using the linker's mapping symbols, and plants one in each of the fourteen `cw_*`

@@ -128,7 +128,8 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define fw_buf_pair     ((buf_pair_fn)FN(0x0804da0c))
 #define fw_kernel       ((kernel_fn)FN(0x080603ec))      /* the stock clip reader's four-point kernel */
 #define fw_format       ((knob_fn)FN(0x080b0528))        /* a knob's value text */
-#define fw_knob_redraw  ((knob_fn)FN(0x080b0480))
+#define fw_knob_redraw  ((knob_fn)FN(0x080b0480))        /* composes the knob's line: "name value" */
+#define fw_knob_name    ((text_fn)FN(0x080b03c0))        /* the knob's name (its + 0x44 text) */
 #define fw_list_value   ((knob_value_fn)FN(0x080b0416))  /* type 9: the value a list position stands for */
 #define fw_set_text     ((text_fn)FN(0x080c3b98))
 #define fw_ring_push    ((ring_push_fn)FN(0x080b0cc4))   /* the knob's 8-entry acceleration ring */
@@ -451,9 +452,18 @@ typedef void (*wave_fn)(uint8_t *wave, const void *slices);
 /* the knob (its offset in the view << 16) and its row */
 static const uint32_t clip_knobs[4] = {0x670u << 16 | P_LOOP_START, 0xc30u << 16 | P_LOOP_END, 0x950u << 16 | P_SLIP,
                                        VIEW_BR << 16 | P_LOOPLEN};
+/* ...and its name on this screen. A knob shows "name value" in one line (FUN_080b0480's "%s %s"), 12 px a character
+   (the 6 x 8 font at size 0x10), in a box of 151 px from x 6 (TL, BL: left-aligned) or ending at x 309 (TR, BR:
+   right-aligned): twelve characters stay in their box. The table's names ("Loop Start:", "Loop End:", "Loop Len:") ran
+   the left value under the right knob's text (Gate 3 finding 2). Stock's Sample mode renames its four after binding
+   too ("Str:", "Len:", "LpStr:", "LpEnd:"). The two positions get three letters, so that eight digits still fit
+   ("LpS 12345678": a file of up to 99 999 999 frames, 34 minutes at 48 kHz; "LpStr 1234567" would cross into its
+   neighbour from 1 000 000 frames, 21 s); the bottom row's values are short ("Slip -4.000", "LpLen 4 bars"). */
+static const char clip_names[4][6] = {"LpS", "LpE", "Slip", "LpLen"};
 
 /* Replaces bl FUN_080a7ee0 @0x080a582a, the last of the Clip bind block's four unbinds (BR; r2 = view + 0xf10, the
-   other three have run): binds all four, through the view's own binder, with the values of the view's store. */
+   other three have run): binds all four, through the view's own binder, with the values of the view's store, then
+   names them as above (the binder sets the table's name) and has each knob compose its line again. */
 void clipwin_bind(int param, int value, uint8_t *knob)
 {
     (void)param;
@@ -461,7 +471,10 @@ void clipwin_bind(int param, int value, uint8_t *knob)
     uint8_t *view = knob - VIEW_BR;
     for (unsigned i = 0; i < 4; i++) {
         unsigned id = clip_knobs[i] & 0xffff;
-        fw_bind((int)id, fw_setting(view + VIEW_STORE, id), view + (clip_knobs[i] >> 16));
+        uint8_t *k = view + (clip_knobs[i] >> 16);
+        fw_bind((int)id, fw_setting(view + VIEW_STORE, id), k);
+        fw_knob_name(k, clip_names[i]);
+        fw_knob_redraw(k);
     }
 }
 
