@@ -110,7 +110,11 @@ their defaults the pad plays exactly as stock (bit for bit, under emulation).
   - It is heard from the next time the loop comes round. If it is made during the loop's last Sync step, it is heard
     one pass later.
   - A change that makes the loop longer can wait more: it starts where a launch would start the new loop (on the
-    Quant, or on the new loop's own length when that is shorter), so it never doubles.
+    Quant, or on the new loop's own length when that is shorter), so it never doubles. When the loop it plays can
+    never come round to such a point (a loop under half a beat, which has no grid; or one whose passes never meet the
+    new grid), it starts at the next time round instead, and the pass after that falls back into time through
+    stock's own snapping: a short gap and one doubled Sync step, once (Gate 3 finding 5: 37.2.x waited for a stop and
+    a relaunch).
   - A stopped pad, and a one-shot (Launch Trigger or Loop Off), takes the new region at its next launch.
 
 ### Loop Len
@@ -366,9 +370,18 @@ latches its region, with Slip forced to 0.
   pointing past the new end: 11 418 or 23 490 silent samples (a2).
 - **The wrap grid.** After the wrap's recompute, `clipwin_wrap` asks bank 2's `cw_hold`, which compares the next
   pass's start tick `t` (the render's i64 at `[sp + 0x58]`) with the new `+0x230`. If `t mod grid ≠ 0` and the region
-  changed, it puts the old region back, and `clipwin_wrap` runs the recompute again, so the pass plays as it was. Without this, stock snaps that pass's end into the
-  past and starts two passes at once at gain 2, which is what stock does on a live Beat Count change from 2 to 4.
-  Ticks past 2³² skip the check.
+  changed, it puts the old region back, and `clipwin_wrap` runs the recompute again, so the pass plays as it was.
+  Without this, stock snaps that pass's end into the past and starts two passes at once at gain 2, which is what
+  stock does on a live Beat Count change from 2 to 4. Ticks past 2³² skip the check.
+  It holds only for a wrap that can come (finding 5). `clipwin_wrap` hands it the pad's wrap grid `g` and clip `L`
+  (ticks) from before the recompute: the render snaps every pass start to `g`, so the passes start `s` apart, `s` =
+  `L` snapped to `g` (a tie down: stock picks the grid point a block early, notes/re/a1), and they meet the new grid
+  iff `gcd(s, grid)` divides `t`, within `grid / gcd` passes.
+  With `g = 0` (a clip of 0 ticks: a region under half a beat on Beat Count Auto, whose passes start where its length
+  ends them) or a `gcd` that does not divide `t` (a 3-bar loop on Quant 1 bar, launched on bar 1 mod 3, cut to 3 beats)
+  that wrap never comes, and the region is taken at once. Its first pass then starts off the grid and stock's own snaps
+  put the next one back: measured on the 3/8-beat region grown to 2 beats (Sync 1/16), a gap of 496 samples at its
+  step 1 and 6 903 samples at gain 2 where its end snaps back (one 1/16 step), then in time.
 
 **Loop Len.**
 
@@ -490,9 +503,10 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 - **A region under half a beat** counts 0 beats on Beat Count Auto, as stock counts a file that short. It loops on its
   own length, restarting 125 samples early with a 379-sample overlap at peak 1.69 (stock's 9 000-frame file: 8 625
   sample period, peak 1.66), and Slip does nothing. Give it a Beat Count.
-- **A change that would put the pass off its wrap grid** waits for a wrap on the new grid. In rare setups (Quant
-  changed while the pad plays) that wrap never comes, and the change waits for a stop and relaunch. Neither case has
-  been run.
+- **A change that would put the pass off its wrap grid** waits for a wrap on the new grid. When that wrap cannot
+  come (a region grown from under half a beat, or passes that never meet the new grid) it is taken at the next wrap
+  instead, at the cost of one pass out of time: a short gap and one Sync step doubled at gain 2 (§3.4). 37.2.x waited
+  for a stop and a relaunch there (Gate 3 finding 5).
 - A WAV's `smpl` loop end is stored inclusive (`dwEnd`), so such a region is one frame short. It is kept that way;
   nothing hears it.
 - Taking a pending region at the relaunch recompute sites (`0x08068312` and the others) is not modelled (open question
@@ -579,7 +593,7 @@ frame it plays and the gain it plays at.
 | 7 reader | seam reads mono and stereo, rate 1 / 0.7 / 2.3 / 8, a 40-frame file; every machine mode at, before and after the seam; the filter object's rate | bit for bit what the stock reader (or `filter.c`'s `clip_read`) makes of the file turned circular |
 | 8 rate, stereo | a 44.1 kHz file, stereo 48 and 44.1 kHz, Pitch +7 | every sample stock + slip_f, the same gain |
 | 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path: each speed 1..6 and its tier's step, the grid snaps, the clamps, the detent (held for the events under `ZERO_DETENT_MS` after the arrival, a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest, medium and slow arrivals), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against 37.2.0d's knob 23 of these fail (the wall: a steady stream never passed 0) |
-| 10 Region | the rule over 20 cases; each H3 site; adoption only at the wrap; the wrap-grid hold; the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
+| 10 Region | the rule over 20 cases (Loop Mode not asked: finding 7); each H3 site; adoption only at the wrap; the wrap-grid hold, and only for a wrap that can come (a 0-tick clip, passes that never meet the new grid: finding 5; a region grown from 3/8 beat to 2 beats while it plays); the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
 | 11 Loop Len | `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
 | 12 Waveform | the bind order, the four rows, names and texts, the lines' width (the real redraw, the knob's set-rect on the constructor's rects, the text draw's measure: each line in its box, clear of its neighbour), the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
 

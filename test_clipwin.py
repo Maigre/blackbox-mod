@@ -2105,9 +2105,13 @@ check(f"H3' (clipwin_wrap): the recompute with the caller's pad and clock, this 
 TICK = 0x24063000
 
 
-def wrap_grid(t, grid, new=(0, 32000), old=(24000, 48000)):
+def wrap_grid(t, grid, new=(0, 32000), old=(24000, 48000), was_grid=1920, was_tps=960, was_n=2):
+    """...the pad's wrap grid and its steps (tps x n = its clip) before the recompute: by default the old region's 2 beats
+    on Quant 1 bar (grid min(3840, 1920) = 1920)"""
     rec.clear()
     u.uc.mem_write(BANK + B_REGION + 8 * UQ, struct.pack("<2i", *old))
+    u.uc.mem_write(UL + 0x230, struct.pack("<q", was_grid))
+    u.uc.mem_write(UL + 0x208, struct.pack("<qI", was_tps, was_n))
 
     def fake():
         w_ = u.r8(BANK + B_WRAP)
@@ -2128,7 +2132,6 @@ rows = {what: wrap_grid(*a, **kw) for what, a, kw in (
     ("off it, only Loop Start moved", (3840 * 100 + 1920, 3840), dict(new=(0, 48000))),
     ("the unsynced wrap (no tick)", (None, 3840), {}), ("no grid (+0x230 = 0)", (3840 * 100 + 1920, 0), {}),
     ("a tick past 2^32", ((1 << 32) + 1920, 3840), {}))}
-del u.stubs[RECOMPUTE]
 check("H3' and the wrap grid: a new region whose pass would not start on its own wrap grid (+0x230 after the recompute) "
       "is put back and the recompute run again, as no wrap (the pass keeps the region it had); on the grid, without a tick "
       f"(unsynced), without a grid, with the region unchanged or a tick past 2^32, it is taken: {rows}",
@@ -2136,6 +2139,30 @@ check("H3' and the wrap grid: a new region whose pass would not start on its own
                "off it, region unchanged": ((24000, 48000), (UQ + 1,)), "off it, only Loop Start moved": ((24000, 48000), (UQ + 1, 0)),
                "the unsynced wrap (no tick)": ((0, 32000), (UQ + 1,)), "no grid (+0x230 = 0)": ((0, 32000), (UQ + 1,)),
                "a tick past 2^32": ((0, 32000), (UQ + 1,))}, rows)
+# Gate 3 finding 5: it waits only for a wrap that can come. The render snaps each pass start to the old grid, so the
+# passes start one old pass (the old clip snapped to it) apart; they meet the new grid iff gcd(old pass, new grid) divides
+# the tick. A region under half a beat (Beat Count Auto: a clip of 0 ticks, grid 0) has passes that start anywhere; a
+# 3-bar loop on Quant 1 bar launched on bar 1 (mod 3) cut to 3 beats starts every pass 960 ticks off the 2 880 grid
+rows = {what: wrap_grid(*a, **kw) for what, a, kw in (
+    ("from a 0-tick clip (no grid), off the new grid", (3840 * 100 + 777, 1920), dict(was_grid=0, was_tps=0, was_n=1)),
+    ("from 3 bars on the 1-bar grid, a pass on bar 1 mod 3, to a 3-beat grid", (3840 * 100, 2880),
+     dict(was_grid=3840, was_tps=960, was_n=12)),
+    ("from 2 bars to a 3-beat grid (the wrap comes: 7 680 x k + 384 000 meets 2 880)", (3840 * 100, 2880),
+     dict(was_grid=3840, was_tps=960, was_n=8)),
+    ("from 10 beats on the 1-bar grid, a tie its passes take down (7 680 apart), to a 3-beat grid (the wrap comes)",
+     (3840 * 100, 2880), dict(was_grid=3840, was_tps=960, was_n=10)),
+    ("from 2 beats to 1 bar, the pass on the off-bar beat (the bar comes next pass)", (3840 * 100 + 1920, 3840), {}))}
+del u.stubs[RECOMPUTE]
+check("...but only for a wrap on the new grid that can come (finding 5): from a 0-tick clip, or passes that never meet "
+      "the new grid, the region is taken at once; where one comes (gcd of the old pass and the new grid divides the "
+      f"tick) it waits for it: {rows}",
+      rows == {"from a 0-tick clip (no grid), off the new grid": ((0, 32000), (UQ + 1,)),
+               "from 3 bars on the 1-bar grid, a pass on bar 1 mod 3, to a 3-beat grid": ((0, 32000), (UQ + 1,)),
+               "from 2 bars to a 3-beat grid (the wrap comes: 7 680 x k + 384 000 meets 2 880)": ((24000, 48000), (UQ + 1, 0)),
+               "from 10 beats on the 1-bar grid, a tie its passes take down (7 680 apart), to a 3-beat grid (the wrap comes)":
+                   ((24000, 48000), (UQ + 1, 0)),
+               "from 2 beats to 1 bar, the pass on the off-bar beat (the bar comes next pass)": ((24000, 48000), (UQ + 1, 0))},
+      rows)
 u.uc.mem_write(UL + 0x230, bytes(8))
 # the source: the class-H object when the link holds, else the app's store (0x91, 0x92) with the last good pair; Loop
 # Mode (0x8e) is not read (finding 7): the fourth pair, with Loop Mode None, is a region all the same
@@ -2358,6 +2385,46 @@ for launch, name in ((2, "Toggle"), (0, "Trigger")):
               f"every {sorted({b_[0] - a_[0] for a_, b_ in zip(starts(st_['rig']), starts(st_['rig'])[1:])})}), "
               f"{z} zero-gain samples, peak {pk:.3f} (stock {pks:.3f}: a 0-beat clip restarts early, README Known issues)",
               ok and len(s_) >= 4 and per == [8875] and z == 0 and pk < 2.0, (lat, out, lo_, hi_, s_[:5], per, z, pk))
+
+# Gate 3 finding 5: a region grown from under half a beat while it plays. The 9 000-frame region of 3/8 beat (Beat Count
+# Auto: 0 ticks, no grid; Sync 1/16, Toggle) gets Loop End 78 000 at block 300: 2 beats, grid 1 920. Its passes started
+# where its length ended them, so no wrap was ever on the new grid and 37.2.x held the old region until a stop and a
+# relaunch. Now the next wrap's recompute takes it (the pass it starts was made with the old one: the one after plays
+# it). That pass starts off the grid (where the old one ended), and stock's own snaps put it back on: its step 1 on the
+# 1/16 grid (a gap of up to half a step) and its end on the grid point nearest the end, which lies before it (the last
+# step overlaps the next pass at gain 2, as on stock's own live Beat Count change); from the pass after that, every
+# pass starts on the 1 920 grid and plays [30 000, 78 000)
+def grow(rr):
+    if rr.block == 300:
+        rr.param(0x92, 78000)
+
+
+cw = audio(frames=96000, beats=0, sync=5, points=(30000, 39000, 1), cell=0x102, blocks=1700, pre=grow)
+r = cw["rig"]
+T_GROW = 287000 + 300 * N
+s_ = starts(r)
+took = [a for a, st, fr in s_ if a > T_GROW and st == 0 and fr == 0]
+reg_now = region_bank(r.m, 6)
+fr = cw["frame"]
+t_ = cw["base"] + np.arange(len(fr))
+new_from = took[1] if len(took) > 1 else 1 << 30                # the first pass made after the recompute that took it
+after = ~np.isnan(fr) & (t_ >= new_from)
+out = int(((fr[after] < 30000 - 0.02) | (fr[after] > 77999 + 0.02)).sum())
+tw = (t_ >= new_from) & (t_ < (took[3] if len(took) > 3 else 0))   # the off-grid pass and the one its end snaps back
+gl = cw["gain"][tw]
+gr = cw["gain"][t_ >= (took[3] if len(took) > 3 else 1 << 30)]
+zw = int((np.abs(gl) < 1e-7).sum())
+check(f"a region grown from 3/8 beat to 2 beats while it plays (finding 5): taken at the next wrap (the change at {T_GROW}; "
+      f"pass starts {took[:6]}), the region now {reg_now}; two passes after it every pass starts on the 1 920-tick grid "
+      f"(48 000 samples) and from the first one made with it all play inside [30 000, 78 000) ({out} samples outside, "
+      f"frames up to {np.nanmax(fr[after]) if after.any() else None:.0f}); the two passes stock's snaps bring back to "
+      f"the grid: a gap of {zw} samples, {int((gl > 1 + 1e-6).sum())} samples above gain 1 (peak {gl.max() if len(gl) else 0:.2f}: "
+      f"each under a 1/16 step, 6 000 samples, and its crossfades); then gain 1 ({gr.max() if len(gr) else 0:.2f} max), no zero-gain sample "
+      f"({int((np.abs(gr) < 1e-7).sum())})",
+      reg_now == (30000, 48000) and len(took) >= 5 and took[0] - T_GROW < 9000 + 2 * N and took[1] - took[0] < 9000 + N
+      and all(a % 48000 == 0 for a in took[3:]) and out == 0 and np.nanmax(fr[after]) > 70000
+      and zw < 6000 and (gl > 1 + 1e-6).sum() < 6000 + 4 * 256 and abs(gr.max() - 1) < 1e-5 and not (np.abs(gr) < 1e-7).any(),
+      (reg_now, took[:6], out, zw, (gl > 1 + 1e-6).sum(), gr.max()))
 
 # a region change while the pad plays: heard at the next wrap, no added silence
 for name, change in (("new loop points (Loop End 96 000 -> 48 000, Region Auto)", lambda rr: rr.param(0x92, 48000)),

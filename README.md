@@ -40,7 +40,9 @@ New since 3.1.n:
   and no doubling at the loop point, even when the whole loop is one Sync step. A change while the pad plays is heard
   from the next time the loop comes round, or the time after that if it is made during the loop's last Sync step. A
   change that makes the loop longer can wait a little more: it starts where a launch would start the new loop (on the
-  Quant, or on the new loop's own length when that is shorter), so it never doubles. Saved with the preset.
+  Quant, or on the new loop's own length when that is shorter), so it never doubles. If the loop playing can never
+  come round to such a point (a loop shorter than half a beat, say), the new one starts the next time round and falls
+  into time over one pass, with one step doubled. Saved with the preset.
 - **Loop Len on Clip pads**: a "Loop Len" row on a Clip pad's Pos tab, after Slip: Off, 1/16, 1/8, 1/4, 1/2, 1 bar,
   2 bars or 4 bars. Only that much of the clip loops, in time, and it is the part that was playing when you turned it
   on, like a KP3's loop: 1/4 repeats the beat that was playing, 1/16 a sixteenth of it. Turned Off and on again

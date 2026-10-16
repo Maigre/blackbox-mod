@@ -128,19 +128,34 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
     return v;
 }
 
-/* H3' (clipwin_wrap), after the recompute at a wrap: was = the region before it, t = the tick the new pass starts on
-   (0 for the unsynced wrap). 1 when the new region must wait (it is put back here, and the pad recomputed again): it
-   moves the wrap grid off this pass, where stock would snap the pass's end into the past and double. A tick past 2^32
-   takes it at once, as stock would. */
-int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const struct cw_region *was)
+/* H3' (clipwin_wrap), after the recompute at a wrap: was = what the pad had before it (the region, CW_WAS_GRID its
+   wrap grid, CW_WAS_CLIP its clip in ticks), t = the tick the new pass starts on (0 for the unsynced wrap). 1 when the
+   new region must wait (it is put back here, and the pad recomputed again): it moves the wrap grid off this pass,
+   where stock would snap the pass's end into the past and double. A tick past 2^32 takes it at once, as stock would.
+   It waits only for a wrap that can come (Gate 3 finding 5: a region grown from under half a beat was held until a
+   stop and a relaunch). The render snaps every pass start to the old grid g, so the passes start one old pass apart,
+   s = the old clip snapped to g, a tie down (stock picks the grid point a block early, notes/re/a1: a clip of 2.5
+   grids passes every 2): t, t + s, t + 2s ... They meet the new grid iff gcd(s, grid) divides t, and
+   then within grid / gcd(s, grid) passes. No old grid (a clip of 0 ticks, a region under half a beat on Beat Count
+   Auto: its passes start where its length ends them) or a gcd that does not divide t: no such wrap, and the region is
+   taken now, through stock's own snap (one pass off the grid, then on it). */
+int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const int32_t *was)
 {
-    uint32_t grid = *(const uint32_t *)(pad + PAD_WRAP_GRID);
+    uint32_t grid = *(const uint32_t *)(pad + PAD_WRAP_GRID), g = (uint32_t)was[CW_WAS_GRID];
     struct cw_region *r = &b->region[q];
     if (!t || t[1] || !grid || *(const uint32_t *)(pad + PAD_WRAP_GRID + 4) || !(t[0] % grid) ||
-        (r->rs == was->rs && r->vlen == was->vlen))
+        (r->rs == was[0] && r->vlen == was[1]) || !g || was[CW_WAS_CLIP] <= 0)
         return 0;
-    r->rs = was->rs;                 /* the pass plays the region it had; a layer is active, so no recompute adopts */
-    r->vlen = was->vlen;
+    uint32_t a = ((uint32_t)was[CW_WAS_CLIP] + g / 2 - 1) / g * g, c = grid;
+    while (c) {                      /* a = gcd(s, grid) */
+        uint32_t x = a % c;
+        a = c;
+        c = x;
+    }
+    if (!a || t[0] % a)
+        return 0;
+    r->rs = was[0];                  /* the pass plays the region it had; a layer is active, so no recompute adopts */
+    r->vlen = was[1];
     return 1;
 }
 

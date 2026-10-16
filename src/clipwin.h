@@ -107,8 +107,11 @@ int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, els
 #define CW_SET_START  1
 #define CW_SET_END    2
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set);
-/* H3': after the wrap's recompute, 1 = the region before it (was) is back and the pad must recompute again */
-int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const struct cw_region *was);
+/* H3': after the wrap's recompute, 1 = the region before it (was: rs, vlen, then the wrap grid and the clip, ticks, the
+   pad had) is back and the pad must recompute again */
+#define CW_WAS_GRID 2
+#define CW_WAS_CLIP 3
+int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const int32_t *was);
 /* H1: latch slot k, return where to prefetch (pos < 0: from the segment's own start); H1': a slice segment in slot k */
 int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_t len, int32_t pos);
 void cw_slice(struct cw_bank *b, unsigned q, unsigned k);
@@ -151,9 +154,9 @@ _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC =
 _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START == 0x18 && WAVE_DIRTY == 0x32 &&
                WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
-               CW_SET_END == 2,
-               "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch) is compiled against the knob's and "
-               "the waveform's fields, these settings and values, and clipwin_len's row order: changing one "
-               "reprograms bank 2");
+               CW_SET_END == 2 && CW_WAS_GRID == 2 && CW_WAS_CLIP == 3,
+               "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch, cw_hold) is compiled against the "
+               "knob's and the waveform's fields, these settings and values, clipwin_len's row order and "
+               "clipwin_wrap's: changing one reprograms bank 2");
 
 #endif

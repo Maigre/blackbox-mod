@@ -46,9 +46,10 @@
  * pass's step 0 is made, about one Sync step before it sounds; a stopped pad takes it at its next recompute, the
  * launch's at the latest): changed mid-pass, the steps already made would point past the new end (notes/re/a2: 11 418
  * or 23 490 silent samples). One that moves the wrap grid (a longer clip) waits for a wrap on its own grid, where a
- * launch would start it: elsewhere stock snaps that pass's end into the past and doubles. Seamless wrap: with a region, Loop On and Launch not Trigger the last step has no end, so
- * it crossfades into the next pass like any step: no notch, no gap when the region is shorter than its beats, no
- * doubling when longer; a clip of one Sync step has that step timed by the clip (H3 site 3), as stock times steps when
+ * launch would start it: elsewhere stock snaps that pass's end into the past and doubles. When no such wrap can come
+ * (the passes before had no grid, or never meet the new one) it is taken at once. Seamless wrap: with a region, Loop
+ * On and Launch not Trigger the last step has no end, so it crossfades into the next pass like any step: no notch,
+ * no gap when the region is shorter than its beats, no doubling when longer; a clip of one Sync step has that step timed by the clip (H3 site 3), as stock times steps when
  * there are more. A region under half a beat on Beat Count Auto is a clip of 0 ticks: no grid, it loops on its length.
  * Setting: "Region:" Auto | File | Loop before Slip, saved as "clipregion". Auto = Loop: the loop points when 0 <=
  * start < end <= length and they are not the whole file ([0, length - 1] or more: what a load leaves, x3 t13); Sample
@@ -245,7 +246,8 @@ int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
    Unless it moves the wrap grid off this pass (cw_hold): stock snaps a pass's end to +0x230 = min(Quant, clip), so a
    longer clip whose first pass does not start on its own grid has that end snapped back into the past, and the next
    pass sounds at once over the last step: two early passes at gain 2, then the bar (stock does exactly that after a
-   live Beat Count change). Such a region waits for a wrap on its grid, where a launch would have started it. */
+   live Beat Count change). Such a region waits for a wrap on its grid, where a launch would have started it, when one
+   can come (cw_hold: the old wrap grid and clip, read here before the recompute, say where the passes start). */
 void clipwin_wrap(uint8_t *pad, void *clock, const uint32_t *t)
 {
     int q;
@@ -254,11 +256,12 @@ void clipwin_wrap(uint8_t *pad, void *clock, const uint32_t *t)
         fw_recompute(pad, clock);
         return;
     }
-    struct cw_region was = b->region[q];
+    int32_t was[4] = {b->region[q].rs, b->region[q].vlen, *(const int32_t *)(pad + PAD_WRAP_GRID),
+                      *(const int32_t *)(pad + PAD_TPS) * *(const int32_t *)(pad + PAD_STEPS)};   /* CW_WAS_* */
     b->wrap = (uint8_t)(q + 1);
     fw_recompute(pad, clock);
     b->wrap = 0;
-    if (cw_hold(b, (unsigned)q, pad, t, &was))
+    if (cw_hold(b, (unsigned)q, pad, t, was))
         fw_recompute(pad, clock);
 }
 
