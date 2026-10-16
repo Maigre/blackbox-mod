@@ -77,8 +77,8 @@ struct cw_bank {
     uint8_t h1[16];                  /* bit k: slot k's segment was made through H1 (not a slice segment, H1') */
     uint8_t hinted[16];              /* bit k: H2 has hinted rs for slot k's crossing of the region end */
     uint32_t zero_at;                /* the Slip knob: GUI ms a turn last arrived on 0 (the detent counts from there) */
-    int8_t zero_dir;                 /* ...and the direction that turn was going */
-    uint8_t spare;                   /* free (CWN4's zero_hold) */
+    int8_t zero_dir;                 /* ...and the direction that turn was going, */
+    uint8_t zero_slow;               /* ...and 1 if it was slow (its hold is ZERO_DETENT_SLOW_MS, cw_turn) */
     uint8_t wrap;                    /* 1 + the pad whose wrap is recomputing right now (clipwin_wrap), else 0 */
     struct cw_region region[16];
     int32_t good[16][2];             /* the last loop points from the app's store that made sense (the fallback) */
@@ -92,11 +92,12 @@ struct cw_bank {
     uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
     int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform screen's length */
 };
-#define CW_MAGIC  0x43574e37u        /* "CWN7": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e38u        /* "CWN8": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
 _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_bank, zero_dir) == 0x4bc &&
+               offsetof(struct cw_bank, zero_slow) == 0x4bd &&
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
                sizeof(struct cw_bank) == 0x784, "bench/bbusb.py knob and test_clipwin.py read the knob's fields here");
 

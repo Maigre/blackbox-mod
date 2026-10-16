@@ -95,10 +95,11 @@ BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
 B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x4A8
 B_WRAP, B_REGION, B_GOOD, B_ORIGIN, B_LL, B_FORCED, B_SF = 0x4BE, 0x4C0, 0x540, 0x5C0, 0x600, 0x610, 0x620
 B_ZERO_AT, B_ZERO_DIR, B_KNOB_COUNTS, B_KNOB_SPEED = 0x4B8, 0x4BC, 0x720, 0x722   # the Slip knob's (clipwin_turn)
+B_ZERO_SLOW = 0x4BD                                  # ...v3: the arrival on 0 was slow (the long hold)
 B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, and polls since it changed
 B_FLEN = 0x744                                       # fw_src_len at each pad's last recompute (the Waveform's length)
 B_SIZE = 0x784                                       # sizeof(struct cw_bank)
-CW_MAGIC = 0x43574E37
+CW_MAGIC = 0x43574E38
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -1723,13 +1724,13 @@ check("the same row registered as type 9 (a list position): the value it stands 
 e.uc.mem_write(TABLE + P_SLIP * 0x1C + 2, b"\x01")
 
 
-def turn(path, per_ms, events=40, sign=1, start=0, fresh_knob=True, t0=10_000, period=16, seq=None):
-    """`events` turn events `period` ms apart at `per_ms` counts per ms; returns (value, counts sent, last time), and
-    appends (time, value) after each event to `seq` if given. A fresh knob comes with its acceleration ring (8 x
+def turn(path, per_ms, events=40, sign=1, start=0, fresh_knob=True, t0=10_000, period=16, seq=None, counts=None):
+    """`events` turn events `period` ms apart at `per_ms` counts per ms (or `counts` an event, signed); returns (value,
+    counts sent, last time), and appends (time, value) after each event to `seq` if given. A fresh knob comes with its acceleration ring (8 x
     {counts, ms} at +0x294, write index at +0x2d4) as if it had been turning at that speed for 8 events already:
     fresh() zeroes the widget, and a ring of zeros would read as a slow turn. The bank's detent state (the last arrival
     on 0) is left as it is: a fresh knob is a new turn, not a new unit."""
-    c, t = sign * int(per_ms * period), t0
+    c, t = (counts if counts is not None else sign * int(per_ms * period)), t0
     if fresh_knob:
         fresh()
         e.call(0x080A7EE0, P_SLIP, start, KN)
@@ -1750,19 +1751,58 @@ def turn(path, per_ms, events=40, sign=1, start=0, fresh_knob=True, t0=10_000, p
     return e.r32(KN + 0x27C) + e.r32(KN + 0x288), c * events, t
 
 
-# The knob, v2 (37.2.1; Thomas on 37.2.0d: "blocking at 0 is not great ... accelerator is too fast it seems"): by the
-# stock accelerator's speed m (1 .. 6), slow = single ticks (40 counts a tick, twice that at speed 2), medium = one
-# KNOB_STEP_MEDIUM a turn event onto its grid, fast (the top speeds) = one 1/64 (60 ticks) a turn event onto the 1/64
-# grid; 0 is a detent: a turn that reaches it stops there, and passes ZERO_DETENT_MS after it ARRIVED. The numbers are
-# read from src/clipwin_b2.c's #defines (the rule is bank 2's, cw_turn, since D-018), so that tuning one on the unit
-# leaves these checks about the shape. The detent's state lives in cw_bank (SDRAM), as on the unit, so the block is
-# there for these.
+# The knob, v3 (hub #t-021, Gate 3 finding 1; Thomas on 37.2.1d's v2: "the detent could be a bit stronger at low speed:
+# when approaching 0 i still endup slightly on the other side", "acceleration could be smoother too"). Every turn event
+# moves the stepper counts x gain(m) (400 stepper counts a tick), the gain geometric in the stock accelerator's speed m
+# (1 .. 6): KNOB_GAIN at speed 1, x KNOB_GAIN_STEP / 256 a speed up, fitted to the bench's knob log (median counts an
+# event by speed: 21, 35, 45, 63, 80, 116) so that speed 1 is single ticks and speed 6 a 1/64 an event; only the top
+# speed (KNOB_TOP) snaps to the 1/64 grid. 0 is a detent: a turn that reaches or crosses it stops there, and passes
+# ZERO_DETENT_SLOW_MS after it ARRIVED if it arrived at speed KNOB_DETENT_SLOW or under, ZERO_DETENT_MS if faster. The
+# numbers are read from src/clipwin_b2.c's #defines (the rule is bank 2's, cw_turn), so that tuning one on the unit leaves
+# these checks about the shape. The detent's state lives in cw_bank (SDRAM), as on the unit, so the block is there.
 _knob_src = open("src/clipwin_b2.c").read()
 KNOB_DEF = {n: int(re.search(rf"^#define {n}\s+(\d+)", _knob_src, re.M).group(1))
-            for n in ("KNOB_MEDIUM", "KNOB_FAST", "KNOB_STEP_MEDIUM", "SLIP_GRID", "ZERO_DETENT_MS")}
-MED_AT, FAST_AT, MED_STEP, GRID, DETENT = KNOB_DEF.values()
-info(f"the knob's numbers (src/clipwin_b2.c): medium from speed {MED_AT}, fast from {FAST_AT}, a medium step {MED_STEP} "
-     f"ticks, the 1/64 grid {GRID}, the detent {DETENT} ms")
+            for n in ("KNOB_GAIN", "KNOB_GAIN_STEP", "KNOB_TOP", "SLIP_GRID", "ZERO_DETENT_MS", "ZERO_DETENT_SLOW_MS",
+                      "KNOB_DETENT_SLOW")}
+GAIN1, GSTEP, TOP, GRID, DETENT, DETENT_SLOW, SLOW_AT = KNOB_DEF.values()
+LOG_MEDIAN = {1: 21, 2: 35, 3: 45, 4: 63, 5: 80, 6: 116}   # notes/bench/2026-10-16-gate3-part1.md, finding 1
+info(f"the knob's numbers (src/clipwin_b2.c): gain {GAIN1} at speed 1, x {GSTEP}/256 a speed, the 1/64 grid ({GRID}) at "
+     f"speed {TOP}, the detent {DETENT_SLOW} ms after an arrival at speed {SLOW_AT} or under, {DETENT} ms after a faster one")
+
+
+def gain(m):
+    """stepper counts a knob count, x 256, as cw_turn makes it"""
+    g = GAIN1 << 8
+    for _ in range(1, min(max(m, 1), TOP)):
+        g = g * GSTEP >> 8
+    return g
+
+
+def cdiv(a, b):
+    """C's truncating division"""
+    return -(-a // b) if (a < 0) != (b < 0) else a // b
+
+
+def stepper_run(adds, start=0):
+    """what the stock stepper (FUN_080b0b74, its step/3 hysteresis and all) makes of these adds, from `start` on a fresh
+    knob (its accumulator parked mid-step there, as the binder leaves it)"""
+    fresh()
+    e.call(0x080A7EE0, P_SLIP, start, KN)
+    for a in adds:
+        e.call(0x080B0B74, KN + 0x270, a)
+    return e.r32(KN + 0x27C) + e.r32(KN + 0x288)
+
+
+def top_run(c, events, start):
+    """the top speed's rule: the move rounded to the nearest 1/64 (half away from 0), at least one in the turn's way"""
+    v = start
+    for _ in range(events):
+        to = v + cdiv(cdiv(c * gain(TOP), 256), 400)
+        t_ = cdiv(to + (GRID // 2 if to >= 0 else -(GRID // 2)), GRID) * GRID
+        if (c > 0 and t_ <= v) or (c < 0 and t_ >= v):
+            t_ = (v // GRID + 1) * GRID if c > 0 else -((-v) // GRID + 1) * GRID
+        v = max(-3840, min(3840, t_))
+    return v
 
 
 def at_speed(m):
@@ -1770,18 +1810,12 @@ def at_speed(m):
     return (m + 0.5) * 7 / 8
 
 
-def tier(m):
-    return "slow" if m < MED_AT else "medium" if m < FAST_AT else "fast"
-
-
-def slow_ticks(m, c, events):
-    """slow: what the stock stepper (FUN_080b0b74, its step/3 hysteresis and all) makes of counts x 10 x m an event,
-    from 0 on a fresh knob"""
-    fresh()
-    e.call(0x080A7EE0, P_SLIP, 0, KN)
-    for _ in range(events):
-        e.call(0x080B0B74, KN + 0x270, c * 10 * m)
-    return e.r32(KN + 0x27C) + e.r32(KN + 0x288)
+def turn_c(path, c, m, events, start=0, t0=10_000, seq=None):
+    """`events` events of c counts each, as far apart as makes the ring read speed m"""
+    period = max(1, int(8 * abs(c) / (7 * (m + 0.5))))
+    while period > 1 and min(6, 8 * abs(c) // (7 * period)) < m:
+        period -= 1
+    return turn(path, 0, events=events, start=start, t0=t0, period=period, seq=seq, counts=c)
 
 
 try:
@@ -1792,112 +1826,102 @@ e.uc.mem_map(0x38800000, 0x1000) if not any(r[0] == 0x38800000 for r in e.uc.mem
 e.uc.mem_map(0x58024000, 0x1000) if not any(r[0] == 0x58024000 for r in e.uc.mem_regions()) else None
 sdram(e)
 e.w32(BANK, 0)                                              # bank() sets itself up on first use
-TOP = 6                                                     # the top speed: a fast turn whatever KNOB_FAST says
 for path in ("list", "turn"):
     name = "pad page list (FUN_080b9a3c)" if path == "list" else "waveform turn (FUN_080b0d54)"
     slow, counts, _ = turn(path, 0.7)
-    med, mcounts, _ = turn(path, 2.5)
-    check(f"{name}: slow, 1 tick per 40 counts ({counts} counts -> {slow}); speed 2, 2 ticks per 40 ({mcounts} -> {med})",
-          slow == counts // 40 and med == 2 * mcounts // 40, (slow, counts, med, mcounts))
-    # every speed, 7 events from 0: its tier's step; and what each event leaves in cw_bank for the bench
-    got, want, seen = [], [], []
+    check(f"{name}: slow (speed 1), 1 tick per 40 counts, as v2 ({counts} counts -> {slow})", slow == counts // 40,
+          (slow, counts))
+    # at the knob log's median counts of each speed, 20 events from +120 up: the stepper fed counts x gain(m) / 256, or
+    # at the top speed the 1/64 rule; and what each event leaves in cw_bank for the bench
+    got, want, seen, rate = [], [], [], {}
     for m_ in range(1, 7):
-        v, cnt, _ = turn(path, at_speed(m_), events=7, sign=-1 if m_ & 1 and m_ >= MED_AT else 1)
+        c = LOG_MEDIAN[m_]
+        v, cnt, _ = turn_c(path, c, m_, 20, start=120)
         got.append(v)
-        sgn = 1 if cnt > 0 else -1
-        seen.append((struct.unpack("<h", bytes(e.uc.mem_read(BANK + B_KNOB_COUNTS, 2)))[0], e.r8(BANK + B_KNOB_SPEED),
-                     cnt // 7))
-        want.append(slow_ticks(m_, cnt // 7, 7) if m_ < MED_AT else 7 * sgn * (MED_STEP if m_ < FAST_AT else GRID))
-    check(f"  speeds 1 .. 6 (odd ones from medium on down), 7 events from 0: "
-          f"{', '.join(f'{m_} {tier(m_)} {g:+d}' for m_, g in enumerate(got, 1))} - slow = the stepper fed counts x 10 x "
-          f"speed (single ticks), one {MED_STEP}-tick step a turn event from speed {MED_AT}, one 1/64 ({GRID}) from speed "
-          f"{FAST_AT}", got == want, (got, want))
+        seen.append((struct.unpack("<h", bytes(e.uc.mem_read(BANK + B_KNOB_COUNTS, 2)))[0], e.r8(BANK + B_KNOB_SPEED), c))
+        want.append(stepper_run([cdiv(c * gain(m_), 256)] * 20, 120) if m_ < TOP else top_run(c, 20, 120))
+        rate[m_] = (v - 120) / 20
+    steps = [rate[m_ + 1] / rate[m_] for m_ in range(1, 6)]
+    check(f"  the log's median counts at speeds 1 .. 6, 20 events from +120: {got} - ticks an event "
+          f"{[round(rate[m_], 2) for m_ in rate]}: single ticks at speed 1, a 1/64 at speed {TOP}, and between them a "
+          f"geometric climb, x {[round(x, 2) for x in steps]} a speed (v2: x 3.4, 5.7, 1, 6, 1); each the stepper fed "
+          f"counts x gain / 256 (the top speed onto the 1/64 grid)",
+          got == want and rate[1] <= 1 and rate[TOP] == GRID and all(1.5 <= x <= 3.5 for x in steps), (got, want, rate))
     check(f"  each event leaves its counts (i16) and the speed (u8) at cw_bank + {B_KNOB_COUNTS:#x} for bbusb.py knob "
           f"({[x[:2] for x in seen]})", all(x[0] == x[2] and x[1] == m_ for m_, x in enumerate(seen, 1)), seen)
-    fast = [turn(path, s_, events=7)[0] for s_ in (3, 4, 6, 12)]
-    check(f"  3 and 4 counts/ms (speeds 3 and 4: medium) give {7 * MED_STEP}, 6 and 12 (speed 6: fast) {7 * GRID}, for 7 "
-          f"events from 0 ({fast}); 37.2.0d gave {7 * GRID} for all four",
-          fast == [7 * MED_STEP] * 2 + [7 * GRID] * 2, fast)
-    snaps = [turn(path, at_speed(MED_AT), events=3, start=25)[0],
-             turn(path, at_speed(MED_AT), events=3, sign=-1, start=125)[0],
-             turn(path, at_speed(TOP), events=3, start=25)[0],
-             turn(path, at_speed(TOP), events=2, start=130)[0],
-             turn(path, at_speed(TOP), events=2, sign=-1, start=-25)[0]]
-    want = [25 // MED_STEP * MED_STEP + 3 * MED_STEP, -(-125 // MED_STEP) * MED_STEP - 3 * MED_STEP,
-            25 // GRID * GRID + 3 * GRID, 130 // GRID * GRID + 2 * GRID, -(25 // GRID * GRID) - 2 * GRID]
-    check(f"  off-grid values snap to the tier's grid first: medium up from +25 and down from +125, three events -> "
-          f"{snaps[0]}, {snaps[1]}; fast up from +25, three -> {snaps[2]}; from the medium step +130, two -> {snaps[3]}; "
-          f"down from -25, two -> {snaps[4]} (the 1/64 grid)",
-          snaps == want and all(x % GRID == 0 for x in snaps[2:]), (snaps, want))
+    snaps = [turn_c(path, LOG_MEDIAN[TOP], TOP, 3, start=25)[0], turn_c(path, -LOG_MEDIAN[TOP], TOP, 3, start=-25)[0],
+             turn_c(path, LOG_MEDIAN[TOP - 1], TOP - 1, 3, start=25)[0]]
+    check(f"  the top speed snaps to the 1/64 grid (+25 up, three events: {snaps[0]}; -25 down: {snaps[1]}); the speed under "
+          f"it does not ({snaps[2]} from +25)", snaps[:2] == [top_run(LOG_MEDIAN[TOP], 3, 25), top_run(-LOG_MEDIAN[TOP], 3, -25)]
+          and all(x % GRID == 0 for x in snaps[:2]) and snaps[2] % GRID and snaps[2] > 25, snaps)
     v, _, _ = turn(path, 12, events=80)
-    check("  fast up stops at +3840 (64 grid steps); the text follows, and the app is sent 0x1c9 = the value",
+    check("  fast up stops at +3840; the text follows, and the app is sent 0x1c9 = the value",
           v == 3840 and vtext()[-1:] == ["+4.000"] and posts and posts[-1] == (0x3D, 3840, P_SLIP), (v, vtext()[-1:], posts[-1:]))
     v, _, _ = turn(path, 12, events=80, sign=-1)
     check("  fast down stops at -3840 too", v == -3840 and vtext()[-1:] == ["-4.000"], (v, vtext()[-1:]))
 
-    # the detent on 0: fast down from +300, an event every 16 ms
+    # the detent, a fast arrival: down from +300 at the top speed, an event every 16 ms
     sq = []
     turn(path, at_speed(TOP), events=20, sign=-1, start=300, t0=20_000, seq=sq)
     vals = [x for _, x in sq]
-    t_arr = sq[4][0]
-    held = [x for tt, x in sq[5:] if tt - t_arr < DETENT]
-    after = [x for tt, x in sq[5:] if tt - t_arr >= DETENT]
-    check(f"  fast down from +300 (16 ms events): {vals[:5]} - it stops on 0, holds there for {len(held)} events (those "
-          f"under {DETENT} ms after the arrival), then goes past it at its speed ({after[:3]} ...; text {vtext()[-1:]})",
-          vals[:5] == [240, 180, 120, 60, 0] and held == [0] * len(held) and len(held) == (DETENT - 1) // 16
-          and after == [-GRID * (i + 1) for i in range(len(after))] and len(after) > 0
-          and vtext()[-1:] == [f"-{len(after) * GRID // 960}.{len(after) * GRID % 960:03d}"], (vals, vtext()[-1:]))
-    # the pause counts from the arrival, not from the last event: a steady stream every 20 ms passes (37.2.0d: a wall)
+    i_arr = vals.index(0) if 0 in vals else 0
+    t_arr = sq[i_arr][0]
+    held = [x for tt, x in sq[i_arr + 1:] if tt - t_arr < DETENT]
+    after = [x for tt, x in sq[i_arr + 1:] if tt - t_arr >= DETENT]
+    check(f"  fast down from +300 (16 ms events): {vals[:i_arr + 1]} - it stops on 0, holds there for {len(held)} events "
+          f"(those under {DETENT} ms after the arrival: a fast arrival), then goes past it at its speed ({after[:3]} ...); "
+          f"slow-arrival flag {e.r8(BANK + B_ZERO_SLOW)}",
+          0 in vals and held == [0] * len(held) and len(held) == (DETENT - 1) // 16 and len(after) > 0
+          and after[0] < 0 and all(x % GRID == 0 for x in after) and e.r8(BANK + B_ZERO_SLOW) == 0, (vals, after))
+    # ...a slow one (Thomas: "when approaching 0 i still endup slightly on the other side"): held ZERO_DETENT_SLOW_MS
+    for m_, c in ((1, 11), (SLOW_AT, LOG_MEDIAN[SLOW_AT])):
+        sq = []
+        turn_c(path, -c, m_, 120, start=3, t0=90_000 + 2000 * m_, seq=sq)
+        vals = [x for _, x in sq]
+        i_arr = vals.index(0) if 0 in vals else 0
+        t_arr = sq[i_arr][0]
+        held = [x for tt, x in sq[i_arr + 1:] if tt - t_arr < DETENT_SLOW]
+        after = [x for tt, x in sq[i_arr + 1:] if tt - t_arr >= DETENT_SLOW]
+        check(f"  slow down from +3 at speed {m_} ({c} counts an event): {vals[:i_arr + 1]} - held on 0 for the {len(held)} "
+              f"events under {DETENT_SLOW} ms after the arrival (v2: {DETENT}), then on ({after[:4]} ...); slow-arrival "
+              f"flag {e.r8(BANK + B_ZERO_SLOW)}",
+              0 in vals and len(held) > 0 and held == [0] * len(held) and sq[i_arr + len(held)][0] - t_arr < DETENT_SLOW
+              and sq[i_arr + len(held)][0] - t_arr >= DETENT_SLOW - 30 and after and after[-1] < 0
+              and e.r8(BANK + B_ZERO_SLOW) == 1, (vals, held, after))
+    # the pause counts from the arrival, not from the last event: a steady fast stream every 20 ms passes
     sq = []
     turn(path, at_speed(TOP), events=30, sign=-1, start=300, t0=30_000, period=20, seq=sq)
     t_arr = next(tt for tt, x in sq if x == 0)
     first = next((tt for tt, x in sq if x < 0), None)
     want_first = t_arr + -(-DETENT // 20) * 20
     check(f"  a steady stream, an event every 20 ms: it passes 0 {None if first is None else first - t_arr} ms after it "
-          f"arrived (the first event {DETENT} ms or more on; 37.2.0d held it there for as long as it went on), then one "
-          f"1/64 an event ({[x for _, x in sq][-3:]})",
-          first == want_first and sq[-1][1] == -GRID * ((sq[-1][0] - first) // 20 + 1), (first, want_first, sq))
+          f"arrived (the first event {DETENT} ms or more on), then on ({[x for _, x in sq][-3:]})",
+          first == want_first and sq[-1][1] < sq[-2][1] < 0, (first, want_first, sq))
     # a new turn the same way inside the pause is still in it; one after it, from rest, moves at once
-    v, _, t = turn(path, at_speed(TOP), events=5, sign=-1, start=300, t0=40_000)       # arrives at 40 080
+    v, _, t = turn(path, at_speed(TOP), events=5, sign=-1, start=300, t0=40_000)
     v_in, _, _ = turn(path, at_speed(TOP), events=1, sign=-1, start=0, t0=t + DETENT - 30)
     v_rest, _, _ = turn(path, at_speed(TOP), events=1, sign=-1, start=0, t0=t + DETENT)
-    check(f"  a turn that arrived on 0 ({v}), then a new one the same way {DETENT - 14} ms after the arrival: still on 0 "
+    check(f"  a fast turn that arrived on 0 ({v}), then a new one the same way {DETENT - 14} ms after the arrival: still on 0 "
           f"({v_in}); {DETENT + 16} ms after: off at once ({v_rest})", v == 0 and v_in == 0 and v_rest == -GRID,
           (v, v_in, v_rest))
-    v_set = [turn(path, at_speed(m_), events=1, sign=s_, start=0, t0=50_000)[0] for m_, s_ in ((MED_AT, 1), (TOP, -1))]
-    check(f"  a turn starting at 0 from rest: its first event moves, medium +{MED_STEP}, fast -{GRID} ({v_set})",
-          v_set == [MED_STEP, -GRID], v_set)
-    # the other way leaves 0 at once (at the speed the stock ring reads then: its sum of signed counts drops on a
-    # reversal, so the first event back is a tier lower: fast -> medium, medium -> slow)
+    v_set = [turn(path, at_speed(m_), events=1, sign=s_, start=0, t0=50_000 + m_)[0] for m_, s_ in ((3, 1), (TOP, -1))]
+    check(f"  a turn starting at 0 from rest: its first event moves (speed 3 {v_set[0]:+d}, the top speed {v_set[1]:+d})",
+          v_set[0] > 0 and v_set[1] == -GRID, v_set)
+    # the other way leaves 0 at once
     v, _, t = turn(path, at_speed(TOP), events=5, sign=1, start=-200, t0=60_000)
     v_back, _, _ = turn(path, at_speed(TOP), events=1, sign=-1, fresh_knob=False, t0=t)
-    spd = e.r8(BANK + B_KNOB_SPEED)
-    v2, _, t = turn(path, at_speed(MED_AT), events=21, sign=1, start=-200, t0=70_000)
-    v_mback, _, _ = turn(path, at_speed(MED_AT), events=1, sign=-1, fresh_knob=False, t0=t)
-    mspd = e.r8(BANK + B_KNOB_SPEED)
-    step_of = lambda m_: GRID if m_ >= FAST_AT else MED_STEP if m_ >= MED_AT else None
-    check(f"  fast up from -200 holds 0 ({v}); turning the other way 16 ms later moves at once ({v_back}, speed {spd}); "
-          f"medium the same ({v2}, then {v_mback}, speed {mspd})",
-          v == 0 and v2 == 0 and v_back < 0 and v_mback < 0 and (step_of(spd) is None or v_back == -step_of(spd))
-          and (step_of(mspd) is None or v_mback == -step_of(mspd)), (v, v_back, spd, v2, v_mback, mspd))
-    # medium and slow arrive there too
+    check(f"  fast up from -200 holds 0 ({v}); turning the other way 16 ms later moves at once ({v_back})",
+          v == 0 and v_back < 0, (v, v_back))
+    # an arrival at speed 3 (over KNOB_DETENT_SLOW) is a fast one
     sq = []
-    turn(path, at_speed(MED_AT), events=20, sign=-1, start=35, t0=80_000, seq=sq)
-    vals = [x for _, x in sq]
-    t_arr = sq[3][0]
-    after = [x for tt, x in sq[4:] if tt - t_arr >= DETENT]
-    check(f"  medium down from +35: {vals[:4]}, the detent, then on ({after[:3]} ...)",
-          vals[:4] == [30, 20, 10, 0] and all(x == 0 for tt, x in sq[4:] if tt - t_arr < DETENT) and len(after) > 0
-          and after == [-MED_STEP * (i + 1) for i in range(len(after))], vals)
-    sq = []
-    _, c_, _ = turn(path, 0.7, events=60, sign=-1, start=5, t0=90_000, seq=sq)
+    turn_c(path, -LOG_MEDIAN[3], 3, 30, start=40, t0=80_000, seq=sq)
     vals = [x for _, x in sq]
     i_arr = vals.index(0) if 0 in vals else 0
     t_arr = sq[i_arr][0]
-    check(f"  slow down from +5 ({c_} counts): single ticks down to 0 ({vals[i_arr - 2:i_arr + 1]}), held there for the "
-          f"events under {DETENT} ms after the arrival, then single ticks on ({vals[-3:]})",
-          0 in vals and all(0 <= a - b <= 1 for a, b in zip(vals, vals[1:])) and vals[-1] < 0
-          and all(x == 0 for tt, x in sq[i_arr:] if tt - t_arr < DETENT), vals)
+    after = [(tt - t_arr, x) for tt, x in sq[i_arr + 1:] if x != 0]
+    check(f"  an arrival at speed 3 holds {DETENT} ms, not {DETENT_SLOW}: {vals[:i_arr + 1]}, then on at "
+          f"{after[0][0] if after else None} ms ({[x for _, x in after[:3]]})",
+          0 in vals and after and DETENT <= after[0][0] < DETENT + 20 and e.r8(BANK + B_ZERO_SLOW) == 0, (vals, after))
 
 # other knobs: the same text, steps and posts as on the stock image
 for m_ in (st_m,):

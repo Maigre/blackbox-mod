@@ -119,7 +119,7 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E37            # "CWN7": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E38            # "CWN8": src/clipwin.h's cw_bank layout this tool reads
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
@@ -132,11 +132,11 @@ def cw_bank():
 
 
 def knob_state(bank):
-    """(counts, speed, zero_at, zero_dir, now): cw_bank + 0x720 i16 knob_counts, u8 knob_speed; + 0x4b8 u32 zero_at,
-    i8 zero_dir (clipwin_turn); the GUI clock"""
-    zero_at, zero_dir = struct.unpack("<Ib3x", peek(bank + 0x4B8, 8))
+    """(counts, speed, zero_at, zero_dir, zero_slow, now): cw_bank + 0x720 i16 knob_counts, u8 knob_speed; + 0x4b8 u32
+    zero_at, i8 zero_dir, u8 zero_slow (cw_turn, v3: 1 = the arrival was slow, held ZERO_DETENT_SLOW_MS); the GUI clock"""
+    zero_at, zero_dir, zero_slow = struct.unpack("<IbB2x", peek(bank + 0x4B8, 8))
     counts, speed = struct.unpack("<hBx", peek(bank + 0x720, 4))
-    return counts, speed, zero_at, zero_dir, word(GUI_MS)
+    return counts, speed, zero_at, zero_dir, zero_slow, word(GUI_MS)
 
 
 def alsa_card():
@@ -176,7 +176,7 @@ def main(argv):
         if magic != CW_MAGIC:
             # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
             # bank set up this boot, every field below is a previous boot's, not live
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN7, 37.3.0 on): "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN8, 37.3.0 on): "
                      + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
                         "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -190,25 +190,28 @@ def main(argv):
     elif cmd == "knob":
         # src/clipwin_b2.c cw_turn (from clipwin.c's clipwin_turn) leaves each Slip turn event's counts and the stock
         # accelerator's speed m (1 .. 6, about 8/7 x the counts per ms) in cw_bank: which speeds a hand makes, against
-        # the tiers (KNOB_MEDIUM, KNOB_FAST there). Read only: nothing is written to the unit.
+        # the gain curve (KNOB_GAIN, KNOB_GAIN_STEP, KNOB_TOP there), and whether each arrival on 0 was slow (the long
+        # hold, ZERO_DETENT_SLOW_MS). Read only: nothing is written to the unit.
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN7, 37.3.0 on): another layout, no knob fields "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN8, 37.3.0 on): another layout, no knob fields "
                      "- or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
-        counts, speed, zero_at, zero_dir, now = knob_state(bank)
+        counts, speed, zero_at, zero_dir, zero_slow, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
-              + (f"{now - zero_at} ms ago, turning {'up' if zero_dir > 0 else 'down'}" if zero_dir else "none"))
+              + (f"{now - zero_at} ms ago, turning {'up' if zero_dir > 0 else 'down'}, "
+                 f"{'slow (the long hold)' if zero_slow else 'fast'}" if zero_dir else "none"))
         if args:
             secs, seen, last, t0 = float(args[0]), {}, (counts, speed, zero_at), time.time()
             print(f"sampling for {secs:g} s: turn the Slip knob (a line per change; two events between samples count once)")
             while time.time() - t0 < secs:
-                counts, speed, zero_at, zero_dir, now = knob_state(bank)
+                counts, speed, zero_at, zero_dir, zero_slow, now = knob_state(bank)
                 if (counts, speed, zero_at) != last:
                     arrived = zero_at != last[2]
                     last = (counts, speed, zero_at)
                     seen[speed] = seen.get(speed, 0) + 1
-                    print(f"{time.time() - t0:7.3f} s  {counts:+5d} counts  speed {speed}" + ("  arrived on 0" if arrived else ""))
+                    print(f"{time.time() - t0:7.3f} s  {counts:+5d} counts  speed {speed}"
+                          + (f"  arrived on 0 ({'slow' if zero_slow else 'fast'})" if arrived else ""))
                 time.sleep(0.005)
             print("speeds seen: " + (", ".join(f"{m}: {n}" for m, n in sorted(seen.items())) or "none (no turn?)"))
     elif cmd == "crash":

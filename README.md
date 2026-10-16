@@ -28,9 +28,10 @@ New since 3.1.n:
 - **Slip on Clip pads**: a "Slip" row on a Clip pad's Pos tab, after Sync. It shifts what the clip plays against the
   clock, up to a bar either way, so a loop cut by ear sits where the groove wants it. Like a CDJ jog: clockwise pushes
   the loop ahead, counter-clockwise drags it behind. The value is beats.ticks, 960 ticks to a beat (`-0.480` is half a
-  beat behind; one tick is about half a millisecond at 120 BPM). Turn slowly for single ticks, faster for 10-tick
-  steps, fast for 1/64 steps (60 ticks); 0 is a detent: a turn stops there for a moment (0.15 s), then goes on past
-  it if you keep turning. A change is heard at the next Sync step. Saved with the preset; 0 is stock.
+  beat behind; one tick is about half a millisecond at 120 BPM). Turn slowly for single ticks; it speeds up smoothly
+  as you turn faster, up to 1/64 steps (60 ticks) at full speed; 0 is a detent: a turn stops there for a moment
+  (0.4 s when you come in slowly, 0.15 s when fast), then goes on past it if you keep turning. A change is heard at
+  the next Sync step. Saved with the preset; 0 is stock.
 - **Region on Clip pads**: a "Region" row on a Clip pad's Pos tab, before Slip: Auto, File or Loop. Loop plays only the
   pad's loop (Loop Start to Loop End, set in Sample mode or read from the WAV's own loop) as if it were the whole file,
   so a loop cut from a longer recording needs no Trim. Auto, the default, does that when the pad has a loop (its loop

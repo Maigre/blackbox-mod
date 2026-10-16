@@ -50,32 +50,35 @@ their defaults the pad plays exactly as stock (bit for bit, under emulation).
 - **Display.** The value is beats.ticks, at 960 ticks to a beat, and the ticks print 0..959 in three digits. So
   `+1.500` is one beat and 500 ticks (1.52 beats), not one and a half. At 120 BPM one tick is 25 samples (0.52 ms)
   and a 1/64 is 60 ticks.
-- **Knob feel** (v2, 37.2.1; the same code on the Pos tab and on the Waveform's BL: both turn through the one
-  type-1 turn path, `clipwin_turn`). The tiers go by the stock accelerator's speed m, 1..6 (about 8/7 × the counts
-  per ms over the last 8 events). Every number is a `#define` at the top of the knob section in `src/clipwin_b2.c`
-  (`cw_turn`, bank 2 since D-018: retuning means a new `BBEXTRA.BIN`, D-018 (5)):
-  - **Slow** (m < `KNOB_MEDIUM` = 3): single ticks, one per 40 counts. At speed 2 it gives one per 20 counts.
-  - **Medium** (m < `KNOB_FAST` = 5, so speeds 3 and 4, about 2.6–4.4 counts/ms): one `KNOB_STEP_MEDIUM` = 10 ticks
-    (a 1/384 note) per turn event, snapped to the 10-tick grid. From `+0.025` the first medium step lands on `+0.030`.
-  - **Fast** (m ≥ 5, the top two speeds, ≥ about 4.4 counts/ms): one 1/64 (`SLIP_GRID` = 60 ticks) per turn event,
-    snapped to the 1/64 grid. From `+0.025` the first fast step lands on `+0.060`; 10 divides 60, so a turn that
-    goes from medium to fast lands on the 1/64 grid at its first fast step.
-  - Why 10 for medium: 37.2.0d jumped from about 2 ticks an event (speed 2) straight to 60 (speed 3), the "too
-    fast". 10 makes that two smaller jumps (about ×5, then ×6); 15 (a 1/256) would make it ×7 then ×4, a bigger jump
-    out of the careful slow turn, where it is felt most. The 10s also read as round numbers (`+0.010`, `+0.020`).
+- **Knob feel** (v3, 37.3.0, hub #t-021; the same code on the Pos tab and on the Waveform's BL: both turn through the
+  one type-1 turn path, `clipwin_turn`). It goes by the stock accelerator's speed m, 1..6 (about 8/7 × the counts per
+  ms over the last 8 events). Every number is a `#define` at the top of the knob section in `src/clipwin_b2.c`
+  (`cw_turn`, bank 2 since D-018: retuning means a new `BBEXTRA.BIN`, D-018 (5)). Thomas on v2 (37.2.1d): "the detent
+  could be a bit stronger at low speed: when approaching 0 i still endup slightly on the other side", "acceleration
+  could be smoother too" (v2's tiers stepped ×3.4, ×5.7, ×1, ×6, ×1 between speeds).
+  - **One curve.** Each turn event moves the value by its counts × gain(m) (400 stepper counts a tick, the fractions
+    kept by the stepper), gain(m) = `KNOB_GAIN` × (`KNOB_GAIN_STEP` / 256)^(m − 1) = 10 × 1.83^(m − 1). Fitted to the
+    bench's knob log (`/data/dev/gate3/knob-log-1.txt`, Gate 3 finding 1: events about 13 ms apart, median counts an
+    event by speed 21, 35, 45, 63, 80, 116): at those medians it moves 0.5, 1.6, 3.8, 9.7, 22.5 and 60 ticks an event,
+    ×2.3 to ×3.1 a speed. Speed 1 keeps v2's single ticks (one per 40 counts); speed 6 is a 1/64 an event.
+  - **The 1/64 grid at the top speed only** (`KNOB_TOP` = 6): there the move is rounded to the 1/64 (`SLIP_GRID` =
+    60 ticks), at least one 1/64 in the turn's direction, so round values are easy to hit at speed. From `+0.025` the
+    first top-speed event lands on `+0.060`. Below it nothing snaps.
   - **Zero is a detent, not a wall.** A turn that reaches or crosses 0 stops on `+0.000`. If the same turn goes on,
-    it passes 0 `ZERO_DETENT_MS` = 150 ms after it **arrived** there, at its own speed: the pause is counted from the
-    arrival, not from the last event, so a steady turn always gets through. Turning the other way leaves 0 at once,
-    and so does a turn that starts from 0 at rest (more than 150 ms after it arrived). In 37.2.0d each event of the
-    same turn less than 250 ms after the last renewed the hold, so a continuous turn never passed 0 (Thomas, on the
-    unit: "blocking at 0 is not great").
-  - The rule is in time, not counts: the same felt pause whatever the speed, and it needs no counts per revolution
-    (still unmeasured). A counts rule would hold a slow turn longer than a fast one.
-  - On a reversal the stock ring's sum of signed counts drops, so the first event back reads a tier lower (fast →
-    medium, medium → slow). That is stock's accelerator, kept.
+    it passes 0 a hold after it **arrived** there, at its own speed: the hold is counted from the arrival, not from
+    the last event, so a steady turn always gets through. The hold is `ZERO_DETENT_SLOW_MS` = 400 ms when the turn
+    arrived at speed `KNOB_DETENT_SLOW` = 2 or under, `ZERO_DETENT_MS` = 150 ms when faster. At speeds 1 and 2 the
+    knob moves 40 to 120 ticks a second, and a hand that sees 0 needs about a quarter of a second to stop: v2's 150 ms
+    let it run 5 to 15 ticks past ("slightly on the other side"). A fast sweep through 0 is meant to pass, so it keeps
+    150 ms. Turning the other way leaves 0 at once, and so does a turn that starts from 0 at rest (after the hold).
+  - Why a hold in time and not in counts: a counts hold (about 650 counts: ~400 ms at speed 1, 240 ms at speed 2,
+    85 ms at speed 6 by the log) would also hold a deliberate turn out of 0 from rest, and the counts per revolution
+    are still unmeasured.
+  - On a reversal the stock ring's sum of signed counts drops, so the first event back reads a lower speed. That is
+    stock's accelerator, kept.
   - It clamps at ±4.000.
-  - Each event leaves its counts and its speed in `cw_bank` (`0x720`): `bbusb.py knob` shows which speeds a hand
-    makes on the unit.
+  - Each event leaves its counts and its speed in `cw_bank` (`0x720`), and an arrival whether it was slow (`0x4BD`):
+    `bbusb.py knob` shows which speeds a hand makes on the unit, and each arrival's hold.
 - **When a change is heard.** At the next Sync step, through stock's crossfade, with no added silence. A recorded pad
   defaults to Sync 1/16, so that is within a sixteenth. A launch that is waiting for its Quant point still starts on
   its bar, and it plays the new Slip from its first sample. On Sync None, a change waits for the clip's restart.
@@ -220,8 +223,8 @@ loop with no Trim.
      to Loop Start/End, and press Trigger until the turnaround is clean. Then set Pad Mode → Clip with Region Auto:
      the loop comes along, because Sample → Clip keeps it. Do not go back to Sample mode afterwards: stock clears the
      loop points on Clip → Sample.
-6. **Slip.** Use Waveform BL, or Pos Slip. Turn fast (1/64 steps) to get close to the metronome, then slower (10-tick
-   steps, then single ticks) until the hits sit. It stops on 0 for 0.15 s on the way, then goes on if you keep
+6. **Slip.** Use Waveform BL, or Pos Slip. Turn fast (1/64 steps) to get close to the metronome, then slower (down to
+   single ticks) until the hits sit. It stops on 0 on the way (0.4 s if you come in slowly), then goes on if you keep
    turning.
 7. **Refine, if needed.**
    - Move TL/TR again. A change is heard at the next wrap.
@@ -270,7 +273,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H3′ | `0x08066FAC` (render, the synced wrap) | `bl 0x08064A94` recompute | `clipwin_wrap_b` (r2 = sp + 0x58, the next pass's tick) → `clipwin_wrap(pad, clock, t)` | the recompute with this pad marked wrapping (it adopts); put a grid-moving region back until a wrap on its grid (`cw_hold`) |
 | H3′ | `0x08066E9E` (render, the unsynced wrap) | `bl 0x08064A94` | `clipwin_wrap_free_b` (r2 = 0) | the same, no grid check |
 | F | `0x080B0746` (set value) and `0x080B0E18` (type-1 turn) | `bl 0x080B0528` formatter | `clipwin_format(knob)` | Slip's beats.ticks text (`cw_text`; type 1 or 9, id `0x1C9`, not frozen) |
-| K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob (`cw_turn`): slow ticks, medium 10-tick grid, fast 1/64 grid, a detent on 0 |
+| K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob (`cw_turn`): one gain curve by the speed, the 1/64 grid at the top speed, a detent on 0 held longer after a slow arrival |
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
@@ -290,10 +293,11 @@ knob, no bracket. The Waveform still binds its four rows (TL and TR are stock's 
 ### 3.3 State: `cw_bank`
 
 The bank lives in SDRAM at `master_block() + 0x83900` (`PRISM_BYTES 0x56800 + 0x2D100`), with `0x800` reserved and
-`0x784` used. The layout is in `src/clipwin.h` and the magic is `CWN7`. The magic history: `CWN1` was 37.1.x, `CWN2`
+`0x784` used. The layout is in `src/clipwin.h` and the magic is `CWN8`. The magic history: `CWN1` was 37.1.x, `CWN2`
 the stale-latch fix (the latch's `len`), `CWN3` the Region step, `CWN4` arrived with Loop Len, and `CWN5` with the
 knob's v2 (37.2.1: the bench fields at `0x720`, `zero_hold` gone), `CWN6` with Loop Len's settle (`llv`, `llc`,
-37.3.0), `CWN7` with the Waveform's file length (`flen`). (On `feat/region`,
+37.3.0), `CWN7` with the Waveform's file length (`flen`), `CWN8` with the knob's v3 (`zero_slow` at `0x4BD`). (On
+`feat/region`,
 without the fix, `CWN2`/`CWN3` were Region/Loop Len and the bank used `0x620`.) When the magic is wrong the bank is
 cleared whole, with a word loop, and the magic set. `master_alloc` clears the magic at every boot, because SDRAM keeps
 its contents through a reset. If there is no block, or no matching bank 2 (`bank()` asks `b2_live()` first, and
@@ -309,7 +313,7 @@ exclusive access anywhere (D-013).
 | `0x098` | `{i32 rs, vlen, delta, len} latch[16][4]` | per segment slot: the region (or the file) and the shift, frames; the file length it was made for |
 | `0x498` | `u8 h1[16]` | bit k: slot k was made through H1, not H1′ |
 | `0x4A8` | `u8 hinted[16]` | bit k: H2 has hinted `rs` for this slot's crossing |
-| `0x4B8` | `u32 zero_at; i8 zero_dir` (`0x4BD` free) | the Slip knob's detent: when a turn last arrived on 0, and its direction |
+| `0x4B8` | `u32 zero_at; i8 zero_dir; u8 zero_slow` | the Slip knob's detent: when a turn last arrived on 0, its direction, and whether it came slowly (the long hold) |
 | `0x4BE` | `u8 wrap` | 1 + the pad whose wrap recompute is running (`clipwin_wrap`) |
 | `0x4C0` | `{i32 rs, vlen} region[16]` | the region each pad plays this pass; `vlen` 0 = the whole file |
 | `0x540` | `i32 good[16][2]` | the last loop points from the app's store that made sense (fallback source) |
@@ -442,14 +446,17 @@ active, not done and has delay > 0 is marked done. The exception is a slot with 
 launch would sound it at once, off its bar. `cw_drop` returns those slots that H1 made, and `clipwin_tick` latches
 them again in place (`cw_latch` with pos −1) and prefetches there.
 
-**The Slip knob.** The stepper has 400 counts per step for type 1, and the stock accelerator speed is m (1..6).
+**The Slip knob** (v3). The stepper has 400 counts per step for type 1, and the stock accelerator speed is m (1..6).
 
-- First, the detent: on 0 (v = 0), an event in `zero_dir` less than `ZERO_DETENT_MS` after `zero_at` is dropped.
-- m < `KNOB_MEDIUM`: it adds `counts × 10 × m`, unless that would reach or cross 0, in which case the target is 0.
-- m < `KNOB_FAST`: the target is the next multiple of `KNOB_STEP_MEDIUM` in the turn's direction, or 0 if that
-  crosses it.
-- m ≥ `KNOB_FAST`: the same on the 1/64 grid (`SLIP_GRID`).
-- A target of 0 reached from another value is an arrival: `zero_at` = now, `zero_dir` = the direction.
+- First, the detent: on 0 (v = 0), an event in `zero_dir` less than the hold after `zero_at` is dropped; the hold is
+  `ZERO_DETENT_SLOW_MS` if `zero_slow`, else `ZERO_DETENT_MS`.
+- The move: `a = counts × g / 256`, `g` = `KNOB_GAIN` × 256 times `KNOB_GAIN_STEP` / 256 for each speed above 1
+  (integer, as `cw_turn` computes it; 10, 18.3, 33.6, 61.5, 112.6, 206.4 a count).
+- m < `KNOB_TOP`: it adds `a`, unless that would reach or cross 0, in which case the target is 0.
+- m ≥ `KNOB_TOP`: the target is `v + a / 400` rounded to the nearest 1/64 (half away from 0), at least one 1/64 in
+  the turn's direction, or 0 if that crosses it.
+- A target of 0 reached from another value is an arrival: `zero_at` = now, `zero_dir` = the direction, `zero_slow` =
+  m ≤ `KNOB_DETENT_SLOW`.
 - The value is set by parking the accumulator mid-step on the target: `(target − start) × step + step/2 − acc`.
 
 ### 3.5 Bank 2
@@ -468,7 +475,7 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 | `cw_slice` | H1′ | clear slot k's bits |
 | `cw_slot`, `cw_map` | H2 | the slot the reader's fraction belongs to and its latch; the real position and the one seam hint per crossing segment |
 | `cw_tick`, `cw_looplen`, `cw_drop` | the poll | the clamps, the pad check, Loop Len's take and its Sync message (R6), the guarded drop and the launches to latch again |
-| `cw_turn` | K | the knob's tiers and its detent (`KNOB_*`, `SLIP_GRID`, `ZERO_DETENT_MS` live here) |
+| `cw_turn` | K | the knob's gain curve and its detent (`KNOB_*`, `SLIP_GRID`, `ZERO_DETENT_*` live here) |
 | `cw_text` | F | `+b.ttt`, as `"%c%d.%03d"` would print it |
 | `cw_bracket` | W | Region's rule over the view's store, the bracket's fields and dirty flag |
 
@@ -633,7 +640,7 @@ frame it plays and the gain it plays at.
 | 6 gating | Slicer with and without markers, Sync Slice + markers, cell `0x401`, `fw_src_len` 0 / sentinel, no SDRAM | plays exactly as with the hooks out, no latch |
 | 7 reader | seam reads mono and stereo, rate 1 / 0.7 / 2.3 / 8, a 40-frame file; every machine mode at, before and after the seam; the filter object's rate | bit for bit what the stock reader (or `filter.c`'s `clip_read`) makes of the file turned circular |
 | 8 rate, stereo | a 44.1 kHz file, stereo 48 and 44.1 kHz, Pitch +7 | every sample stock + slip_f, the same gain |
-| 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path: each speed 1..6 and its tier's step, the grid snaps, the clamps, the detent (held for the events under `ZERO_DETENT_MS` after the arrival, a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest, medium and slow arrivals), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against 37.2.0d's knob 23 of these fail (the wall: a steady stream never passed 0) |
+| 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path (v3): the knob log's median counts at each speed 1..6 (the stepper fed counts × gain, the top speed onto the 1/64 grid; ticks an event 0.5, 1.6, 3.8, 9.7, 22.5, 60, ×2.3 to ×3.2 a speed), the snap at the top speed only, the clamps, the detent (a fast arrival held `ZERO_DETENT_MS`, slow ones at speeds 1 and 2 held `ZERO_DETENT_SLOW_MS`, speed 3 not; a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against v2 (37.2.1d) the curve's and the slow detent's checks fail (×5.7 and ×1 steps; 150 ms after a slow arrival) |
 | 10 Region | the rule over 20 cases (Loop Mode not asked: finding 7); each H3 site; adoption only at the wrap; the wrap-grid hold, and only for a wrap that can come (a 0-tick clip, passes that never meet the new grid: finding 5; a region grown from 3/8 beat to 2 beats while it plays); the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
 | 11 Loop Len | the settle (finding 8: Off → 1/16 → 1/8 → 1/4 at speed 3 takes only 1/4, on the beat then playing, Sync not forced, and so does a value every 149 or 171 ms, speed 3's slow end and speed 2's fast half, at four poll phases; a slow step-through takes each value; Off at once; the 37.2.x runs written a settle earlier, so they take where they took); `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
 | 12 Waveform | the length (a view holding another pad's 192 000 for a 336 359-frame pad: TR's range, the bracket, the waveform's clamp, the overview; the waveform's real tick following the playhead past 192 000), the bind order, the four rows, names and texts, the lines' width (the real redraw, the knob's set-rect on the constructor's rects, the text draw's measure: each line in its box, clear of its neighbour), the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
@@ -718,7 +725,7 @@ loop point is the mod's.
 | 1 | reference | A alone → `a.wav`; then B alone on Region Auto (= File), Slip 0, Loop Len Off → `b_file.wav` | sounds as stock; `shift a.wav b_file.wav` gives the Resam's own offset (note it; every check below is against `b_file.wav`) |
 | 2 | Region by the knobs | Region **Loop**; Waveform TL Loop Start to L ≈ 6 000, then TR Loop End to L + 96 000 (one bar; the knob shows frames and moves in whole steps from its range's start, so zoom in until it lands; note L) → `region.wav` | the bracket shows at once and is heard from the next wrap; `shift b_file.wav region.wav` **−L** (−6 000 = −240.0 ticks for L = 6 000); peek region[q] = (L, 96 000); no click, flam or gap at the loop point |
 | 3 | Slip on the region | Slip `+0.060` → `rslip1.wav`; `−0.120` → `rslip2.wav` | **−L − 1 500** and **−L + 3 000** (−7 500 and −3 000 for L = 6 000; the D-016 sign: `+` comes earlier); the seam now falls mid-step (Sync 1/4): still no click |
-| 4 | Slip knob feel (v2, 37.2.1d) | turn BL slowly, a bit faster, then fast, then through 0 without stopping; the same on the Pos tab; `bbusb.py knob 20` while turning | slow = single ticks; medium = 10-tick steps (`0.010`); fast = 1/64 steps (`0.060`); a turn through 0 stops on `+0.000` about 0.15 s, then goes on; the speeds `knob` reports for each way of turning (to tune `KNOB_MEDIUM` / `KNOB_FAST`) |
+| 4 | Slip knob feel (v3, 37.3.0; Gate 3b) | turn BL slowly, a bit faster, then fast, then through 0 without stopping, slowly and fast; the same on the Pos tab; `bbusb.py knob 20` while turning | slow = single ticks, and the speed grows with the turn with no step you can feel; full speed = 1/64 steps (`0.060`); a slow turn into 0 stops on `+0.000` about 0.4 s (`knob` says "slow"), a fast one about 0.15 s, then goes on; the speeds `knob` reports (to tune `KNOB_GAIN`, `KNOB_GAIN_STEP`, `KNOB_TOP`, the two holds) |
 | 5 | Region live | Slip 0; while B plays: Region Loop → File, then File → Loop; record after each | heard at a wrap, never doubled; File: `shift` **0**; Loop again: **−L** |
 | 6 | Auto via Sample mode | B to Sample (stock clears its loop), Loop Mode Forward, BL/BR Loop Start L′ ≈ 6 000 / Loop End L′ + 96 000, back to Clip (Region **Auto**; check Beat Count Auto, Quant, Sync, Toggle again) → `auto.wav` | the bracket is there; `shift` **−L′**. This is the unit's Pad Mode path into the class-H object, which emulation did not run |
 | 7 | Loop Len 1/4 | Region File, Slip 0; engage 1/4 while beat 3 plays (count with the metronome) → `ll4.wav` | beat 3 on every beat, in time; peek ll[q] = 3, origin[q] = 1 920 or 5 760 (bar 1 or 2 of the clip); `forced` 0, pad `+0x220` = 960; `shift b_file.wav ll4.wav` **0** (the window is on the grid; this reading holds for a loop whose beats share a grid, as a drum loop's do) |

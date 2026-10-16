@@ -297,6 +297,11 @@ the row negated, lasted one Gate 2 session.)
   feature doc
   (`notes/features/clip-window.md` §2) has the reasons. Each event's counts and speed are left in `cw_bank + 0x720`
   for `bbusb.py knob`.
+  *v3 (37.3.0, hub #t-021, after Thomas tried 37.2.1d: "the detent could be a bit stronger at low speed", "acceleration
+  could be smoother too"):* one curve, every event `counts × gain(m)` stepper counts with `gain` geometric in m
+  (10 × 1.83^(m − 1), fitted to the Gate 3 knob log's median counts by speed), the 1/64 grid at the top speed only;
+  the detent holds 400 ms after a slow arrival (speed ≤ 2), 150 ms after a faster one (`zero_slow`, `cw_bank +
+  0x4BD`).
 
 ### 2.8 What v1 leaves stock
 

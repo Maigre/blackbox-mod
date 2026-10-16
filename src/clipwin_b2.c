@@ -429,33 +429,44 @@ int cw_map(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t pos,
 
 /* ---- the Slip knob ---- */
 
-/* clipwin_turn, the type-1 turn of the Slip knob (Thomas, after Gate 2: "tricky, especially to set back to 0"; v2 after
-   37.2.0d: "blocking at 0 is not great ... accelerator is too fast it seems"), by the stock accelerator's speed m
-   (fw_ring_speed: 1 .. 6, about 8/7 x the counts per ms over the last 8 events):
-     slow     m < KNOB_MEDIUM: single ticks, 40 counts a tick, twice that rate at speed 2 (the stepper's own
-              accumulator does the rest);
-     medium   m < KNOB_FAST: one KNOB_STEP_MEDIUM (10 ticks, a 1/384 note) a turn event, onto its own grid;
-     fast     m >= KNOB_FAST: one SLIP_GRID (60 ticks, a 1/64 note) a turn event, onto the 1/64 grid: round values are
-              easy to hit. KNOB_STEP_MEDIUM divides SLIP_GRID, so the first fast step from a medium value is on it;
-     zero     a detent, not a wall: a move that reaches or crosses 0 stops on it, and the same turn going on stays
-              there until ZERO_DETENT_MS after it ARRIVED (from the arrival, not from the last event: a turn that goes
-              on passes 0 after that pause, however steadily it turns), then moves on at its own speed. The other
-              direction leaves 0 at once, and so does a turn that starts from 0 at rest. A rule in time, not counts:
-              the same felt pause whatever the speed, and no counts per revolution (still unmeasured) in it.
+/* clipwin_turn, the type-1 turn of the Slip knob, v3 (Thomas, after Gate 2: "tricky, especially to set back to 0";
+   after 37.2.0d: "blocking at 0 is not great ... accelerator is too fast it seems"; on 37.2.1d's v2, hub #t-021: "the
+   detent could be a bit stronger at low speed: when approaching 0 i still endup slightly on the other side",
+   "acceleration could be smoother too"), by the stock accelerator's speed m (fw_ring_speed: 1 .. 6, about 8/7 x the
+   counts per ms over the last 8 events):
+     the move  every turn event hands the stepper counts x gain(m) (400 stepper counts a tick; its own accumulator
+               keeps the fractions), gain(m) = KNOB_GAIN x (KNOB_GAIN_STEP / 256)^(m - 1): one curve, no tiers. Fitted
+               to the bench's knob log (notes/bench/2026-10-16-gate3-part1.md, finding 1: events ~13 ms apart, median
+               counts an event by speed 21, 35, 45, 63, 80, 116): at those medians 0.5, 1.6, 3.8, 9.7, 22.5 and 60 ticks
+               an event, x 2.3 .. 3.1 a speed (v2's tiers: x 3.4, 5.7, 1, 6, 1). Speed 1 keeps v2's single ticks, 40
+               counts a tick; speed 6 is a 1/64 an event;
+     the top   m >= KNOB_TOP: the move rounded to the 1/64 grid (SLIP_GRID, 60 ticks), at least one 1/64 in the turn's
+               way: round values are easy to hit at speed; below it nothing snaps;
+     zero      a detent, not a wall: a move that reaches or crosses 0 stops on it, and the same turn going on stays
+               there until the hold has passed since it ARRIVED (a turn that goes on passes 0 after that pause, however
+               steadily it turns), then moves on at its own speed. The hold is ZERO_DETENT_SLOW_MS (400) for a turn
+               that arrived at speed KNOB_DETENT_SLOW (2) or under, ZERO_DETENT_MS (150) for a faster one: at speeds 1
+               and 2 the knob moves 40 to 120 ticks a second, and a hand that sees 0 needs about a quarter of a second
+               to stop, so 150 ms let it run 5 to 15 ticks past (Thomas's "slightly on the other side"); a fast sweep
+               through 0 is meant to pass. A hold in counts was the other way (the knob log: 650 counts would be
+               ~400 ms at speed 1, 240 at speed 2, 85 at speed 6), but it would hold a deliberate turn out of 0 from
+               rest too, and the counts per revolution are still unmeasured. The other direction leaves 0 at once, and
+               so does a turn that starts from 0 at rest (after the hold).
    The stepper (A3): +0x00 i64 accumulated counts, +0x08 counts per step (400 for type 1), +0x0c index, +0x18 start;
    index = floor(acc / step) with a step/3 hysteresis, so a value is set by parking acc mid-step. Each event leaves
    its counts and speed in cw_bank for a bench read (bbusb.py knob): which speeds a hand makes on the unit (b = 0, no
    SDRAM block: no detent, nothing left). Returns 0 for no move (in the detent), else 1 with *add = the counts to hand
    the stepper (fw_stepper_add, in clipwin.c).
-   Tuning, one number each: the stop on 0 too long or too short = ZERO_DETENT_MS; the 10-tick steps come too soon or
-   too late = KNOB_MEDIUM; the 1/64 steps too soon = KNOB_FAST (6: the top speed only); the medium steps too fine =
-   KNOB_STEP_MEDIUM (15, a 1/256 note; 20 and 30 also divide 60). test_clipwin.py reads them from here. */
-#define KNOB_MEDIUM      3           /* the speed (1 .. 6) from which a turn event is one medium step, */
-#define KNOB_FAST        5           /* ...and from which one 1/64 */
-#define KNOB_STEP_MEDIUM 10          /* ticks: a 1/384 note; it must divide SLIP_GRID */
-#define SLIP_GRID        60          /* a 1/64 note */
-#define ZERO_DETENT_MS   150         /* how long a turn that arrived on 0 is held there */
-_Static_assert(SLIP_GRID % KNOB_STEP_MEDIUM == 0, "a medium step must divide the 1/64 grid");
+   Tuning, one number each: speed 1 too fast or slow = KNOB_GAIN; the climb too steep or flat = KNOB_GAIN_STEP (469:
+   10 -> 206 at speed 6; 256 = no acceleration); the 1/64 snap from a lower speed = KNOB_TOP; the stop on 0 =
+   ZERO_DETENT_SLOW_MS / ZERO_DETENT_MS, and which arrivals are slow = KNOB_DETENT_SLOW. test_clipwin.py reads them. */
+#define KNOB_GAIN           10       /* speed 1: stepper counts a knob count (400 a tick): a tick per 40 counts */
+#define KNOB_GAIN_STEP      469      /* x 1/256 a speed above 1 (x 1.83): 206 at speed 6, a 1/64 at its median counts */
+#define KNOB_TOP            6        /* the speed that snaps to the 1/64 grid */
+#define SLIP_GRID           60       /* a 1/64 note */
+#define ZERO_DETENT_MS      150      /* how long a fast turn that arrived on 0 is held there, */
+#define ZERO_DETENT_SLOW_MS 400      /* ...a slow one, */
+#define KNOB_DETENT_SLOW    2        /* ...one that arrived at this speed or under */
 
 static int32_t grid_next(int32_t v, int dir, int32_t grid)
 {
@@ -474,11 +485,14 @@ int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, u
     if (b) {
         b->knob_counts = (int16_t)counts;
         b->knob_speed = (uint8_t)m;
-        if (!v && dir == b->zero_dir && now - b->zero_at < ZERO_DETENT_MS)
+        if (!v && dir == b->zero_dir && now - b->zero_at < (b->zero_slow ? ZERO_DETENT_SLOW_MS : ZERO_DETENT_MS))
             return 0;                                    /* in the detent: the turn that arrived, too soon */
     }
-    if (m < KNOB_MEDIUM) {
-        int32_t a = counts * 10 * (int32_t)m;
+    int32_t g = KNOB_GAIN << 8;                          /* gain(m) x 256 */
+    for (unsigned i = 1; i < m && i < KNOB_TOP; i++)
+        g = g * KNOB_GAIN_STEP >> 8;
+    int32_t a = counts * g / 256;                        /* |counts| < 2^15: no overflow */
+    if (m < KNOB_TOP) {
         target = (acc + a) / step + start;               /* where the stepper would land (acc + a >= 0 here) */
         if (acc + a < 0 || !((v > 0 && target <= 0) || (v < 0 && target >= 0))) {
             *add = a;                                    /* no zero on the way: the stepper's own way */
@@ -486,7 +500,10 @@ int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, u
         }
         target = 0;
     } else {
-        target = grid_next(v, dir, m < KNOB_FAST ? KNOB_STEP_MEDIUM : SLIP_GRID);
+        int32_t to = v + a / step;                       /* the move, ticks, rounded to the 1/64 grid */
+        target = (to + (to < 0 ? -SLIP_GRID / 2 : SLIP_GRID / 2)) / SLIP_GRID * SLIP_GRID;
+        if (dir > 0 ? target <= v : target >= v)
+            target = grid_next(v, dir, SLIP_GRID);       /* at least one 1/64 its way */
         if ((v > 0 && target < 0) || (v < 0 && target > 0))
             target = 0;
     }
@@ -494,6 +511,7 @@ int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, u
     if (target == 0 && v != 0 && b) {
         b->zero_dir = (int8_t)dir;                       /* arrived: the detent starts now */
         b->zero_at = now;
+        b->zero_slow = m <= KNOB_DETENT_SLOW;
     }
     *add = (target - start) * step + step / 2 - acc;     /* park mid-step on the target */
     return 1;

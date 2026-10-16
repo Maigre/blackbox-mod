@@ -34,8 +34,9 @@
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
  * 480 ticks), + = ahead of the beat, - = behind (a CDJ jog: clockwise speeds up, counter-clockwise slows down), per
- * pad, saved with the preset as "clipslip". The knob: single ticks slow, 10-tick steps faster, 1/64 steps at the
- * top speeds, and a detent on 0: a turn stops there, and passes after a short pause (clipwin_turn).
+ * pad, saved with the preset as "clipslip". The knob: single ticks slow, faster as it turns faster (one curve), 1/64
+ * steps at the top speed, and a detent on 0: a turn stops there, and passes after a pause, longer when it came
+ * slowly (clipwin_turn).
  *
  * Region (notes/re/README.md section 3, a2, x3): a Clip pad plays its Sample-mode loop [Loop Start, Loop End) instead
  * of the whole file - no Trim. Stock keeps those points in Clip mode, in the cell's class-H object (pad + 8), so they
@@ -403,7 +404,7 @@ void clipwin_format(uint8_t *knob)
 
 /* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde), which every screen's turn of a
    type-1 knob goes through: the Pos page's list and the Clip-mode Waveform screen's BL are the same code. For the
-   Slip knob: the event goes into the stock accelerator's ring, and cw_turn (its tiers by the speed, the detent on 0;
+   Slip knob: the event goes into the stock accelerator's ring, and cw_turn (its gain by the speed, the detent on 0;
    clipwin_b2.c has the rule and its numbers) says what the stepper gets. Without bank 2, stock's stepper as it was
    called. */
 void clipwin_turn(uint8_t *stepper, int counts)
