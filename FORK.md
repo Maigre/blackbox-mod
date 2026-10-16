@@ -18,7 +18,8 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 ## Versions
 
 `37.<feature step>.<build>` on the Tools page; dev builds carry a `d` (`37.1.1d`) and add the USB debug peek/poke
-(src/usbdev.c), never in a release. `src/release.h` holds both names.
+(src/usbdev.c), never in a release. `src/release.h` holds both names. Release notes, with each release's sha256:
+[`notes/releases/`](notes/releases/37.2.0.md).
 
 | version | adds | where |
 |---|---|---|
