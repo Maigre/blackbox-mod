@@ -80,7 +80,8 @@ From 3.1.n and earlier:
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
-  waveform shows the unslipped position.
+  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped for up to two Sync
+  steps, then slipped.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 

@@ -23,6 +23,9 @@
  *                            pad's pending segments done so stock re-makes them, and H1 re-latches, in the same render
  * Stock's timing, crossfades, Sync re-grid, wrap, one-shot and launch logic are untouched, and with Slip 0 every hook
  * passes through: bit-identical to stock. A Slip change is heard at the next Sync step, through stock's crossfade.
+ * A new file under a playing pad (a load, the browser's pre-listen into the pad, a take landing in it): stock does not
+ * restart the voice; its segments read on at their positions in the new file. A segment latched for another length
+ * reads as stock does (H2), and the next one made latches the new file.
  * Not covered: Slicer pads and Clip pads on Sync = Slice with markers (their segments start in H1': no shift); the
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
@@ -107,6 +110,7 @@ typedef void (*stepper_fn)(void *stepper, int counts);
 
 struct cw_latch {
     int32_t rs, vlen, delta;         /* the region (v1: the whole file) and the shift, frames */
+    int32_t len;                     /* fw_src_len when latched: the file the region and the shift were made for */
 };
 
 struct cw_bank {
@@ -121,7 +125,7 @@ struct cw_bank {
     int8_t zero_dir;                 /* ...and the direction that turn was going */
     uint8_t zero_hold;               /* 1 while a turn that reached 0 goes on */
 };
-#define CW_MAGIC  0x43574e31u        /* "CWN1": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e32u        /* "CWN2": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
@@ -212,6 +216,7 @@ static int32_t latch(struct cw_bank *b, int q, unsigned k, uint8_t *pad, void *s
         l->rs = 0;
         l->vlen = len;
         l->delta = f;
+        l->len = len;
         b->valid[q] |= (uint8_t)(1u << k);
         int32_t start = (int32_t)*(int64_t *)(pad + SEG0 + k * SEG_SIZE + SEG_POS);
         int32_t real = fold(fold(start, len) + f, len) - 8;
@@ -292,9 +297,16 @@ int clipwin_read(float rate, uint8_t *pad, uint8_t *filter, int32_t pos, int32_t
     if (!b || q < 0 || off % SEG_SIZE || k > 3 || !(b->valid[q] & (1u << k)))
         return clip_read(rate, pad, filter, pos, pos_hi, n, used, frac, scratch, out, result);
     const struct cw_latch *l = &b->latch[q][k];
+    void *src = *(void **)(pad + PAD_SOURCE);
+    /* The file changed under the segment since H1 (notes/re/x3 section 4: the slot closes, fw_src_len answers 0, then
+       the new file's length). Stock reads on at the segment's position in the new file; the latch's region and shift
+       belong to the old length and could map past the new end. Read as stock does while the length differs: the next
+       segment made latches the new file, and a file of the latched length (back after a close) maps as before. Not
+       the source pointer: the key map hands the freed asset entry out again, so a load often keeps it. */
+    if (fw_src_len(src) != l->len)
+        return clip_read(rate, pad, filter, pos, pos_hi, n, used, frac, scratch, out, result);
     int32_t rs = l->rs, vlen = l->vlen;
     int32_t real = rs + fold(fold(pos, vlen) + l->delta, vlen);
-    void *src = *(void **)(pad + PAD_SOURCE);
     /* The segment's content crosses the region end mid-segment, where stock never hints: hint rs once, as soon as
        the seam is inside the hint's sure reach (notes/re/a2: 3 blocks of 8192 frames from the hinted one). */
     if (rs + vlen - real <= 16384 && !(b->hinted[q] & (1u << k))) {
