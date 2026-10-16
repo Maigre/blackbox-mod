@@ -50,9 +50,9 @@
  * it crossfades into the next pass like any step: no notch, no gap when the region is shorter than its beats, no
  * doubling when longer; a clip of one Sync step has that step timed by the clip (H3 site 3), as stock times steps when
  * there are more. A region under half a beat on Beat Count Auto is a clip of 0 ticks: no grid, it loops on its length.
- * Setting: "Region:" Auto | File | Loop before Slip, saved as "clipregion". Auto = Loop when the pad has a loop: Loop
- * Mode on and 0 <= start < end <= length, not the whole file ([0, length - 1] or more: what a load leaves, x3 t13);
- * File = stock; Loop = the loop points whatever Loop Mode says, the whole file still File.
+ * Setting: "Region:" Auto | File | Loop before Slip, saved as "clipregion". Auto = Loop: the loop points when 0 <=
+ * start < end <= length and they are not the whole file ([0, length - 1] or more: what a load leaves, x3 t13); Sample
+ * mode's Loop Mode is not asked (Gate 3 finding 7). File = stock.
  *
  * Loop Len (notes/re/README.md section 3, a2 k_looplen; D-004): only a window of W ticks loops, on the clock, where the
  * music was when it was engaged (the KP3's loop). Stock keeps making its steps on its grid; each segment H1 makes is
@@ -141,8 +141,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define P_SLIP      0x1c9
 #define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
-#define P_LOOP_MODE 0x8e             /* stock's Sample-mode loop: Loop Mode (0 None), Loop Start, Loop End, frames */
-#define P_LOOP_START 0x91
+#define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
 #define TYPE_INT    1
 #define APP_PADS    (0x24020088u + 0x1840u)   /* the app's pad stores: + row * 0xf0 + col * 0x30 */
@@ -224,18 +223,18 @@ static const void *pad_store(unsigned q)
    the real length, clipwin_read folds. A playing pad takes its region only at its wrap; a stopped one at its next
    recompute, which nothing triggers when only the Region row or the loop points change: at the latest the one before
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
-   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the four store rows the region comes
+   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the three store rows the region comes
    from. */
-static const uint16_t region_rows[4] = {P_REGION, P_LOOP_START, P_LOOP_END, P_LOOP_MODE};   /* CW_SET_* order */
+static const uint16_t region_rows[3] = {P_REGION, P_LOOP_START, P_LOOP_END};   /* CW_SET_* order */
 
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
-    int32_t len = fw_src_len(src), set[4];
+    int32_t len = fw_src_len(src), set[3];
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     if (!b)
         return len;
-    for (unsigned i = 0; site == 1 && i < 4; i++)
+    for (unsigned i = 0; site == 1 && i < 3; i++)
         set[i] = fw_setting(pad_store((unsigned)q), region_rows[i]);
     return cw_len(b, (unsigned)q, pad, site, clip, len, set);
 }
@@ -510,7 +509,7 @@ static void clip_view(uint8_t *view, int step, int was)
     }
     /* the bracket, when Region plays the loop (cw_bracket); without bank 2 none, as stock */
     if (b2_live())
-        cw_bracket(wave, fw_setting(st, P_REGION), ls, le, fw_setting(st, P_LOOP_MODE), len, was);
+        cw_bracket(wave, fw_setting(st, P_REGION), ls, le, len, was);
 }
 
 /* Replaces bl FUN_080a52c4 @0x080a53b0, in FUN_080a53a2 (r1 = (int)zoom): every bind of the screen, every zoom change

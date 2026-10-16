@@ -1976,7 +1976,7 @@ def ulen_call(site, layer=0):
 rule = [  # Region, Loop Mode, Loop Start, Loop End -> the region (rs, vlen), or None = the whole file
     (AUTO, 1, 24000, 72000, (24000, 48000), "a loop inside the file"),
     (AUTO, 2, 10000, 30000, (10000, 20000), "Bidirect counts as a loop"),
-    (AUTO, 0, 24000, 72000, None, "Loop Mode None: no loop set"),
+    (AUTO, 0, 24000, 72000, (24000, 48000), "Loop Mode None: the loop all the same (Gate 3 finding 7)"),
     (AUTO, 1, 0, 96000, None, "[0, len) with Loop Forward: what a load leaves (x3 t13)"),
     (AUTO, 1, 0, 95999, None, "[0, len - 1]: a whole-file smpl loop"),
     (AUTO, 1, 0, 95998, (0, 95998), "[0, len - 2]"),
@@ -2006,8 +2006,8 @@ for reg, mode, ls, le, want, what in rule:
     if not ok:
         bad.append((what, got, r_, want))
 check(f"the Auto rule and File / Loop over {len(rule)} loop-point cases (len 96 000; the class-H object's Loop Start +0xfc, "
-      "Loop End +0x100, Loop Mode +0x108): Auto = Loop iff Loop Mode on and 0 <= start < end <= len and not [0, >= len - 1]; "
-      "Loop = any such pair but the whole file ([0, >= len - 1] too); the recompute's length is the region's", not bad, bad)
+      "Loop End +0x100, Loop Mode +0x108): Auto = Loop = any 0 <= start < end <= len but the whole file ([0, >= len - 1]), "
+      "Loop Mode not asked; the recompute's length is the region's", not bad, bad)
 store(u, UQ, {0x4: 500, P_REGION: AUTO})
 h_loop(24000, 72000, 1)
 rows = []
@@ -2137,7 +2137,8 @@ check("H3' and the wrap grid: a new region whose pass would not start on its own
                "the unsynced wrap (no tick)": ((0, 32000), (UQ + 1,)), "no grid (+0x230 = 0)": ((0, 32000), (UQ + 1,)),
                "a tick past 2^32": ((0, 32000), (UQ + 1,))}, rows)
 u.uc.mem_write(UL + 0x230, bytes(8))
-# the source: the class-H object when the link holds, else the app's store (0x8e, 0x91, 0x92) with the last good pair
+# the source: the class-H object when the link holds, else the app's store (0x91, 0x92) with the last good pair; Loop
+# Mode (0x8e) is not read (finding 7): the fourth pair, with Loop Mode None, is a region all the same
 rows = []
 for what, link in (("no class-H object (pad + 8 = 0)", 0), ("an object of another class", "class"), ("another cell's", "cell")):
     u.w32(UL + 8, UH if link else 0)
@@ -2156,10 +2157,10 @@ for what, link in (("no class-H object (pad + 8 = 0)", 0), ("an object of anothe
     u.uc.mem_write(UH + 4, b"\x48")
     u.w32(UH + 0x18, 0x102)
 u.w32(UL + 8, UH)
-want = [(10000, 20000), (10000, 20000), (0, 30000), (10000, 0), (0, 64000)]
+want = [(10000, 20000), (10000, 20000), (0, 30000), (10000, 20000), (0, 64000)]
 check("no usable class-H link (none, another class, another cell): the loop from the app's store, through the settings "
       "lookup; a pair that makes no sense there (start after end; a start not stored yet, read 0) gives the last pair that "
-      "did", all(seq[:2] + seq[4:] == [want[0], want[1], want[4]] and seq[2] == want[2] and seq[3][1] == 0 for _, seq in rows),
+      "did; Loop Mode None as on", all(seq == want for _, seq in rows),
       rows)
 info("observed: a Loop Start the store does not hold yet reads 0 and makes a pair with Loop End: [0, 30 000) until it "
      "arrives (the fallback only; the class-H object has both from the same queue)")
@@ -2255,9 +2256,9 @@ for ls, le in ((0, 36000), (10000, 50000), (5000, 61000), (12345, 90000), (0, 95
 check(f"Beat Count Auto with regions of 36 000, 40 000, 56 000, 77 655 and 95 998 frames: every recompute field as stock's for "
       f"that file ({[(v, c) for v, c, _ in rows]} (frames, clip ticks))", all(x for _, _, x in rows), rows)
 
-# Auto keeps a freshly loaded Loop-Forward pad on File, and File is v1 bit for bit
+# Auto keeps a freshly loaded pad on File (its loop points the whole file, whatever Loop Mode), and File is v1 bit for bit
 for name, kw in (("Auto, [0, len) Loop Forward (what a load leaves)", dict(points=(0, 88615, 1))),
-                 ("Auto, a loop with Loop Mode None", dict(points=(24000, 72000, 0))),
+                 ("Auto, [0, len) Loop Mode None", dict(points=(0, 88615, 0))),
                  ("File, a Loop Forward loop [24 000, 72 000)", dict(points=REG, region=FILE))):
     for slip in (0, 960):
         a = scenario(frames=88615, slip=slip, cell=0x102, blocks=900, **kw)
@@ -2275,6 +2276,13 @@ a = audio(frames=96000, beats=0, points=(24000, 72000, 0), region=LOOP, cell=0x1
 n, err, bad_, gd = region_shift(ref, a, 24000, 48000, 0, wraps_at(a["rig"], 288000))
 check(f"Loop with Loop Mode None: the region all the same ({n} samples as the region alone, max error {err:.4f})",
       n > 60000 and err <= 0.02 and bad_ == 0 and gd == 0, (n, err, bad_, gd))
+# Gate 3 finding 7: a take whose loop points were moved on the Clip-mode Waveform has Sample mode's Loop Mode None (a row a
+# Clip pad never shows), and Auto stayed on File. Auto plays them now, as Loop does
+a = audio(frames=96000, beats=0, points=(24000, 72000, 0), region=AUTO, cell=0x102)
+n, err, bad_, gd = region_shift(ref, a, 24000, 48000, 0, wraps_at(a["rig"], 288000))
+check(f"Auto with Loop Mode None (finding 7): the region, as Loop plays it ({n} samples as the region alone, max error "
+      f"{err:.4f}; region {region_bank(a['rig'].m, 6)})", n > 60000 and err <= 0.02 and bad_ == 0 and gd == 0
+      and region_bank(a["rig"].m, 6) == (24000, 48000), (n, err, bad_, gd, region_bank(a["rig"].m, 6)))
 
 # the seamless wrap, proven: regions shorter and longer than their (Auto) beats, against stock playing them as files
 for ls, le, what in ((10000, 50000, "40 000 frames (1.67 beats, Auto 2: short, stock leaves a gap before each wrap)"),
@@ -3374,7 +3382,7 @@ check(f"  a zoom under one frame a pixel (0.5) steps 1 frame ({sc.knob('TL')['st
 # ---- the bracket shows what Region plays (the engine's rule, is_loop), marked dirty only when it changes
 br = Screen()
 br.open(CLIP12)
-cases = [("Region File", dict(_1c8=FILE), 0), ("Auto, Loop Mode None", dict(_1c8=AUTO, _8e=0), 0),
+cases = [("Region File", dict(_1c8=FILE), 0), ("Auto, Loop Mode None (finding 7)", dict(_1c8=AUTO, _8e=0), 1),
          ("Loop, Loop Mode None", dict(_1c8=LOOP), 1), ("Loop, the whole file [0, 192 000)", dict(_91=0, _92=192000), 0),
          ("Loop, [0, 191 999] (a whole-file smpl loop)", dict(_92=191999), 0), ("Loop, [1, 191 999)", dict(_91=1), 1),
          ("Loop, Loop End past the file", dict(_92=192001), 0), ("Loop, Loop Start = Loop End", dict(_91=50000, _92=50000), 0),

@@ -37,7 +37,6 @@
 #define H_CLASS     0x48
 #define H_LOOP_START 0xfc
 #define H_LOOP_END  0x100
-#define H_LOOP_MODE 0x108
 #define SEG0        0x30
 #define SEG_SIZE    0x70
 #define SEG_POS     0x08
@@ -107,7 +106,6 @@ int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, els
 #define CW_SET_REGION 0
 #define CW_SET_START  1
 #define CW_SET_END    2
-#define CW_SET_MODE   3
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set);
 /* H3': after the wrap's recompute, 1 = the region before it (was) is back and the pad must recompute again */
 int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const struct cw_region *was);
@@ -127,7 +125,7 @@ int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsig
 /* the Slip knob: 0 = no move, else *add for the stepper; its text (at most 13 bytes); the Waveform's bracket */
 int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, uint32_t now, int32_t *add);
 void cw_text(char *t, int v);
-void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int on, int32_t len, int was);
+void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was);
 
 /* what the cw_* functions are compiled against (no code: the compiler checks them). Changing one reprograms bank 2. */
 _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank, pad) == 0x48 &&
@@ -146,14 +144,14 @@ _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC =
                PAD_LOOP == 0x1f4 && PAD_SYNCED == 0x1f5 && PAD_LAUNCH == 0x1f8 && PAD_STEP_OUT == 0x204 &&
                PAD_WRAP_GRID == 0x230 && PAD_SLICES == 0x250 && PAD_SLICER == 0x254 && LAYER0 == 0x260 &&
                LAYER_SIZE == 0x410 &&
-               H_CLASS == 0x48 && H_LOOP_START == 0xfc && H_LOOP_END == 0x100 && H_LOOP_MODE == 0x108 &&
+               H_CLASS == 0x48 && H_LOOP_START == 0xfc && H_LOOP_END == 0x100 &&
                offsetof(struct cw_region, vlen) == 4,
                "bank 2 (the cw_* functions) is compiled against these pad, class-H and segment offsets: changing one "
                "reprograms bank 2");
 _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START == 0x18 && WAVE_DIRTY == 0x32 &&
                WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
-               CW_SET_END == 2 && CW_SET_MODE == 3,
+               CW_SET_END == 2,
                "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch) is compiled against the knob's and "
                "the waveform's fields, these settings and values, and clipwin_len's row order: changing one "
                "reprograms bank 2");

@@ -91,12 +91,14 @@ their defaults the pad plays exactly as stock (bit for bit, under emulation).
   The loop points are the same ones Sample mode uses. Stock keeps them in Clip mode, and a WAV's own `smpl` loop
   arrives in them. A loop cut from a longer recording therefore needs no Trim, and the file stays whole.
 - **The values:**
-  - **Auto** (the default, D-003) plays the loop when the pad has one: Sample mode's Loop Mode is Forward or Bidir,
-    `0 ≤ start < end ≤ length`, and the loop is not the whole file (`[0, ≥ length − 1]` is what a load leaves). Any
-    other pad plays the file. So fresh recordings and plain files play as stock.
+  - **Auto** (the default, D-003) plays the loop when the pad has one: `0 ≤ start < end ≤ length`, and the loop is
+    not the whole file (`[0, ≥ length − 1]` is what a load leaves). Any other pad plays the file. So fresh recordings
+    and plain files play as stock. Sample mode's Loop Mode is not asked (Gate 3 finding 7: a take whose points were
+    moved on the Clip-mode Waveform has Loop Mode None, a row the Clip pad never shows, and stayed on File in 37.2.x).
   - **File** always plays the whole file, as stock does.
-  - **Loop** plays the loop points whatever Loop Mode says. The whole file is still the whole file.
-  - Bidir counts as on, but the region always plays forward.
+  - **Loop** plays the loop points, the whole file still the whole file: since Auto no longer asks Loop Mode, the
+    same as Auto (kept, so presets and an explicit choice still read).
+  - The region always plays forward, whatever Loop Mode says (Bidir too).
 - **Inside the region:**
   - Beat Count Auto counts the region.
   - The Sync steps divide the region, and Slip shifts within it.
@@ -160,8 +162,8 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   and "LpLen 4 bars" fit as well.
 - **The white bracket.** It shows the loop Region plays, using the engine's own rule, as soon as you turn. A playing
   pad takes the new loop the next time its loop comes round, so while you turn, the bracket is ahead of what you hear.
-  There is no bracket (and the loop points are not heard) on Region File, or on Auto with Loop Mode None. Slice
-  markers stay visible beside the bracket.
+  There is no bracket (and the loop points are not heard) on Region File, or when the points are the whole file.
+  Slice markers stay visible beside the bracket.
 
 ## 2. Workflow: a loop from an unsynced recording
 
@@ -235,7 +237,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H1 | `0x0806578C` (`FUN_08065550`, segment start) | `bl 0x0806375C` prefetch | `clipwin_seg_start_b` → `clipwin_seg_start(src, pos, k = [sp+0x20], pad = r4)` | latch slot k (bank 2's `cw_latch`: Slip, region, Loop Len window, the file's length), prefetch where it will really read |
 | H1′ | `0x0806541A` (`FUN_08065290`, slice-marker segment) | `bl 0x0806375C` | `clipwin_slice_start_b` → `clipwin_slice_start(src, pos, k = [sp+4], pad)` | invalidate slot k, clear its `h1` bit (`cw_slice`), prefetch unchanged |
 | H2 | `0x08066622` (`FUN_08066454`, segment reader; already JOEBOX's `clip_read_b`) | `bl 0x080662E4` | `src/filter_thunk.S` `clip_read_b` now ends in `b.w clipwin_read` | mapped read (`cw_map`: the real position, the seam hint): stock's reader at the real position, or its work done over two fetches at a seam; machine modes through `filter.c`'s `clip_read_ring`; stock's read when the file's length is not the latch's |
-| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | `cw_len`: adopt a new region (at this pad's wrap, or when no layer plays; the four store rows read here for it); answer the region's length (Beat Count Auto, frames per step) |
+| H3 site 1 | `0x08064B2C` (recompute, first length) | `bl 0x080636F0` `fw_src_len` | `clipwin_len_recompute_b` → `clipwin_len(src, pad, 1, —)` | `cw_len`: adopt a new region (at this pad's wrap, or when no layer plays; the three store rows read here for it); answer the region's length (Beat Count Auto, frames per step) |
 | H3 site 3 | `0x08064C5A` (recompute, second length) | `bl 0x080636F0` | `clipwin_len_steps_b` (r3 = r9 = the clip in output samples) | the region's length; a synced clip of one step gets `+0x204` = the clip, not the length |
 | H3 site 0 | `0x0806561E` (`FUN_08065550`'s `> 0` check) | `bl 0x080636F0` | `clipwin_len_b` | the region's length |
 | H3 site 2 | `0x08065690` (the last step's end, `len − 1`) | `bl 0x080636F0` | `clipwin_len_end_b` | seamless wrap: 1 (end = 0) when Loop On and not Trigger; else the region's length |
@@ -346,14 +348,14 @@ latches its region, with Slip forced to 0.
 - **The rule** (`is_loop`, shared by the engine and the bracket):
 
   ```
-  Loop  iff  mode != File  &&  len valid  &&  0 <= ls < le <= len  &&  !(ls == 0 && le >= len − 1)  &&  (mode == Loop || on)
+  Loop  iff  mode != File  &&  len valid  &&  0 <= ls < le <= len  &&  !(ls == 0 && le >= len − 1)
   ```
 
-  Here `mode` is the Region row, `on` is Sample mode's Loop Mode (`0x8E`), and `len` is `fw_src_len`. A length of 0
-  or the provider's `0x10000000` sentinel means no region.
+  Here `mode` is the Region row and `len` is `fw_src_len`. A length of 0 or the provider's `0x10000000` sentinel
+  means no region. Sample mode's Loop Mode (`0x8E`) is not asked (37.2.x asked it for Auto: finding 7).
 - **The source.** The loop points are read from the cell's class-H object, `H = *(pad + 8)`, when it is class `0x48`
-  on the same cell: `+0xFC` Loop Start, `+0x100` Loop End, `+0x108` Loop Mode, in queue order. Otherwise they come
-  from the app's store (`0x91`, `0x92`, `0x8E`), which keeps the last pair that made sense. The region is
+  on the same cell: `+0xFC` Loop Start, `+0x100` Loop End, in queue order. Otherwise they come from the app's store
+  (`0x91`, `0x92`), which keeps the last pair that made sense. The region is
   `rs = ls`, `vlen = le − ls`.
 - **What H3 answers.** It returns `vlen` at sites 0, 1 and 3. At site 2 it returns 1, so the last step has no end and
   crossfades into the next pass like any other step; that applies only with Loop On and Launch not Trigger. At site 3
@@ -531,7 +533,7 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 **The Waveform knobs**
 
 - Loop Start turned up to Loop End leaves no loop, and the pad plays the whole file until they part.
-- On Region File, or Auto with Loop Mode None, the knobs move the points but nothing is heard and no bracket shows.
+- On Region File the knobs move the points but nothing is heard and no bracket shows.
 - The dead travel at the top of a sample-position knob is stock's, kept: up to `step − 1` positions above the
   maximum all read the maximum. It has not been seen on hardware (question 16).
 - After Clip, New Rec and New Multi keep these four rows bound, as stock keeps Sample's after Sample.

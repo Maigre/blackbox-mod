@@ -44,12 +44,13 @@ int cw_pad(const uint8_t *pad)
    Loop End), Loop End taken as stock keeps it (D-003; stock's own default is the length). A WAV's smpl loop comes in
    with its dwEnd as Loop End, verbatim (x3 t6), and dwEnd is the loop's last frame: such a region is one frame short,
    which nothing hears. The whole file is File: [0, len) and [0, len - 1] alike (a load leaves Loop End = the length
-   with Loop Mode as it was; a whole-file smpl loop ends on len - 1), for Loop too. Auto also wants Loop Mode on. The
-   engine (adopt) and the Waveform screen's bracket (cw_bracket) both ask it. */
-static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, int on, int32_t len)
+   and Loop Start 0; a whole-file smpl loop ends on len - 1), for Loop too. Auto is Loop: Sample mode's Loop Mode is
+   not asked (Gate 3 finding 7: a take whose points were moved on the Clip-mode Waveform stayed on File, Loop Mode
+   being a Sample-mode row the Clip pad never shows). The engine (adopt) and the Waveform screen's bracket
+   (cw_bracket) both ask it. */
+static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, int32_t len)
 {
-    return !(mode == REGION_FILE || len >= SRC_BAD || ls < 0 || ls >= le || le > len || (!ls && le >= len - 1) ||
-             (mode != REGION_LOOP && !on));
+    return !(mode == REGION_FILE || len >= SRC_BAD || ls < 0 || ls >= le || le > len || (!ls && le >= len - 1));
 }
 
 /* The region pad q plays from now: its Region setting over the loop points. From the cell's class-H object, which
@@ -59,15 +60,13 @@ static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, i
 static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len, const int32_t *set)
 {
     const uint8_t *h = *(uint8_t *const *)(pad + PAD_SIBLING);
-    int32_t ls, le, on;
+    int32_t ls, le;
     if (h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
         ls = *(const int32_t *)(h + H_LOOP_START);
         le = *(const int32_t *)(h + H_LOOP_END);
-        on = *(const int32_t *)(h + H_LOOP_MODE);
     } else {
         ls = set[CW_SET_START];
         le = set[CW_SET_END];
-        on = set[CW_SET_MODE];
         if (ls >= 0 && ls < le && le <= len) {
             b->good[q][0] = ls;
             b->good[q][1] = le;
@@ -77,7 +76,7 @@ static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len
         }
     }
     b->region[q].vlen = 0;
-    if (!is_loop(set[CW_SET_REGION], ls, le, on, len))
+    if (!is_loop(set[CW_SET_REGION], ls, le, len))
         return;
     b->region[q].rs = ls;
     b->region[q].vlen = le - ls;
@@ -486,12 +485,12 @@ void cw_text(char *t, int v)
 /* ---- the Waveform screen in Clip mode ---- */
 
 /* clip_view (clipwin.c): the white bracket, which shows the loop when Region plays it (is_loop over the view's store:
-   mode, [ls, le), Loop Mode on, the file's len frames), written here, never with FUN_080c6edc, which hides the slice
-   markers (+0x238). was = the bracket as last drawn: the stock refresh clears it without marking the widget dirty, and
-   so would leave a bracket that is gone on the screen. */
-void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int on, int32_t len, int was)
+   mode, [ls, le), the file's len frames), written here, never with FUN_080c6edc, which hides the slice markers
+   (+0x238). was = the bracket as last drawn: the stock refresh clears it without marking the widget dirty, and so
+   would leave a bracket that is gone on the screen. */
+void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was)
 {
-    int show = is_loop(mode, ls, le, on, len);
+    int show = is_loop(mode, ls, le, len);
     int32_t *lp = (int32_t *)(wave + WAVE_LOOP);
     if (show != was || (show && (lp[0] != ls || lp[1] != le)))
         wave[WAVE_DIRTY] = 1;

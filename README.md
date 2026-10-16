@@ -33,9 +33,9 @@ New since 3.1.n:
   it if you keep turning. A change is heard at the next Sync step. Saved with the preset; 0 is stock.
 - **Region on Clip pads**: a "Region" row on a Clip pad's Pos tab, before Slip: Auto, File or Loop. Loop plays only the
   pad's loop (Loop Start to Loop End, set in Sample mode or read from the WAV's own loop) as if it were the whole file,
-  so a loop cut from a longer recording needs no Trim. Auto, the default, does that when the pad has a loop (Loop Mode
-  on, and not the whole file) and plays the file otherwise, so fresh recordings and plain files play as before. File
-  always plays the whole file. Beat Count Auto counts the region, Slip shifts within it, and the end of the region
+  so a loop cut from a longer recording needs no Trim. Auto, the default, does that when the pad has a loop (its loop
+  points are not the whole file; Sample mode's Loop Mode does not matter) and plays the file otherwise, so fresh
+  recordings and plain files play as before. File always plays the whole file. Beat Count Auto counts the region, Slip shifts within it, and the end of the region
   crossfades into its start like any other Sync step, so a region that is not a whole number of beats leaves no gap
   and no doubling at the loop point, even when the whole loop is one Sync step. A change while the pad plays is heard
   from the next time the loop comes round, or the time after that if it is made during the loop's last Sync step. A
@@ -134,8 +134,8 @@ From 3.1.n and earlier:
   playhead line shows the position without Loop Len.
   Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
-  loop, so the pad plays the whole file until they are apart again. With Region on File, or on Auto with Loop Mode None,
-  the two knobs still move the loop points but nothing is heard and no bracket shows.
+  loop, so the pad plays the whole file until they are apart again. With Region on File the two knobs still move the
+  loop points but nothing is heard and no bracket shows.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 
