@@ -1,11 +1,11 @@
 /*
  * Clip Window (clipwin.c): what bank 1 and bank 2 (clipwin_b2.c) share - the class-B pad's fields both read and the
- * state they keep in SDRAM. Bank 2 is compiled against this file, and the asserts at the end pin every offset bank 2
- * reads, so that moving one is a deliberate act: it makes a new bank 2 payload, and a unit then needs this build's
- * BBEXTRA.BIN. Until the card loader has written it every bank 2 feature (Prism, Confetti, the inserts, Loop Len) is
- * off, because bank 1 pairs with the whole payload at once, on its sum (cpu.c, b2_live). Bank 2's id does not hash
- * this file (build.sh): an edit here that leaves bank 2's bytes alone (a comment, a field appended to cw_bank, a define
- * bank 2 does not use) needs no reflash.
+ * state they keep in SDRAM. Bank 2 is compiled against this file, and the asserts at the end pin every offset
+ * cw_looplen and cw_window read or write, so that moving one is a deliberate act: it makes a new bank 2 payload, and a
+ * unit then needs this build's BBEXTRA.BIN. Until the card loader has written it every bank 2 feature (Prism, Confetti, the
+ * inserts, Loop Len) is off, because bank 1 pairs with the whole payload at once, on its sum (cpu.c, b2_live). Bank
+ * 2's id does not hash this file (build.sh): an edit here that leaves bank 2's bytes alone (a comment, a field
+ * appended to cw_bank, a define bank 2 does not use) needs no reflash.
  */
 #ifndef CLIPWIN_H
 #define CLIPWIN_H
@@ -77,15 +77,22 @@ struct cw_bank {
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
 
-/* clipwin_b2.c, in bank 2 (call only when b2_live()): Loop Len's window for a segment H1 makes */
+/* clipwin_b2.c, in bank 2 (call only when b2_live()): Loop Len's take, and its window for a segment H1 makes */
+int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, int force);
 #define CW_NO_WINDOW ((int32_t)0x80000000)
 int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t clip);
 
-/* what cw_window is compiled against (no code: the compiler checks them). Changing one reprograms bank 2. */
-_Static_assert(offsetof(struct cw_bank, origin) == 0x5c0 && offsetof(struct cw_bank, ll) == 0x600,
-               "bank 2 (cw_window) is compiled against these cw_bank offsets: moving one reprograms bank 2");
-_Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_STEP == 0x34 && PAD_FPS == 0x1fc &&
-               PAD_TPS == 0x208,
-               "bank 2 (cw_window) is compiled against these pad and segment offsets: changing one reprograms bank 2");
+/* what cw_looplen and cw_window are compiled against (no code: the compiler checks them). Changing one reprograms
+   bank 2. */
+_Static_assert(offsetof(struct cw_bank, valid) == 0x88 && offsetof(struct cw_bank, latch) == 0x98 &&
+               sizeof(struct cw_latch) == 16 && offsetof(struct cw_latch, vlen) == 4 &&
+               offsetof(struct cw_latch, delta) == 8 && offsetof(struct cw_bank, origin) == 0x5c0 &&
+               offsetof(struct cw_bank, ll) == 0x600 && offsetof(struct cw_bank, forced) == 0x610 &&
+               offsetof(struct cw_bank, sf) == 0x620,
+               "bank 2 (cw_looplen, cw_window) is compiled against these cw_bank offsets: moving one reprograms bank 2");
+_Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_DELAY == 0x20 && SEG_STEP == 0x34 &&
+               SEG_FIRST == 0x3c && PAD_FPS == 0x1fc && PAD_TPS == 0x208 && PAD_STEPS == 0x210 && PAD_SYNC == 0x220,
+               "bank 2 (cw_looplen, cw_window) is compiled against these pad and segment offsets: changing one "
+               "reprograms bank 2");
 
 #endif

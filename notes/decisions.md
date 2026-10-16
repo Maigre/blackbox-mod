@@ -25,11 +25,33 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   `feat/*` branch): a bug report from this fork must never look like a JOEBOX build.
 - **D-008 (2026-10-15) — First installs go without `BBEXTRA.BIN`.** JOEBOX 1 is on hold for units stuck restarting
   after the bank-2 self-install; none of our P2–P3 code needs bank 2. The full set without the second file keeps
-  every bank-1 feature (Prism/Confetti/Insert read `---`).
+  every bank-1 feature (Prism/Confetti/Insert read `---`). *Premise superseded by D-017 from P3 on: Loop Len needs
+  bank 2.*
 - **D-009 (2026-10-15) — Host DSP build on any C compiler, ARM-vs-host tolerance 1e-5.** mgr-ran (i7-3770K) has no
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-017 (2026-10-16) — Bank-1 overflow goes to bank 2 now; Loop Len needs `BBEXTRA.BIN`; supersedes D-008's
+  premise** (Thomas: if the cave overflows, move code to bank 2 rather than trim). The P3 Waveform knobs cost ~510 B
+  against 48 B free after Loop Len, so Loop Len's take (`cw_looplen`, `src/clipwin_b2.c`, 522 B) moved to bank 2. On
+  the `37loop/blackbox-t-018` stack (P3 over the stale-latch fix, which left 0 B after Loop Len) Loop Len's window
+  (`cw_window`, latch()'s per-segment maths) went first, in the "bank 1 room" commit, with three bank-1 trims.
+  Rules: bank 2 holds only leaf code that calls nothing outside itself (`test_bank2.py`), and every bank-1 call into it
+  is gated by `b2_live()`, falling back to the stock-like value (Loop Len Off) when bank 2 is absent or stale.
+  Consequences: (1) P3 needs the `BBEXTRA.BIN` from the same build on the card, beside `BLACKBOX.bin`; without it the
+  Loop Len row stays live and saves but does nothing (README Known issues; the `---` alternative is open question 30
+  in `notes/re/README.md`). (2) Bank 1 pairs with the whole payload at once, on its sum (`cpu.c` `b2_paired`): this
+  `BLACKBOX.bin` on a unit whose bank 2 holds an older payload switches off Prism, Confetti, the inserts AND Loop Len
+  until the card loader has written this build's `BBEXTRA.BIN`. Payload headers: release 37.1.1 through the Loop Len
+  step (the same bytes) id `0xf5f0171b` len `0x3280` sum `0xbd37e09e`; on feat/region with the Waveform knobs id
+  `0xfd79d330` len `0x3480` sum `0x1c178ca6`; on `37loop/blackbox-t-018` with the window (bank 1 room) id `0x15a78d08`
+  len `0x3300` sum `0xd5c53b2d`, and with the knobs id `0x2c4676ca` len `0x3500` sum `0x73f8a581` (the cw_bank offsets
+  bank 2 reads moved with the stale-latch fix's `len`: latch stride 16, origin `0x5c0`).
+  (3) Gates 0 and 2 ran without the file, so Gate 3 is the first install on Thomas's unit that needs the card loader
+  to write bank 2: TOOLS must show no `!` before the Loop Len checks. The restart loop D-008 steered around turned out
+  to be the exclusive load in `b2_paired`, fixed in 37.0.2 (D-013). (4) What bank 2 is compiled against (the
+  `cw_bank` and pad offsets in `src/clipwin.h`) is pinned by `_Static_assert`; bank 2's id still hashes its `.c` files
+  only, so a bank-1-only edit of the header needs no reflash.
 - **D-016 (2026-10-15) — Slip: + = ahead, like a CDJ jog; replaces D-014** (Thomas, after Gate 2: "CCW would slower
   the record, like a turntable or CCW on a CDJ"). Clockwise pushes the loop ahead of the beat, counter-clockwise drags
   it behind, and the number follows the knob: `+` ahead, `−` behind. The engine reads the row as it is (the content's

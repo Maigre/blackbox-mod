@@ -108,23 +108,24 @@ leaving, outside = scan(deployed)
 check("no branch in bank 2 lands in the cave", not leaving, {hex(t): [hex(x) for x in sites] for t, sites in leaving.items()})
 check("...and none leaves bank 2 at all: it is leaf DSP, calling only itself", not outside,
       {hex(t): [hex(x) for x in sites] for t, sites in outside.items()})
-# ...and the scan still sees a real one: a bl into the cave planted on an instruction of clipwin_b2.c's cw_window (the
-# division code the mapping symbols were brought in for), at its first instruction and at the first sdiv
+# ...and the scan still sees a real one: a bl into the cave planted on an instruction of clipwin_b2.c's cw_looplen and
+# cw_window (the division code the mapping symbols were brought in for), at each one's first instruction and first sdiv
 def bl_bytes(at, tgt):
     o = (tgt - (at + 4)) >> 1
     s_, j1, j2 = (o >> 23) & 1, ((o >> 22) & 1) ^ 1 ^ ((o >> 23) & 1), ((o >> 21) & 1) ^ 1 ^ ((o >> 23) & 1)
     return struct.pack("<HH", 0xF000 | (s_ << 10) | ((o >> 11) & 0x3FF), 0xD000 | (j1 << 13) | (j2 << 11) | (o & 0x7FF))
 
 
-cw = funcs_all.get("cw_window", 0)
-sdiv = next((i.address for i in md.disasm(deployed[cw - B2:cw - B2 + 0x300], cw) if i.mnemonic == "sdiv"), None) if cw else None
-caught = []
-for at in (cw, sdiv):
-    planted = bytearray(deployed)
-    planted[at - B2:at - B2 + 4] = bl_bytes(at, CAVE_LO + 0x100)
-    caught.append(scan(bytes(planted))[0] == {CAVE_LO + 0x100: [at]})
-check(f"a bl into the cave planted at cw_window's first instruction and at its first sdiv ({sdiv and hex(sdiv)}) is "
-      "still found", cw and sdiv and caught == [True, True], (hex(cw), sdiv and hex(sdiv), caught))
+for fn in ("cw_looplen", "cw_window"):
+    cw = funcs_all.get(fn, 0)
+    sdiv = next((i.address for i in md.disasm(deployed[cw - B2:cw - B2 + 0x300], cw) if i.mnemonic == "sdiv"), None) if cw else None
+    caught = []
+    for at in (cw, sdiv):
+        planted = bytearray(deployed)
+        planted[at - B2:at - B2 + 4] = bl_bytes(at, CAVE_LO + 0x100)
+        caught.append(scan(bytes(planted))[0] == {CAVE_LO + 0x100: [at]})
+    check(f"a bl into the cave planted at {fn}'s first instruction and at its first sdiv ({sdiv and hex(sdiv)}) is "
+          "still found", cw and sdiv and caught == [True, True], (hex(cw), sdiv and hex(sdiv), caught))
 check("the reverb is in bank 2 beside its two callers", B2 <= funcs_all.get("rev4_step", 0) < B2 + len(deployed), hex(funcs_all.get("rev4_step", 0)))
 check("the old pinned jump is gone from the cave", "rev4_step_impl" not in funcs_all and funcs.get(OLD_PIN) != "rev4_step", funcs.get(OLD_PIN))
 lits = [struct.unpack_from("<I", deployed, o)[0] for o in range(16, len(deployed) - 3, 4)]

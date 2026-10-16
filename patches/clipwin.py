@@ -34,6 +34,12 @@ PATCHES = [
     hook(0x080B0E18, 0x080B0528, "clipwin_format"),
     # the type-1 turn's stepper call: Slip's acceleration
     hook(0x080B0DDE, 0x080B0B74, "clipwin_turn"),
+    # the Waveform screen in Clip mode (FUN_080a54a0): the bind block's last unbind (BR) binds all four knobs, Loop Start /
+    # Loop End / Slip / Loop Len; the position knobs' step, range and value after every bind and zoom change
+    # (FUN_080a53a2's call); their range and value, the other two's value and the loop bracket at every Clip refresh
+    hook(0x080A582A, 0x080A7EE0, "clipwin_bind"),
+    hook(0x080A53B0, 0x080A52C4, "clipwin_zoom"),
+    hook(0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
     # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7
     (0x080EF998, struct.pack("<HHH", 0, 0, 0), struct.pack("<HHH", 0x1C8, 0x1C9, 0x1CA)),

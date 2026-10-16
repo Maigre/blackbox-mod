@@ -44,6 +44,11 @@ New since 3.1.n:
   the pad's Sync step sets Sync to fit, and your Sync comes back as soon as the length fits it again, or at Off. It
   works over Region and with Slip, which shifts what the window plays. A change is heard at the pad's next Sync step.
   Saved with the preset.
+- **Knobs on a Clip pad's waveform**: stock leaves all four blank in Clip mode. Top-left is Loop Start and top-right
+  Loop End, the same loop points as Sample mode's, which Region plays: one step is one pixel of the waveform, so zoom
+  in for finer steps. The white loop bracket shows the loop Region plays, as soon as you turn: a playing pad takes the
+  new loop the next time its loop comes round, as with any Region change, so while you turn, the bracket is ahead of
+  what you hear. Bottom-left is Slip and bottom-right Loop Len, the same rows as on the Pos tab.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -116,6 +121,9 @@ From 3.1.n and earlier:
   it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
   playhead line shows the position without Loop Len. Loop Len runs from the second file (`BBEXTRA.BIN`, flash bank 2):
   without it the row is there and saves, but does nothing.
+- On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
+  loop, so the pad plays the whole file until they are apart again. With Region on File, or on Auto with Loop Mode None,
+  the two knobs still move the loop points but nothing is heard and no bracket shows.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 

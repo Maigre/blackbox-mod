@@ -369,6 +369,46 @@ corrected accordingly.
   write `wave+0x22C/+0x230/+0x239` and dirty `+0x32` directly; never `FUN_080C6EDC` (clears slices `+0x238`). The
   forward stores `0x91/0x92` and our rows with no code. Playhead H5 at `0x080668FC` (msg `0x4A`, per-mille divisor
   from `0x08066B4A`), cosmetic.
+  **As built** (`test_clipwin.py` section 12): TL = Loop Start `0x91`, TR = Loop End `0x92` (Thomas's layout: the loop
+  points on top), BL = Slip, BR = Loop Len.
+  - One hook binds all four: the bind block's last unbind (`0x080A582A`, BR, `r2` = view + `0xF10`) calls the stock
+    binder for each knob with the view store's value, after stock's three unbinds have run. The other three sites stay
+    stock.
+  - `0x080A53B0` (`clipwin_zoom`): stock first (it returns for Clip), then, only in Clip mode (the hook runs for every
+    mode; New Rec and New Multi bind nothing, so after Clip the knobs keep these rows there, as on stock they keep
+    Sample's after Sample) and when TL holds `0x91`, `KNOB_STEP` = max(1, zoom) on TL and TR, then range (TL 0 .. Loop
+    End, TR Loop Start .. `view+0x2390`, stock's Sample-mode ranges), then value. `0x080A5B0E` (`clipwin_wave`): the
+    same without the step.
+  - Slip and Loop Len are re-valued only when the store holds another value: a set value parks the stepper mid-step, and
+    every turn comes back as a `0x66` refresh, which changed the slow Slip turn (11 ticks became 10 over 440 counts).
+  - The bracket: shown when `is_loop()` (the engine's Region rule, now one function for both) holds for the view store's
+    Region, Loop Mode, Loop Start/End and `view+0x2390`. Written to `+0x22C/+0x230/+0x239`; `+0x32` set only when the
+    shown state or the pair changed, compared with what was drawn before stock's refresh cleared `+0x239`. `+0x238` is
+    left as stock set it: slice markers show beside the bracket.
+  - Checked against stock's own Sample-mode Loop Start/End knobs (BL/BR there) at the same zoom. The same six turns,
+    slow and fast, give the same posts and the same step, range, index and pending position after each one. One step
+    down from an off-grid 24 000 posts 23 552 (the stepper cell below 24 000's), as stock's does. Sample, Granular,
+    Slicer, and Sample after Clip are byte for byte the screen with the three hooks out, except the steppers'
+    accumulators after Clip (parked mid-step at the same index). `SetCellParam` stores all four ids for a Clip pad.
+  - Kept from stock: the dead travel at the top of a 0xD knob (open question 16; no exact-count call, an estimated 30 B
+    more), and Sample mode's ranges, so Loop Start turned up to Loop End empties the loop and Region falls back to File
+    until they part (README Known issues).
+  - Code space: the knobs cost about 510 B against 48 free. Loop Len's take (`looplen()`'s maths: the pending-launch
+    test, the in-point, the forced-Sync search) moved to bank 2 as `cw_looplen` in `src/clipwin_b2.c`. That code is
+    leaf, gets the bank and the pad and returns what to send, and bank 1 sends the Sync. `clipwin_tick` calls it only
+    when `b2_live()` says yes, so without bank 2 Loop Len stays Off (checked: header wiped, bit for bit the run where it
+    is never set). `cw_bank` and the pad layout moved to `src/clipwin.h`; the layout is unchanged (still `CWN3`).
+    `_Static_assert`s there pin every offset `cw_looplen` is compiled against (no bytes), so moving one, which needs a
+    reflashed bank 2, cannot happen by accident. Bank 2's id still hashes the `.c` files only: the pairing is on the
+    payload's sum, and a bank-1-only edit of the header (a comment, a field appended) leaves bank 2's bytes and so
+    must leave its id alone (checked: this header's comments and asserts left `out/bank2.bin` byte for byte). Hashing
+    the header would also cost bytes: the id compare in `b2_ok` / `header_ok` is built from add-immediates for some
+    ids (+8 B for the one it gave). Installing this build on a unit holding the older payload turns off every bank-2
+    feature until its `BBEXTRA.BIN` is written (D-017).
+    `test_bank2.py`'s scan read the tail of an `lsl.w` followed by `sdiv` as a `bl` (integer division is new to bank 2).
+    It now dismisses a halfword only when the linker's `$t`/`$d` mapping symbols and a linear sweep prove it is the
+    second half of an instruction (all 12 182 code bytes decode), and a `bl` planted on a real instruction is still
+    found.
 - **Workflow traps**: Clip → Sample wipes the loop points (X3 ✓ t4); a Clip pad saved/trimmed by stock writes no
   `smpl` loop; an imported `acid` beat count refers to the whole file (rule needed when Region resolves to Loop).
 
@@ -418,7 +458,7 @@ corrected accordingly.
 | 2 | Slip on a machine-mode (Fidelity) pad, and the seam block | P2 | Unicorn: `test_clip.py` harness with a latch set |
 | 3 | A negative type-1 value of a new id through preset save → load | P2 | Gate 2 step 6 on hardware; or Unicorn of the writer `0x08095328` + loader `0x08096AD8` on one pad store |
 | 4 | Counts per knob revolution, GUI pass period (K tuning) | P2 | USB peek: `0x24001A30 + 4k` before/after one turn; `0x2402EEE0` in a loop |
-| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region; **57,688 (48 free) after Loop Len** and its review fixes (`fold` out of line saves 68 B), which fit in bank 1 (`.bank2` 12,896, unchanged; `arm-none-eabi-size -A out/cave.elf`). The Waveform knobs need room: pick the leaf maths for `BANK2_SRCS` (behind `b2_live()`, needs `BANK2_NEW=1` and a reprogrammed bank 2) or trim bank-1 code first |
+| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region; **57,688 (48 free) after Loop Len** and its review fixes (`fold` out of line saves 68 B), which fit in bank 1 (`.bank2` 12,896, unchanged; `arm-none-eabi-size -A out/cave.elf`). **57,720 (16 free) after the Waveform knobs**, with Loop Len's take moved to bank 2 (`.bank2` 13,418, +522: `clipwin_b2.c`). A unit then needs this build's `BBEXTRA.BIN` (`BANK2_NEW=1` where `card-backup/` holds the deployed payload) |
 | 6 | Does the app send a slice table to a Clip pad (Slip silently off there) | P2 doc | USB peek of pad `+0x250` on a Clip pad whose cell has markers |
 | 7 | Attack 0 (`pad+0xBA1` = 1) on real presets (hard wrap start) | P2/P3 | USB peek on a few loaded pads |
 | 8 | Live Slip under Sync None takes effect at the next restart | P2 doc | Unicorn: one `Rig` run |
@@ -443,6 +483,7 @@ corrected accordingly.
 | 27 | XY → Record screen → XY Save hop end to end; Save from a `SetCellParam` intercept | P5 | Unicorn of the app path (`set_screen`, `0x26` handler), then Gate 5 |
 | 28 | Buses 12/13 writers; trims `0x2400A9C0+0x9014..0x9030`; Rec Mon under RecConfig Per Pad | P5 | Unicorn of the recorder `0x105` path; static |
 | 29 | Watchdog stamp writers (does a task-time overflow reset or hang) | trap only | static read of `0x080469C4`/`0x080469CA` callers |
+| 30 | Loop Len without a matching bank 2: the row (Pos page, Waveform BR) stays live, shows `1/4`, turns and saves, and does nothing (README Known issues), where the bank-2 effects read `---` (`cpu.c` `b2_present`) | P3, Thomas | Thomas's call: keep it, or a `---` name set when `!b2_present()` in `clipwin_register`, which needs bank-1 bytes freed first (16 B free; candidate: `latch()`'s Loop Len window maths to bank 2 behind its own `b2_live()`) |
 
 ## 5. Where the notes disagree (read the later or executed one)
 

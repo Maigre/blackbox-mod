@@ -16,10 +16,15 @@ mode, SP 45 included) at and near the seam; the stock pad-parameter registrar (F
 clipwin_register in it, the stock pad-store builder (FUN_08093f20) with the defaults chain in it, master_alloc; the
 stock knob binder (FUN_080a7ee0), set-value, the turn (FUN_080b0d54) and list-widget (FUN_080b9a3c) paths with
 clipwin_format / clipwin_turn in them, the stock ring push and speed, stepper and snprintf; both thunks entered as their
-sites enter them. Every scenario also runs on this image with the clipwin hooks taken out at run time (or only
+sites enter them; the Waveform screen's setup (FUN_080a54a0: its bind block, FUN_080a53a2 and the refresh, with
+clipwin_bind / clipwin_zoom / clipwin_wave in them), the view's two handlers (the knob event, the param-changed refresh,
+the forward to the app with JOEBOX's slice_forward in it, the zoom message), the waveform's slice-marker and zoom setters,
+and the app's SetCellParam (FUN_0809fa50) for what the forward sends; Loop Len's take in bank 2 (clipwin_b2.c), and a
+bank 2 whose header is gone. Every scenario also runs on this image with the clipwin hooks taken out at run time (or only
 Region's), and the Slip 0 ones on the stock 3.1.9 image, for the comparisons; a Region scenario also runs on the stock
 image with a file as long as its region.
-Stubbed: the allocator, the log print, the sample source (length, rate, ready, the prefetch hint - recorded, with the
+Stubbed: the allocator, the log print, for the Waveform screen the app's copy of the pad's store into the view, the file
+name, icons, buttons and the mode list, SetCellParam's posts to the engine and the UI (recorded), the sample source (length, rate, ready, the prefetch hint - recorded, with the
 read it was made in - and the mono / stereo fetch, which serve a ramp: frame q holds (q + 1) * 2^-20, the right channel
 its negative, or 1.0 for the gain runs; in the reader unit two sines, the file or the file turned circular), the knob's
 text widget, redraw and post to the app (recorded).
@@ -40,9 +45,14 @@ sample added where it is; for
 the reader, the stock reader on the file turned circular; for a machine-mode pad, filter.c's
 own clip_read on the file turned circular (at the seam, on the last blocks before it, near the start: bit for bit) and
 test_clip.py's drop-sample model off the seam; for the seam hint, notes/re/a2's provider (a hint covers the block of
-its position and the next two: 16 384 frames sure).
-NOT checked: duck_block and the control tick around clipwin_tick (only its place in duck_block, from the image); the
-app writing the store from the knob (SetCellParam) and a negative value through preset save / load; SD streaming at
+its position and the next two: 16 384 frames sure); for the Waveform knobs, stock's own Loop Start / End knobs in Sample
+mode at the same zoom (the same posts, steps, ranges and positions, turn after turn), the bare Slip knob (the same values
+with every turn sent to the app and refreshed), and the screen with the three hooks taken out in every other mode.
+NOT checked: duck_block and the control tick around clipwin_tick (only its place in duck_block, from the image); a
+negative value through preset save / load; how the waveform draws the bracket (only the widget's fields and dirty flag
+are checked: its draw gates the bracket on +0x239 alone, notes/re/a3), the zoom a pinch leaves pending until the
+waveform's tick applies it and posts 0xe5 (the message is sent here), the dead travel at the top of a type-0xd knob on
+the hardware (stock's, open question 16); SD streaming at
 the seam (the source is in RAM: the hints are checked - H1's, and H2's one at rs per crossing segment - not whether the
 unit's cache still holds the hinted blocks when the read gets there: the miss counter 0x24013930, on the unit); Fidelity
 machine modes inside the whole process (the reader alone is); the playhead on the waveform (left stock); relaunches at
@@ -197,7 +207,10 @@ sites = {"H1 (segment start, FUN_08065550)": (0x0806578C, PREFETCH, "clipwin_seg
          "H3' (the unsynced wrap's recompute)": (0x08066E9E, RECOMPUTE, "clipwin_wrap_free_b"),
          "F (set-value text, FUN_080b0728)": (0x080B0746, 0x080B0528, "clipwin_format"),
          "F (type-1 turn text)": (0x080B0E18, 0x080B0528, "clipwin_format"),
-         "K (type-1 turn stepper)": (0x080B0DDE, 0x080B0B74, "clipwin_turn")}
+         "K (type-1 turn stepper)": (0x080B0DDE, 0x080B0B74, "clipwin_turn"),
+         "W (the Waveform's Clip bind block, its last unbind: BR)": (0x080A582A, 0x080A7EE0, "clipwin_bind"),
+         "W (FUN_080a53a2: the position knobs at every bind and zoom change)": (0x080A53B0, 0x080A52C4, "clipwin_zoom"),
+         "W (the Waveform refresh's Clip case: the slice markers)": (0x080A5B0E, 0x080C6E8C, "clipwin_wave")}
 for what, (at, was, now) in sites.items():
     check(f"{what} at {at:#010x}: stock 'bl {was:#010x}' is now 'bl {now}'",
           branch(at, stock) == ("bl", was) and branch(at) == ("bl", S[now]), (branch(at, stock), branch(at)))
@@ -260,6 +273,9 @@ touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C
            "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080669D6, 0x08066E9E, 0x08066FAC]),
            "FUN_08066454": (0x08066454, 856, [0x08066622]), "FUN_080662e4 (stock clip reader)": (0x080662E4, 368, []),
            "FUN_080b0728": (0x080B0728, 36, [0x080B0746]), "FUN_080b0d54": (0x080B0D54, 772, [0x080B0DDE, 0x080B0E18]),
+           "FUN_080a54a0 (the Waveform setup; slice.py's four Slicer hooks in it too)":
+               (0x080A54A0, 0x6F0, [0x080A582A, 0x080A5B0E, 0x080A58E6, 0x080A58F2, 0x080A58FE, 0x080A5B64]),
+           "FUN_080a53a2": (0x080A53A2, 0x16, [0x080A53B0]),
            "the Clip Pos page": (0x080EF990, 72, [0x080EF998, 0x080EF99A, 0x080EF99C]),
            "its class-0x4c copy": (0x080EF288, 72, [0x080EF290, 0x080EF292, 0x080EF294])}
 for name, (start, size, at) in touched.items():
@@ -908,11 +924,13 @@ check(f"Beat Count 29, Sync 1 bar: {n_} steps of {tps} ticks ({tps * n_}, not 27
       and slip_f(3840, 1392000, 27839) != slip_f(3840, 1392000, 27840), (tps, n_, got))
 
 # the cave writes nothing in the block but its own bank: every write from clipwin.o's code (its static helpers, latch
-# and bank, included: the link map gives the object's .text), a launch on the seam (Slip 3839) and a live change
+# and bank, included: the link map gives the object's .text) and clipwin_b2.o's (Loop Len's take, in bank 2), a launch
+# on the seam (Slip 3839) and a live change
 w = []
 r = Rig(cell=0x102)
 cw_code = [(int(l.split()[1], 16), int(l.split()[1], 16) + int(l.split()[2], 16)) for l in open("out/cave.map")
-           if l.split()[:1] and l.split()[0].startswith(".text") and l.rstrip().endswith("out/obj/clipwin.o") and len(l.split()) == 4]
+           if l.split()[:1] and l.split()[0].startswith(".text") and l.rstrip().endswith(("out/obj/clipwin.o", "out/obj/clipwin_b2.o"))
+           and len(l.split()) == 4]
 r.uc.hook_add(UC_HOOK_MEM_WRITE, lambda u, acc, addr, size_, v, d: w.append((addr, size_)) if any(
     a <= u.reg_read(UC_ARM_REG_PC) < b for a, b in cw_code) else None, begin=BLOCK, end=BLOCK + 0x100000)
 slips(r.m, {6: 3839})
@@ -2794,8 +2812,9 @@ for length in (50000, 192000):
           and t_new == 360000 and sg[:3] and all(x[2] == 0 for x in sg[:3]) and n_ > 20000 and err <= 0.02 and bad_ == 0,
           (on, len(rows), moved[:2], held, t_new, sg[:4], n_, err, bad_))
 
-# every write clipwin.c makes in a Loop Len run (engaged with Sync forced, changed, Off with Sync given back) lands in
-# the bank; the param-set it calls writes the pad, as a 0x39 message would
+# every write clipwin.c (and its bank 2 part, clipwin_b2.c, where Loop Len's take is) makes in a Loop Len run (engaged
+# with Sync forced, changed, Off with Sync given back) lands in the bank; the param-set it calls writes the pad, as a 0x39
+# message would
 w = []
 r = Rig(cell=0x102)
 r.uc.hook_add(UC_HOOK_MEM_WRITE, lambda u_, acc, addr, size_, v, d_: w.append((addr, size_)) if any(
@@ -2810,7 +2829,7 @@ r.note_on()
 r.run(900)
 hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (("origin", B_ORIGIN, B_LL), ("ll", B_LL, B_FORCED),
                                                                            ("forced", B_FORCED, B_SF), ("sf", B_SF, B_SIZE))}
-check(f"in a Loop Len run, every write clipwin.c makes into the SDRAM block lands in cw_bank's {B_SIZE:#x} bytes (origin, "
+check(f"in a Loop Len run, every write clipwin.c and clipwin_b2.c make into the SDRAM block lands in cw_bank's {B_SIZE:#x} bytes (origin, "
       f"Loop Len, forced and the latches' Slip part written: {hit}); Sync forced to 1/16, eased to 1/8 at 1/4 (the largest "
       f"that divides the in-point), given back on Off ({[x[4] for i, x in enumerate(r.llog) if i and x[4] != r.llog[i - 1][4]]})",
       w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w)
@@ -2838,15 +2857,16 @@ check(f"Loop Len 1/2 on a 5-beat clip with Sync 1/2 (steps of {r.made[0]['tps']}
       and all(x[2] == 48000 + 24000 * (((x[1] * 960 - 1920) % 1920) // 960) for x in sg) and {x[2] for x in sg} == {48000, 72000}
       and n_ > 80000 and err <= 0.02 and bad_ == 0 and same_starts and same_gain(st_, cw, 288300) == 0, (on, sg[:8], n_, err, bad_))
 
-# Loop Len's window is in bank 2 (clipwin_b2.c, cw_window): without this build's payload there (its header gone, so
-# b2_live() says no) Loop Len stays Off and is not taken. L2's run, Loop Len 1/16 set and then Off: bit for bit the run
-# where it is never set, the Sync never forced, and cw_window never entered
+# Loop Len's take and its window are in bank 2 (clipwin_b2.c, cw_looplen and cw_window): without this build's payload
+# there (its header gone, so b2_live() says no) Loop Len stays Off and is not taken. L2's run, Loop Len 1/16 set and then
+# Off: bit for bit the run where it is never set, the Sync never forced, and neither function entered
 entered = []
 
 
 def no_bank2(rr):
     rr.uc.mem_write(0x08100000, bytes(16))
-    rr.uc.hook_add(UC_HOOK_CODE, lambda *a: entered.append(1), begin=S["cw_window"] & ~1, end=S["cw_window"] & ~1)
+    for fn in ("cw_looplen", "cw_window"):
+        rr.uc.hook_add(UC_HOOK_CODE, lambda *a: entered.append(1), begin=S[fn] & ~1, end=S[fn] & ~1)
 
 
 kw = dict(frames=96000, at=193000, blocks=1900, vals={P_SYNC: 3})
@@ -2855,8 +2875,357 @@ rf = scenario(pre=ll_pre({}), **kw)
 ok_, d_ = same(rf, nb)
 check(f"no bank 2 (its header wiped): Loop Len 1/16 set and then Off plays as if it had never been set, bit for bit "
       f"({d_}), never taken ({sorted({x[1] for x in nb.llog})}), Sync never forced ({sorted({x[4] for x in nb.llog})}), and "
-      f"bank 2's cw_window never entered ({len(entered)} entries)",
+      f"bank 2's cw_looplen and cw_window never entered ({len(entered)} entries)",
       ok_ and {x[1] for x in nb.llog} == {0} and {x[4] for x in nb.llog} == {960} and not entered, (d_, len(entered)))
+
+# ====================================================================================================== 12. the Waveform knobs
+# Clip mode on the Waveform screen (README section 3, notes/re/a3): stock unbinds all four knobs and never draws the loop
+# bracket. Patched: TL = Loop Start (0x91), TR = Loop End (0x92), sample positions (type 0xd) one zoom pixel a step, ranged
+# as stock ranges them in Sample mode; BL = Slip, BR = Loop Len; the white bracket when Region plays the loop. Real: the
+# screen's setup FUN_080a54a0 (its bind block, FUN_080a53a2, the refresh), the binder FUN_080a7ee0, the knob widget (reset,
+# label, type, range, value, list, the turn FUN_080b0d54, stepper, accelerator, formatter, clipwin_format / clipwin_turn
+# in them), the view's two handlers (FUN_080a6d28: the knob event 0x32, the param-changed refresh 0x66; FUN_080a66dc: the
+# forward of 0x3d / 0x3c with JOEBOX's slice_forward in it, the zoom message 0xe5), the waveform's slice-marker setter
+# FUN_080c6e8c and its zoom set FUN_080c6f44, and the app's SetCellParam FUN_0809fa50 for what the forward sends. Stubbed:
+# the app's copy of the pad's store into the view (FUN_0809a830: the store kept here), the file name, text widgets
+# (recorded), icons, buttons and the mode list, the knob redraw, the view's post (recorded); SetCellParam's posts to the
+# engine and the UI (recorded). The app posting 0x66 after it stored a value is done here, as the app does it.
+SITES12 = {"clipwin_bind": (0x080A582A, 0x080A7EE0), "clipwin_zoom": (0x080A53B0, 0x080A52C4),
+           "clipwin_wave": (0x080A5B0E, 0x080C6E8C)}
+VIEW, VENT, VMSG = 0x24060000, 0x24070000, 0x24078000
+KN12 = {"TL": 0x670, "BL": 0x950, "TR": 0xC30, "BR": 0xF10}
+WV = VIEW + 0x38
+CLIP12 = {0x8B: 1, 0xEA: 0, 0x8E: 1, 0x8F: 0, 0x90: 0, 0x91: 24000, 0x92: 72000, 0x8D: 1, 0x94: 3, 0x47: 3, 0xD2: 0,
+          P_REGION: AUTO, P_SLIP: 480, P_LOOPLEN: 3}
+
+
+class Screen:
+    """the Waveform view of pad (1, 2) on an emulator of `image`; bypass = the three Waveform hooks put back to stock"""
+
+    def __init__(self, image=IMAGE, bypass=False):
+        m = self.m = Emu(image, "out/cave.elf")
+        maps(m)
+        registrar(m, TABLE)
+        if bypass:
+            for at, _ in SITES12.values():
+                m.uc.mem_write(at, stock[at - BASE:at - BASE + 4])
+        m.uc.mem_write(VIEW, bytes(0x5000))
+        for o in KN12.values():
+            m.w32(VIEW + o, 0x080F0C88)
+        self.vals, self.texts, self.posts, self.binds = {}, [], [], []
+        m.stub(0x0809A830, lambda: self.copy(self.vals))
+        m.stub(0x0809AD74, lambda: m.uc.mem_write(m.arg(2), b"loop.wav\0"))
+        m.stub(0x080C3B98, lambda: self.texts.append((m.arg(0) - VIEW, m.cstr(m.arg(1)))))
+        for a in (0x080A5480, 0x080A3DEC, 0x080C6078, 0x080C4DD6, 0x080C4DF0, 0x080A401C, 0x080BD398, 0x080BD74E,
+                  0x080C6004, 0x080B0480, 0x080A5210):
+            m.stub(a)
+        m.stub(0x080A331A, lambda: m.uc.mem_write(m.arg(0) + 0x30, bytes([m.arg(1) & 0xFF])))   # a knob's grey flag
+        m.stub(0x080AED14, lambda: self.posts.append((m.r16(m.arg(1)), m.r32(m.arg(1) + 0xC), m.r32(m.arg(1) + 0x10))))
+        m.uc.hook_add(UC_HOOK_CODE, lambda *a: self.binds.append((m.arg(0), m.arg(1), m.arg(2) - VIEW)),
+                      begin=0x080A7EE0, end=0x080A7EE0)
+        m.w32(VIEW + 0x2390, 192000)                         # the file's length
+        m.w32(VIEW + 0x47C8 + 8, 400)                        # the marker stepper's counts per step
+        m.uc.mem_write(VIEW + 0x29C, struct.pack("<H", 0x12))
+        m.uc.mem_write(VIEW + 0x3740, b"\x01")               # turns go to the knobs (not the popup list)
+        m.w32(GUI_MS, 10_000)
+        sdram(m)                                             # the Slip knob's hold on 0 lives in cw_bank
+        m.w32(BANK, 0)
+
+    def copy(self, vals):
+        rows = sorted(vals.items())
+        self.m.uc.mem_write(VENT, b"".join(struct.pack("<HHi", i, 0, v) for i, v in rows))
+        self.m.w32(VIEW + 0x2370 + 4, VENT)
+        self.m.uc.mem_write(VIEW + 0x2370 + 10, struct.pack("<HH", len(rows), 96))
+
+    def msg(self, handler, mid, a=0, b=0, pad=0x12):
+        self.m.uc.mem_write(VMSG, struct.pack("<HHIHHiiI", mid, 0, 0x080CFBA4, pad, 0, a, b, 0))
+        self.m.call(handler, VIEW, VMSG, count=50_000_000)
+
+    def open(self, vals, was=0):
+        """the screen set up for the pad, which was in mode `was` the last time the view looked"""
+        self.vals = dict(vals)
+        self.copy({**vals, 0x8B: was})
+        self.binds.clear()
+        self.texts.clear()
+        self.m.call(0x080A54A0, VIEW, 0, count=50_000_000)
+
+    def stored(self, **upd):
+        """the app stored the pad's value(s) and posts 0x66: the view's refresh"""
+        self.vals.update({int(k[1:], 16): v for k, v in upd.items()})
+        self.msg(0x080A6D28, 0x66)
+
+    def turn(self, k, counts, t=None):
+        """one knob event (0x32: TL 0, BL 1, TR 2, BR 3) -> the knob's own post -> the view's forward; then the app
+        stores what was forwarded and posts 0x66. Returns (the knob's posts, the forwards)"""
+        if t is not None:
+            self.m.w32(GUI_MS, t)
+        self.posts.clear()
+        self.msg(0x080A6D28, 0x32, k, counts)
+        own, fwd = list(self.posts), []
+        for p_ in own:
+            self.posts.clear()
+            self.m.uc.mem_write(VMSG, struct.pack("<HHIHHiiI", p_[0], 0, 0x080CFBA4, 0, 0, p_[1], p_[2], 0))
+            self.m.call(0x080A66DC, VIEW, VMSG, count=50_000_000)
+            fwd += self.posts
+        for p_ in fwd:
+            if p_[0] == 0x6E:
+                self.vals[p_[1]] = p_[2]
+        if fwd:
+            self.msg(0x080A6D28, 0x66)
+        return own, fwd
+
+    def knob(self, name):
+        k = VIEW + KN12[name]
+        m = self.m
+        return dict(id=m.r32(k + 0x14), type=m.r8(k + 0x31), lo=m.r32(k + 0x14C), hi=m.r32(k + 0x150), step=m.r32(k + 0x28C),
+                    pending=m.r32(k + 0x290), idx=m.r32(k + 0x27C), start=m.r32(k + 0x288), n=m.r32(k + 0x280),
+                    acc=m.r32(k + 0x270), grey=m.r8(k + 0x30))
+
+    def shown(self, name):
+        """the knob's value as the turn would post it: type 0xd the pending position, else idx x step + start; others
+        idx + start"""
+        k = self.knob(name)
+        if k["type"] == 0xD:
+            return k["pending"] if k["pending"] != 0x7FFFFFFE else min(max(k["idx"] * k["step"] + k["start"], k["lo"]), k["hi"])
+        return k["idx"] + k["start"]
+
+    def text(self, name, off=0x9C):
+        t = [x for a, x in self.texts if a == KN12[name] + off]
+        return t[-1] if t else None
+
+    def wave(self):
+        m = self.m
+        return dict(on=m.r8(WV + 0x239), ls=m.r32(WV + 0x22C), le=m.r32(WV + 0x230), dirty=m.r8(WV + 0x32),
+                    slices=m.r8(WV + 0x238), startlen=m.r8(WV + 0x23A))
+
+    def state(self):
+        return {n: self.knob(n) for n in KN12} | {"wave": self.wave()}
+
+
+# ---- Clip: the setup binds the four knobs, the position pair stepped, ranged and valued in that order
+sc = Screen()
+sc.open(CLIP12)
+b_ = sc.binds
+st = sc.state()
+check(f"Clip setup: stock's three unbinds (TL, TR, BL), then the hook at BR binds TL 0x91 = 24 000, TR 0x92 = 72 000, BL "
+      f"Slip = 480, BR Loop Len = 3 through the stock binder with the store's values ({[(hex(i), v, hex(o)) for i, v, o in b_]})",
+      b_ == [(0, 0, 0x670), (0, 0, 0xC30), (0, 0, 0x950), (0x91, 24000, 0x670), (0x92, 72000, 0xC30), (P_SLIP, 480, 0x950),
+             (P_LOOPLEN, 3, 0xF10)], b_)
+check(f"  labels {[sc.text(n, 0x44) for n in ('TL', 'TR', 'BL', 'BR')]}, texts {[sc.text(n) for n in ('TL', 'TR', 'BL', 'BR')]} "
+      "(Slip as beats.ticks, Loop Len its name)",
+      [sc.text(n, 0x44) for n in ("TL", "TR", "BL", "BR")] == ["Loop Start:", "Loop End:", "Slip:", "Loop Len:"]
+      and [sc.text(n) for n in ("TL", "TR", "BL", "BR")] == ["24000", "72000", "+0.480", "1/4"], sc.texts[-12:])
+tl, tr = st["TL"], st["TR"]
+check(f"  TL Loop Start: type 0xd, a step of the setup's zoom (256 frames a pixel), 0 .. Loop End, at 24 000 (stock's binder "
+      f"alone leaves 0 .. 1000 with 1 000 shown: {tl}); TR Loop End: 24 000 .. the length 192 000, at 72 000 ({tr})",
+      (tl["type"], tl["step"], tl["lo"], tl["hi"], sc.shown("TL")) == (0xD, 256, 0, 72000, 24000)
+      and (tr["type"], tr["step"], tr["lo"], tr["hi"], sc.shown("TR")) == (0xD, 256, 24000, 192000, 72000), (tl, tr))
+check(f"  BL Slip type 1 at +480, BR Loop Len a list (type 5) at 1/4, none greyed ({st['BL']}, {st['BR']})",
+      st["BL"]["type"] == 1 and sc.shown("BL") == 480 and st["BR"]["type"] == 5 and sc.shown("BR") == 3
+      and not any(st[n]["grey"] for n in KN12), (st["BL"], st["BR"]))
+w_ = st["wave"]
+check(f"  the loop bracket drawn (Region Auto, Loop Mode on): [24 000, 72 000), shown, dirty; slice markers and the pink "
+      f"start bracket off as stock leaves them ({w_})", w_ == dict(on=1, ls=24000, le=72000, dirty=1, slices=0, startlen=0), w_)
+
+# stock (and the hooks bypassed): nothing bound, no bracket
+for nm, scr in (("stock", Screen(STOCK)), ("hooks bypassed", Screen(bypass=True))):
+    scr.open(CLIP12)
+    s2 = scr.state()
+    check(f"  on the {nm} image the same setup binds nothing (ids {[hex(s2[n]['id']) for n in KN12]}, types "
+          f"{[s2[n]['type'] for n in KN12]}) and draws no bracket ({s2['wave']['on']})",
+          all(s2[n]["id"] == 0 and s2[n]["type"] == 0 for n in KN12) and s2["wave"]["on"] == 0, s2)
+
+# ---- turns through the view: the knob posts, the view forwards to the app, the app stores and posts 0x66, the view
+# refreshes. TL and TR turn as stock's own Loop Start and Loop End knobs turn in Sample mode, where they are BL and BR:
+# the same screen in Sample mode at the same zoom, the same turns - the same posts and knob states, turn after turn
+sm = Screen()
+sm.open({**CLIP12, 0x8B: 0}, was=1)
+sm.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 256.0))
+sm.msg(0x080A66DC, 0xE5)                                   # Sample mode fits the whole file: zoomed in to the Clip's 256
+pos = lambda s_, n: {k: s_.knob(n)[k] for k in ("type", "lo", "hi", "step", "idx", "start", "pending")}
+seq = [(0, -400), (0, 1200), (2, -400), (2, 2800), (0, -8000), (2, -400 * 3)]
+clip_f, samp_f, alike, drawn = [], [], [], []
+for i, (k, c) in enumerate(seq):
+    sc.m.uc.mem_write(WV + 0x32, b"\x00")              # drawn: each turn moves the pair under a bracket that stays shown
+    clip_f += sc.turn(k, c, t=20_000 + 100 * i)[1]
+    samp_f += sm.turn({0: 1, 2: 3}[k], c, t=20_000 + 100 * i)[1]
+    alike.append(pos(sc, "TL") == pos(sm, "BL") and pos(sc, "TR") == pos(sm, "BR"))
+    w = sc.wave()
+    drawn.append((w["on"], w["dirty"], (w["ls"], w["le"]) == (sc.vals[0x91], sc.vals[0x92])))
+st = sc.state()
+ls, le = sc.vals[0x91], sc.vals[0x92]
+check(f"TL / TR turned slow and fast, down and up ({len(seq)} turns): the same posts as Sample mode's Loop Start / End knobs "
+      f"({clip_f}), the same steps, ranges and positions after each turn ({alike}); one step down from 24 000 posts 23 552, "
+      "the stepper cell below 24 000's, as stock's (the binder alone would post 999)",
+      clip_f == samp_f and len(clip_f) == len(seq) and all(alike) and clip_f[0] == (0x6E, 0x91, 23552), (clip_f, samp_f, alike))
+check(f"  each forwarded as 0x6e and stored; the refresh ranges each by the other (TL 0 .. {st['TL']['hi']}, TR "
+      f"{st['TR']['lo']} .. {st['TR']['hi']}) and the bracket follows: [{st['wave']['ls']}, {st['wave']['le']}), shown "
+      f"through every turn, each turn's new pair drawn and marked dirty (on, dirty, the stored pair: {drawn})",
+      all(x[0] == 0x6E and x[1] in (0x91, 0x92) for x in clip_f) and (st["TL"]["lo"], st["TL"]["hi"]) == (0, le)
+      and (st["TR"]["lo"], st["TR"]["hi"]) == (ls, 192000) and (st["wave"]["on"], st["wave"]["ls"], st["wave"]["le"]) == (1, ls, le)
+      and drawn == [(1, 1, True)] * len(seq), (st["TL"], st["TR"], st["wave"], ls, le, drawn))
+sc.m.uc.mem_write(WV + 0x32, b"\x00")
+sc.stored()
+check(f"a refresh that changes nothing leaves the waveform clean (dirty {sc.wave()['dirty']})", sc.wave()["dirty"] == 0)
+own, fwd = sc.turn(3, -800, t=20_300)
+check(f"BR Loop Len two list steps down: 1/16 (index 1), sent as a list change (0x3c) and forwarded as 0x6e 0x1ca "
+      f"({own}, {fwd}); text {sc.text('BR')}", own == [(0x3C, 1, P_LOOPLEN)] and fwd == [(0x6E, P_LOOPLEN, 1)]
+      and sc.text("BR") == "1/16" and sc.shown("BR") == 1, (own, fwd, sc.text("BR")))
+
+# Slip on BL: the same knob as on the Pos page, every turn coming back as a refresh. A refresh re-values only a value the
+# store holds differently: a set value parks the stepper mid-step, which on every turn would double the slow speed.
+def slip_run(round_trip, per_ms, events, sign=1, start=0):
+    s_ = Screen()
+    s_.open({**CLIP12, P_SLIP: start})
+    c, t = sign * int(per_ms * 16), 30_000
+    k = VIEW + 0x950
+    for i in range(8):
+        s_.m.uc.mem_write(k + 0x294 + 8 * i, struct.pack("<iI", c, t - 16 * (7 - i)))
+    s_.m.w32(k + 0x2D4, 0)
+    vals_ = []
+    for _ in range(events):
+        t += 16
+        if round_trip:
+            s_.turn(1, c, t=t)
+        else:
+            s_.m.w32(GUI_MS, t)
+            s_.m.call(0x080B0D54, k, c)
+        vals_.append(s_.shown("BL"))
+    return vals_, s_
+
+
+rt, s_ = slip_run(True, 0.7, 40)
+bare, _ = slip_run(False, 0.7, 40)
+check(f"BL Slip, slow (0.7 counts/ms, 40 events): every turn forwarded and refreshed gives the bare knob's values, 1 tick "
+      f"per 40 counts ({rt[-1]} vs {bare[-1]}; store {s_.vals[P_SLIP]}, text {s_.text('BL')})",
+      rt == bare and rt[-1] == 40 * 11 // 40 and s_.vals[P_SLIP] == rt[-1] and s_.text("BL") == "+0.011", (rt[-5:], bare[-5:]))
+rt, s_ = slip_run(True, 6, 20, sign=-1, start=300)
+bare, _ = slip_run(False, 6, 20, sign=-1, start=300)
+check(f"  fast down from +300 through the view: the 1/64 grid, stopping on 0 ({rt[:6]} ...), as the bare knob ({bare[:6]})",
+      rt == bare and rt[:5] == [240, 180, 120, 60, 0] and rt[-1] == 0 and s_.vals[P_SLIP] == 0, (rt, bare))
+s_.stored(_1c9=-1200)
+check(f"  a Slip the store gets from elsewhere is shown at the next refresh ({s_.shown('BL')}, {s_.text('BL')})",
+      s_.shown("BL") == -1200 and s_.text("BL") == "-1.240", (s_.shown("BL"), s_.text("BL")))
+
+# what the forward sends, the app stores (SetCellParam FUN_0809fa50, real): a Clip pad's store takes all four
+sp_posts = []
+sc.m.stub(0x0804C59C, lambda: sp_posts.append(("engine", sc.m.arg(1), sc.m.arg(2), sc.m.arg(3))))
+sc.m.stub(0x080B5758, lambda: sp_posts.append(("ui", sc.m.r16(sc.m.arg(1)), sc.m.r16(sc.m.arg(1) + 8))))
+CLS = 0x24079000
+sc.m.uc.mem_write(CLS, struct.pack("<HH", 0x2003, 0x4770))                 # movs r0, #3; bx lr: a pad store's class
+sc.m.w32(CLS + 0x10, CLS | 1)
+ST12, ENT12 = APP_PADS + 1 * 0xF0 + 2 * 0x30, 0x2407A000
+rows = sorted(CLIP12.items())
+sc.m.uc.mem_write(ENT12, b"".join(struct.pack("<HHi", i, 0, v) for i, v in rows))
+sc.m.w32(ST12, CLS + 0x10)
+sc.m.w32(ST12 + 4, ENT12)
+sc.m.uc.mem_write(ST12 + 10, struct.pack("<HH", len(rows), 96))
+CELL12 = 0x2407B000
+sc.m.uc.mem_write(CELL12, struct.pack("<IHH", 0, 0x0012, 0))
+got, sets12 = {}, ((0x91, 24576), (0x92, 71936), (P_SLIP, -60), (P_LOOPLEN, 1))
+for pid, v in sets12:
+    sp_posts.clear()
+    sc.m.call(0x0809FA50, APP, CELL12, pid, v, 0, count=20_000_000)
+    sc.m.call(0x08093E9C, ST12, pid)
+    got[pid] = (sc.m.uc.reg_read(66), [x for x in sp_posts])
+check(f"SetCellParam on the Clip pad's store (mode {CLIP12[0x8B]}) stores what the forward sends: Loop Start, Loop End, "
+      f"Slip, Loop Len, and posts each to the engine and the UI ({ {hex(k): v[0] for k, v in got.items()} })",
+      {k: v[0] & 0xFFFFFFFF for k, v in got.items()} == {0x91: 24576, 0x92: 71936, P_SLIP: (-60) & 0xFFFFFFFF, P_LOOPLEN: 1}
+      and all(any(x[0] == "engine" for x in v[1]) and any(x[0] == "ui" for x in v[1]) for v in got.values()), got)
+# ...and the engine's post is the {cell, id, value} the engine takes (the 0x39 message the Rig's Region and Loop Len runs
+# start from): what ties a turn on this screen to what the pad plays
+eng12 = {pid: [x[1:] for x in got[pid][1] if x[0] == "engine"] for pid, _ in sets12}
+check(f"  each posted to the engine as cell 0x102 (row 1, col 2), the id and the value ({ {hex(k): v for k, v in eng12.items()} })",
+      all(eng12[pid] == [(0x102, pid, v & 0xFFFFFFFF)] for pid, v in sets12), eng12)
+
+# ---- the zoom: msg 0xe5 (no refresh follows it) re-steps the pair, keeping range and value, as Sample mode's
+for s_ in (sc, sm):
+    s_.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 16.0))
+    s_.msg(0x080A66DC, 0xE5)
+st = sc.state()
+check(f"zoom to 16 frames a pixel (msg 0xe5): TL and TR step 16, same ranges and values ({st['TL']['step']}, "
+      f"{st['TR']['step']}; {sc.shown('TL')}, {sc.shown('TR')}), as Sample mode's pair",
+      (st["TL"]["step"], st["TR"]["step"], st["TL"]["hi"], st["TR"]["lo"], sc.shown("TL"), sc.shown("TR")) == (16, 16, le, ls, ls, le)
+      and pos(sc, "TL") == pos(sm, "BL") and pos(sc, "TR") == pos(sm, "BR"), (st["TL"], st["TR"]))
+f1, f2 = sc.turn(2, 400, t=40_000)[1], sm.turn(3, 400, t=40_000)[1]
+check(f"  TR one step up then: {f1}, a pixel at that zoom, as Sample mode's ({f2})", f1 == f2 == [(0x6E, 0x92, le + 16)], (f1, f2))
+sc.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 0.5))
+sc.msg(0x080A66DC, 0xE5)
+check(f"  a zoom under one frame a pixel (0.5) steps 1 frame ({sc.knob('TL')['step']}, {sc.knob('TR')['step']})",
+      sc.knob("TL")["step"] == 1 and sc.knob("TR")["step"] == 1)
+
+# ---- the bracket shows what Region plays (the engine's rule, is_loop), marked dirty only when it changes
+br = Screen()
+br.open(CLIP12)
+cases = [("Region File", dict(_1c8=FILE), 0), ("Auto, Loop Mode None", dict(_1c8=AUTO, _8e=0), 0),
+         ("Loop, Loop Mode None", dict(_1c8=LOOP), 1), ("Loop, the whole file [0, 192 000)", dict(_91=0, _92=192000), 0),
+         ("Loop, [0, 191 999] (a whole-file smpl loop)", dict(_92=191999), 0), ("Loop, [1, 191 999)", dict(_91=1), 1),
+         ("Loop, Loop End past the file", dict(_92=192001), 0), ("Loop, Loop Start = Loop End", dict(_91=50000, _92=50000), 0),
+         ("Auto, Loop Mode on, [24 000, 72 000)", dict(_1c8=AUTO, _8e=1, _91=24000, _92=72000), 1),
+         ("Loop End moved while Region plays the loop: [24 000, 96 000)", dict(_92=96000), 1),
+         ("Slip changed: nothing moves", dict(_1c9=-30), 1)]
+got_, ok_ = [], True
+for name, upd, want in cases:
+    before = br.wave()
+    br.m.uc.mem_write(WV + 0x32, b"\x00")
+    br.stored(**upd)
+    w = br.wave()
+    moved = w["on"] != before["on"] or (w["on"] and (w["ls"], w["le"]) != (before["ls"], before["le"]))
+    got_.append((name, w["on"], w["dirty"]))
+    ok_ &= w["on"] == want and w["dirty"] == moved and (not want or (w["ls"], w["le"]) == (br.vals[0x91], br.vals[0x92]))
+check(f"the bracket at each refresh: shown exactly when Region plays the loop, at [Loop Start, Loop End), dirty only when "
+      f"it changed, shown or moved ({[(n, o, d) for n, o, d in got_]})",
+      ok_ and [o for _, o, _ in got_] == [w_ for _, _, w_ in cases] and got_[-2][1:] == (1, 1), got_)
+MK = 0x2407C000
+sl = Screen()
+sl.m.uc.mem_write(MK, struct.pack("<3I", 0, 64000, 128000))
+sl.m.w32(VIEW + 0x2398, MK)
+sl.m.w32(VIEW + 0x2398 + 4, 3)
+sl.m.w32(WV + 0x184, MK + 0x100)
+sl.open(CLIP12)
+w = sl.wave()
+check(f"a Clip pad with slice markers: the bracket beside them, the markers still shown (FUN_080c6edc would hide them) ({w})",
+      w["on"] == 1 and w["slices"] == 1 and (w["ls"], w["le"]) == (24000, 72000), w)
+
+# ---- the other modes: the screen exactly as with the three hooks taken out - Sample, Granular, Slicer, set up, zoomed,
+# refreshed, and Sample after Clip (the Clip binding leaves nothing behind)
+for name, steps in (("Sample", [0]), ("Granular", [3]), ("Slicer", [2]), ("Sample after Clip", [1, 0])):
+    runs = []
+    for scr in (Screen(), Screen(bypass=True)):
+        scr.m.w32(WV + 0xC, 476)
+        was = 0 if steps[0] else 1
+        for mode in steps:
+            scr.open({**CLIP12, 0x8B: mode}, was=was)
+            was = mode
+        scr.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 64.0))
+        scr.msg(0x080A66DC, 0xE5)
+        scr.stored(_91=30000)
+        runs.append((scr.state(), list(scr.texts), list(scr.binds)))
+    # after Clip, the knobs' steppers start where the Clip binding left them (stock's reset keeps a stepper), so Sample's
+    # own values park them mid-step at the same index: the accumulator differs by half a step, nothing else
+    strip = lambda st_: {k: ({kk: vv for kk, vv in v.items() if kk != "acc"} if k in KN12 and len(steps) > 1 else v) for k, v in st_.items()}
+    acc = [(runs[0][0][n]["acc"], runs[1][0][n]["acc"], runs[0][0][n]["idx"]) for n in KN12]
+    check(f"{name}: knobs, texts, binds and waveform flags as with the Waveform hooks taken out (TL {hex(runs[0][0]['TL']['id'])}, "
+          f"bracket {runs[0][0]['wave']['on']})" + (f"; the steppers' accumulators parked mid-step at the same index ({acc})"
+                                                     if len(steps) > 1 else ""),
+          (strip(runs[0][0]), runs[0][1:]) == (strip(runs[1][0]), runs[1][1:])
+          and (len(steps) == 1 or all(a // 400 == b // 400 == i for a, b, i in acc)),
+          {k: (runs[0][0][k], runs[1][0][k]) for k in runs[0][0] if runs[0][0][k] != runs[1][0][k]})
+
+# New Rec and New Multi bind nothing (stock's bind block has no branch for modes 4 and 5): after Clip the knobs keep
+# these rows there, as on stock they keep Sample's after Sample. A zoom change there leaves them and the bracket alone.
+for mode in (4, 5):
+    nr = Screen()
+    nr.open(CLIP12)
+    nr.open({**CLIP12, 0x8B: mode}, was=1)
+    nr.m.uc.mem_write(WV + 0x239, b"\x00")
+    before = nr.state()
+    nr.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 16.0))
+    nr.msg(0x080A66DC, 0xE5)
+    after = nr.state()
+    check(f"{('New Rec', 'New Multi')[mode - 4]} after Clip: nothing rebound ({[hex(after[n]['id']) for n in KN12]}); a zoom change "
+          f"there re-steps nothing (TL step {after['TL']['step']}) and draws no bracket ({after['wave']['on']})",
+          before == after and after["TL"]["step"] == 256 and after["wave"]["on"] == 0, (before["TL"], after["TL"], after["wave"]))
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

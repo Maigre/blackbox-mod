@@ -245,14 +245,16 @@ from the Pads LOOP knobs (P5) or CC (P6).
 | **P0 setup + pipeline** | fork `Maigre/blackbox-mod` (`main` = upstream mirror, `maigre` = integration), mgr-ran toolchain, stock image at `/srv/dev/firmware/`, `check.sh` green on Linux (host build → gcc `.so`), fork-only commit (`src/release.h` RELEASE_NAME "BBLOOP 1" ≤8 chars, distinct BUILD letter), build cave-only (`patch.py cave`) + full-set images, hub mint + arming | **Gate 0**: cave-only image WITHOUT `BBEXTRA.BIN` boots, TOOLS shows our name, pads play; then the full set (restart loop yes/no = data for the maintainer); back to stock | machine 1 d · bench 0.5 h |
 | **P1 RE** | the table above; notes `projects/blackbox-mod/notes/`; Unicorn gates incl. the class-B process harness | — | 2–3 d |
 | **P2 Clip Window v1 = Slip only (M0)** | `src/clipwin.c`, `patches/clipwin.py`, `test_clipwin.py`, Slip (+Fine) rows, chain lines, README bullet; `feat/slip` for a PR | **Gate 2** (click vs click, below) | 1–2 d · 0.5 h |
-| **P3 Region + Loop Len + Waveform knobs** (= Workflow 1 complete) | Region Auto\|File\|Loop (+ Beat Count Auto from region), Loop Len (KP3 anchor), Clip-mode Waveform knobs, Slip reset | **Gate 3**: workflow (a) on a real song with no Trim; Loop Len 1/4 = one-beat stutter, Off = whole loop in phase, no click at the region edge; save/power-cycle/reload keeps all values | 3–5 d · 1 h |
+| **P3 Region + Loop Len + Waveform knobs** (= Workflow 1 complete) | Region Auto\|File\|Loop (+ Beat Count Auto from region), Loop Len (KP3 anchor), Clip-mode Waveform knobs, Slip reset | **Gate 3**: workflow (a) on a real song with no Trim; Loop Len 1/4 = one-beat stutter, Off = whole loop in phase, no click at the region edge; save/power-cycle/reload keeps all values; installed with this build's `BBEXTRA.BIN` beside `BLACKBOX.bin` (D-017: Loop Len runs from bank 2), TOOLS shows no `!` | 3–5 d · 1 h |
 | **P4 Looper FX v1** (= Workflow 2 live part) | `src/looper.c` (+ ring DSP in bank 2 if > 2 KB, else bank 1), `patches/looper.py`, `test_looper.py`: Looper type in the DJ FX list (or Master FX fallback), SDRAM ring, touch = loop in on the grid, X = Loop Len, Y = HPF, knobs Source/Max Len/Slip/Hold, release = live | **Gate 4**: hardware playing into IN + a BB drum loop; touch catches the bar that was playing, in time; X from 1 bar down to 1/16 and back without clicks; Y sweeps; lift = live; `Hold` latches; `Source: In` excludes the BB's own pads; CPU load readout stays < ~85 % | 4–6 d · 1 h |
 | **P5 Save to slot + capture shortcuts + doc** | `Save` gesture (stock recorder resample, Loop Len/Slip copied to the pad), S-B1 `Loop Rec` row, S-B2 record-over, S-B3 recorded-clip defaults, S-C1 Pads LOOP knobs, `LOOPER.md` | **Gate 5**: catch → Save → the pad plays the same loop in phase with the live one, Loop Len/Slip carried; 4 slots filled in a 2-min jam with the Launchpad-style controller, one-press re-takes | 3–4 d · 1 h |
 | **P6 MIDI CC + extras** | Learn → Slip/Loop Len per pad and for the looper; then optional: Repitch stretch, direct memory→WAV save, `Y Ctl` selector / Wet, second-slot FX layer, per-pad XY | one gate each (CC: no zipper, Learn survives reload; Repitch: a 118-BPM loop at 120 with no stutter) | 2–6 d each |
 
 Feature-only build is not practical (registration/defaults/SDRAM chain through the comp/master/duck sets) → Thomas's
-unit runs the **full JOEBOX 1 set + ours, without `BBEXTRA.BIN`**; the feature is inert at default settings
-(pass-through everywhere), so behaviour = JOEBOX 1 until a row is changed.
+unit runs the **full JOEBOX 1 set + ours**, through P2 without `BBEXTRA.BIN`, **from P3 with the `BBEXTRA.BIN` of
+the same build** (D-017: Loop Len's take is in bank 2; without it Loop Len does nothing, and an older payload up
+there also switches Prism, Confetti and the inserts off); the feature is inert at default settings (pass-through
+everywhere), so behaviour = JOEBOX 1 until a row is changed.
 
 ## PR strategy (upstream j3threejay/blackbox-mod)
 
@@ -347,8 +349,8 @@ unit runs the **full JOEBOX 1 set + ours, without `BBEXTRA.BIN`**; the feature i
 | Sync maths inlined/un-doctorable | per-site thunks on the shared callee; else arch C (anchored mapping in the reader) |
 | position is 64-bit fixed point we can't set | arch C never sets stock's position; B4 only doctors inputs |
 | Beat Count Auto app-side | v1 explicit Beat Count with Region=Loop; v2 hook |
-| cave space (~4.5 KB) | ≈2.5 KB estimate; slip names via stock pointers; Slip Fine deferrable; nothing to bank 2 |
-| JOEBOX 1 restart bug | no bank-2 dependency → install without `BBEXTRA.BIN`; fault recorder on; stock reinstall from the card always works |
+| cave space (~4.5 KB) | ≈2.5 KB estimate; slip names via stock pointers; Slip Fine deferrable. **Measured**: Region + Loop Len + the Waveform knobs filled it (16 B free on feat/region); overflow goes to bank 2 as leaf code behind `b2_live()` (D-017: Loop Len's take and its window; the sizes as built: `notes/re/README.md` question 5) |
+| JOEBOX 1 restart bug | found and fixed in 37.0.2 (D-013). Through P2 no bank-2 dependency (install without `BBEXTRA.BIN`); from P3 Loop Len needs it (D-017): install `BLACKBOX.bin` and `BBEXTRA.BIN` from the same build; fault recorder on; stock reinstall from the card always works |
 | doctored clock also feeds launch quantization at the same call | prefer hooking `0x08069C64` if it is target-only; else per-site thunk |
 | DJ FX type list not table-driven | Looper in JOEBOX's Master FX slot (`src/master.c` list) with the XY page's touch/X/Y forwarded to it; worst case a dedicated knob page without XY (X/Y on two knobs) |
 | Looper DSP needs bank 2 (cave left ≈ 2 KB after the Clip Window) | design the ring/HPF as a bank-2 leaf (Confetti pattern, `BANK2_SRCS`); then `BBEXTRA.BIN` is required → investigate JOEBOX 1's restart bug in `src/b2load.c` first (our unit's Gate 0 data point), or trim bank-1 code (slip names via stock pointers) |
