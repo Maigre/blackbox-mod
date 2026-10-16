@@ -371,6 +371,17 @@ check(f"clipwin_tick with a fresh block: the bank is set up (magic '{CW_MAGIC.to
       "polled per call",
       u32(e, BANK) == CW_MAGIC and e.r32(BANK + 4) == 1 and bank_slip(e, 0) == 960 and bank_slip(e, 1) == 0,
       (hex(u32(e, BANK)), e.r32(BANK + 4), bank_slip(e, 0), bank_slip(e, 1)))
+# a bank left by another layout (SDRAM keeps its contents through a reset; master_alloc clears only the magic): the
+# first call clears all of cw_bank, and nothing past it
+e.uc.mem_write(BANK, b"\xa5" * 0x800)
+e.w32(BANK, CW_MAGIC - 1)
+e.call("clipwin_tick", 0)
+got = bytes(e.uc.mem_read(BANK, 0x800))
+check(f"a stale bank (the magic of another layout, every other byte 0xa5): the first call zeroes all {B_SIZE:#x} bytes of "
+      f"cw_bank but what that poll wrote (magic, scan 1, pad 1's Slip 960), and leaves the rest of its 0x800 alone",
+      u32(e, BANK) == CW_MAGIC and e.r32(BANK + 4) == 1 and bank_slip(e, 0) == 960
+      and got[8 + 4:B_SIZE] == bytes(B_SIZE - 12) and got[B_SIZE:] == b"\xa5" * (0x800 - B_SIZE),
+      (hex(u32(e, BANK)), e.r32(BANK + 4), bank_slip(e, 0), [hex(i) for i in range(12, B_SIZE) if got[i]][:4]))
 for _ in range(15):
     e.call("clipwin_tick", 0)
 want = [max(-3840, min(3840, values.get(q, 0))) for q in range(16)]
@@ -2826,6 +2837,26 @@ check(f"Loop Len 1/2 on a 5-beat clip with Sync 1/2 (steps of {r.made[0]['tps']}
       r.made[0]["tps"] == 2400 and on and on[4] == 960 and on[3] == 1 and on[2] == 1920 and len(sg) >= 4
       and all(x[2] == 48000 + 24000 * (((x[1] * 960 - 1920) % 1920) // 960) for x in sg) and {x[2] for x in sg} == {48000, 72000}
       and n_ > 80000 and err <= 0.02 and bad_ == 0 and same_starts and same_gain(st_, cw, 288300) == 0, (on, sg[:8], n_, err, bad_))
+
+# Loop Len's window is in bank 2 (clipwin_b2.c, cw_window): without this build's payload there (its header gone, so
+# b2_live() says no) Loop Len stays Off and is not taken. L2's run, Loop Len 1/16 set and then Off: bit for bit the run
+# where it is never set, the Sync never forced, and cw_window never entered
+entered = []
+
+
+def no_bank2(rr):
+    rr.uc.mem_write(0x08100000, bytes(16))
+    rr.uc.hook_add(UC_HOOK_CODE, lambda *a: entered.append(1), begin=S["cw_window"] & ~1, end=S["cw_window"] & ~1)
+
+
+kw = dict(frames=96000, at=193000, blocks=1900, vals={P_SYNC: 3})
+nb = scenario(pre=ll_pre({1000: 1, 1750: 0}), setup=no_bank2, **kw)
+rf = scenario(pre=ll_pre({}), **kw)
+ok_, d_ = same(rf, nb)
+check(f"no bank 2 (its header wiped): Loop Len 1/16 set and then Off plays as if it had never been set, bit for bit "
+      f"({d_}), never taken ({sorted({x[1] for x in nb.llog})}), Sync never forced ({sorted({x[4] for x in nb.llog})}), and "
+      f"bank 2's cw_window never entered ({len(entered)} entries)",
+      ok_ and {x[1] for x in nb.llog} == {0} and {x[4] for x in nb.llog} == {960} and not entered, (d_, len(entered)))
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

@@ -11,9 +11,10 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p out out/obj
 
-# The files that live in bank 2. Leaf DSP only: nothing the engine reaches before bank 2 has been checked, and
-# nothing holding state that bank 1 needs at boot.
-BANK2_SRCS="prism confetti insert_dsp rev4"
+# The files that live in bank 2. Leaf code only (the DSP, and clipwin_b2's Loop Len maths): nothing the engine
+# reaches before bank 2 has been checked (bank 1 calls in behind b2_live()), and nothing holding state that bank 1
+# needs at boot.
+BANK2_SRCS="prism confetti insert_dsp rev4 clipwin_b2"
 # BANK 2 IS FOR LEAF DSP ONLY. A function the firmware reaches through a patched call site must stay in bank 1,
 # or a bad bank 2 faults before anything can check it - which is how 3.2.m's first cut would have boot-looped.
 # munchi.o holds munchi_process, munchi_register, munchi_list and fx_screen_msg, all hooks, so it stays in bank 1.
@@ -23,6 +24,10 @@ BANK2_OBJS=""
 # One id for both banks in a build, so bank 1 can tell a matching bank 2 from a stale one. It is a hash of the
 # bank 2 sources and the flags, NOT a timestamp: identical code has to give an identical id, or reflashing an
 # older image would need bank 2 reprogrammed even though the payload up there is already right.
+# The headers bank 2 code includes (rev4.h, insert.h, clipwin.h) are left out on purpose: bank 1 pairs on the
+# payload's sum, not the id (below), and a bank-1-only edit there - a comment, a cw_bank field appended - must not
+# change the id of a byte-identical payload, which would switch every bank 2 feature off until a reflash. What bank 2
+# is compiled against is pinned by _Static_assert in clipwin.h instead.
 B2_ID=$(for b in $BANK2_SRCS; do cat "src/$b.c"; done | cat - src/b2head.c | shasum -a 256 | cut -c1-8 | awk '{printf "0x%s", $1}')
 
 CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-builtin -Wall -Wextra -Werror -DB2_ID=$B2_ID -DB2LOAD_WRITE=${B2LOAD_WRITE:-1}"

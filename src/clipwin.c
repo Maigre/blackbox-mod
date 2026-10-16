@@ -69,8 +69,12 @@
  * re-grid would sound it at once); the poll tries again. Off: every new segment plays its own step again, in phase.
  * Needs Quant and Sync (no grid, or no clock phase, without them); a W of the whole clip or more does nothing.
  * Setting: "Loop Len:" Off | 1/16 | 1/8 | 1/4 | 1/2 | 1 bar | 2 bars | 4 bars after Slip, saved as "cliplooplen".
+ * Its window (the frames a segment plays, cw_window) is in flash bank 2, clipwin_b2.c: leaf maths, called only when
+ * b2_live() says the payload there is this build's. Without it Loop Len stays Off (and is not taken).
  */
 #include <stdint.h>
+
+#include "clipwin.h"
 
 #pragma GCC optimize("Os", "no-tree-loop-distribute-patterns")
 
@@ -137,40 +141,6 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define TYPE_INT    1
 #define APP_PADS    (0x24020088u + 0x1840u)   /* the app's pad stores: + row * 0xf0 + col * 0x30 */
 
-/* class-B pad ('L', vtable 0x080d0890) */
-#define PAD_CLASS   0x04             /* u8 0x4c */
-#define PAD_SIBLING 0x08             /* the cell's class-H ('H') object, the next module (notes/re/x3) */
-#define PAD_ID      0x18             /* u32 row << 8 | col; bank << 16 (0 for the pads) */
-#define PAD_SOURCE  0x24
-#define PAD_ON      0x29             /* u8 Clip or Slicer mode active */
-#define PAD_LOOP    0x1f4            /* u8 Loop Mode (0x8d) on */
-#define PAD_SYNCED  0x1f5            /* u8 1: Quant and Sync are both not None (stock's, from the two) */
-#define PAD_LAUNCH  0x1f8            /* u8 Launch Mode + 1: 1 Trigger, 2 Gate, 3 Toggle */
-#define PAD_FPS     0x1fc            /* f32 source frames per step */
-#define PAD_STEP_OUT 0x204           /* f32 output samples per step: a segment's countdown + 256 (FUN_08065550) */
-#define PAD_TPS     0x208            /* i64 ticks per step */
-#define PAD_STEPS   0x210            /* u32 steps n */
-#define PAD_SYNC    0x220            /* i64 sync step, ticks: SYNC_SLICE = Sync Slice */
-#define PAD_WRAP_GRID 0x230          /* i64 the wrap's grid, ticks: min(Quant, clip) */
-#define PAD_SLICES  0x250            /* u32 slice markers */
-#define PAD_SLICER  0x254            /* u8 */
-#define LAYER0      0x260            /* two layers (voices) of 0x410: + 0 u8 active */
-#define LAYER_SIZE  0x410
-#define SYNC_SLICE  0xf0000
-/* class-H ('H', vtable 0x080d06c8): the Sample-mode positions, kept in Clip mode too, source frames (x3) */
-#define H_CLASS     0x48
-#define H_LOOP_START 0xfc
-#define H_LOOP_END  0x100
-#define H_LOOP_MODE 0x108
-#define SEG0        0x30
-#define SEG_SIZE    0x70
-#define SEG_POS     0x08
-#define SEG_FRAC    0x1c
-#define SEG_DELAY   0x20
-#define SEG_STEP    0x34
-#define SEG_FIRST   0x3c
-#define SRC_BAD     0x10000000       /* fw_src_len's "the provider reported 0 frames" */
-
 /* knob widget (notes/re/a3) */
 #define KNOB_PARAM  0x14
 #define KNOB_TYPE   0x31
@@ -180,38 +150,8 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define KNOB_RING   0x294
 #define KNOB_FROZEN 0x2d8
 
-struct cw_latch {
-    int32_t rs, vlen, delta;         /* the region (v1: the whole file) and the shift, frames */
-    int32_t len;                     /* fw_src_len when latched: the file the region and the shift were made for */
-};
-
-struct cw_bank {
-    uint32_t magic, scan;
-    int32_t slip[16];                /* as last polled */
-    uint8_t *pad[16];                /* the engine's pad object, cached by H1 */
-    uint8_t valid[16];               /* bit k: latch[q][k] holds */
-    struct cw_latch latch[16][4];
-    uint8_t h1[16];                  /* bit k: slot k's segment was made through H1 (not a slice segment, H1') */
-    uint8_t hinted[16];              /* bit k: H2 has hinted rs for slot k's crossing of the region end */
-    uint32_t zero_at;                /* the knob: GUI ms of the last turn event held on 0 */
-    int8_t zero_dir;                 /* ...and the direction that turn was going */
-    uint8_t zero_hold;               /* 1 while a turn that reached 0 goes on */
-    uint8_t wrap;                    /* 1 + the pad whose wrap is recomputing right now (clipwin_wrap), else 0 */
-    struct {
-        int32_t rs, vlen;            /* the region the pad plays this pass, frames; vlen 0 = the whole file */
-    } region[16];
-    int32_t good[16][2];             /* the last loop points from the app's store that made sense (the fallback) */
-    int32_t origin[16];              /* Loop Len: the window's in-point, ticks into the clip */
-    uint8_t ll[16];                  /* Loop Len as taken (0 Off, else W = 240 << (ll - 1) ticks) */
-    uint8_t forced[16];              /* 1: Loop Len has forced the pad's Sync; Off gives the store's back */
-    int32_t sf[16][4];               /* Slip's part of latch[q][k].delta, frames (Loop Len's engage takes it out) */
-};
-#define CW_MAGIC  0x43574e34u        /* "CWN4": bumped with the layout (SDRAM keeps its contents through a reset) */
-#define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
-_Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
-_Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
-
 uint8_t *master_block(void);         /* master.c: the boot-time SDRAM block, or 0 */
+int b2_live(void);                   /* cpu.c: may bank 2 be run (this build's payload, read clean) */
 int clip_read(float rate, uint8_t *pad, uint8_t *filter, int32_t pos, int32_t pos_hi, int n, int *used, float *frac,
               void *scratch, void *out, void **result);
 int clip_read_ring(float rate, uint8_t *pad, uint8_t *filter, int32_t real, int32_t rs, int32_t vlen, int n, int *used,
@@ -235,9 +175,8 @@ void clipwin_register(void *table)
 
 void clipwin_defaults(void *store)
 {
-    fw_store_add(store, P_REGION, 0); /* stock only overwrites ids already in a store: without these nothing saves */
-    fw_store_add(store, P_SLIP, 0);
-    fw_store_add(store, P_LOOPLEN, 0);
+    for (int p = P_REGION; p <= P_LOOPLEN; p++)   /* Region, Slip, Loop Len (0x1c8 .. 0x1ca), in that order */
+        fw_store_add(store, p, 0);   /* stock only overwrites ids already in a store: without these nothing saves */
 }
 
 /* ---- the engine ---- */
@@ -249,20 +188,10 @@ static struct cw_bank *bank(void)
         return 0;
     struct cw_bank *b = (struct cw_bank *)(mem + CW_OFFSET);
     if (b->magic != CW_MAGIC) {
-        for (int q = 0; q < 16; q++) {
-            b->slip[q] = 0;
-            b->pad[q] = 0;
-            b->valid[q] = 0;
-            b->h1[q] = 0;
-            b->hinted[q] = 0;
-            b->region[q].vlen = 0;
-            b->good[q][1] = 0;
-            b->ll[q] = 0;
-            b->forced[q] = 0;
-        }
-        b->zero_hold = 0;
-        b->wrap = 0;
-        b->scan = 0;
+        /* all of it zero: master_alloc clears only the magic, and SDRAM keeps the rest through a reset (a word loop,
+           smaller than clearing the fields that need it, which it covers) */
+        for (uint32_t *w = &b->magic; w < (uint32_t *)(b + 1); w++)
+            *w = 0;
         b->magic = CW_MAGIC;
     }
     return b;
@@ -270,7 +199,7 @@ static struct cw_bank *bank(void)
 
 static const void *pad_store(unsigned q)
 {
-    return (const void *)(APP_PADS + (q >> 2) * 0xf0u + (q & 3) * 0x30u);
+    return (const void *)(APP_PADS + (q + (q >> 2)) * 0x30u);   /* row * 0xf0 + col * 0x30 */
 }
 
 /* 0 .. 15 for one of the sixteen pads, -1 for anything else (the 17th class-B object, cell 0x401, would alias pad 1) */
@@ -437,9 +366,10 @@ static int32_t latch(struct cw_bank *b, int q, unsigned k, uint8_t *pad, void *s
     int32_t tps = *(int32_t *)(pad + PAD_TPS), tps_hi = *(int32_t *)(pad + PAD_TPS + 4);
     uint32_t steps = *(uint32_t *)(pad + PAD_STEPS);
     int clip = tps > 0 && !tps_hi && steps && steps < 0x10000 ? tps * (int32_t)steps : 0;
-    /* Loop Len: a window the steps divide, shorter than the clip (else the whole clip plays) */
-    int32_t W = loop_w(b, q), o = b->origin[q];
-    int loop = W && W < clip && !(W % tps) && !(o % tps);
+    /* Loop Len: the window's step for this one, from bank 2 (clipwin_b2.c's cw_window), so only with this build's
+       payload there */
+    int32_t wd = b->ll[q] && b2_live() ? cw_window(b, (unsigned)q, pad, k, clip) : CW_NO_WINDOW;
+    int loop = wd != CW_NO_WINDOW;
     /* Slip needs a clip to turn ticks into frames; a region does not: Beat Count Auto makes a region under half a
        beat a clip of 0 ticks, and its segments must still read the region, not the file's first frames. */
     if (!clip)
@@ -460,12 +390,8 @@ static int32_t latch(struct cw_bank *b, int q, unsigned k, uint8_t *pad, void *s
             f--;
     }
     b->sf[q][k] = f;
-    /* the window's step that lines up with this one, played as stock plays a step: its first frame is stock's float
-       product, truncated (a tick-domain formula is a frame off on a non-integer fps, notes/re/a2) */
-    if (loop) {
-        uint32_t w = (uint32_t)(o + fold((int32_t)*(uint32_t *)(seg + SEG_STEP) * tps - o, W)) / (uint32_t)tps;
-        f += (int32_t)((float)w * *(float *)(pad + PAD_FPS)) - start;
-    }
+    if (loop)
+        f += wd;
     f = fold(f, vlen);
     struct cw_latch *l = &b->latch[q][k];
     l->rs = rs;
@@ -612,7 +538,9 @@ void clipwin_tick(uint8_t *engine)
     /* Loop Len waits for a pad H1 has seen (it is taken from what the pad plays) */
     if (!pad || pad[PAD_CLASS] != 0x4c || pad_index(pad) != (int)q)
         return;
-    if (engine && (ll | b->ll[q]))
+    /* Loop Len's window is in bank 2 (cw_window): without this build's payload there it stays Off (the row is kept,
+       as stored), and is not taken either, so it forces no Sync */
+    if (engine && (ll | b->ll[q]) && b2_live())
         moved |= looplen(b, q, pad, engine, store, ll);
     if (!moved)
         return;
