@@ -125,6 +125,7 @@ From 3.1.n and earlier:
   it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
   playhead line shows the position without Loop Len. Loop Len runs from the second file (`BBEXTRA.BIN`, flash bank 2):
   without it the row is there and saves, but does nothing.
+  Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
   loop, so the pad plays the whole file until they are apart again. With Region on File, or on Auto with Loop Mode None,
   the two knobs still move the loop points but nothing is heard and no bracket shows.

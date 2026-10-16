@@ -451,6 +451,11 @@ Len at 0 B free), and `cw_looplen`, Loop Len's take (moved when the Waveform kno
   it measured +48 B of the 112 free.
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
+- A take right after a file change (review F1, release 37.2.0): Loop Len turned Off and on again within two Sync
+  steps of a new file loaded into the playing pad maps the sounding segment through its old latch (`cw_looplen` does
+  not check `len`, H2 does), so the in-point can be the old window's beat (probe: origin 0 where 1 920 is played).
+  Fix later in bank 1: `clipwin_tick` clears the valid bits of latches whose `len` differs from `fw_src_len` before
+  `looplen()` (a few bytes, no new bank-2 payload).
 
 **The Waveform knobs**
 
