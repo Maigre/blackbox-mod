@@ -1,5 +1,5 @@
-"""Clip Window: Slip and Region (src/clipwin.c, clipwin_thunk.S, patches/clipwin.py; notes/re/README.md sections 2, 3)
-under Unicorn.
+"""Clip Window: Slip, Region and Loop Len (src/clipwin.c, clipwin_thunk.S, patches/clipwin.py; notes/re/README.md
+sections 2, 3) under Unicorn.
 
 Real firmware runs for: the whole class-B pad block method (0x08068c64) block after block - process, voice start, the
 recompute (FUN_08064a94 with H3 in it, called at the wraps through H3'), segment start (FUN_08065550 with H1 and H3 in
@@ -7,7 +7,8 @@ it, FUN_08065290 with H1'), render, fades, the segment reader with JOEBOX's
 clip_read_b and clipwin_read in it, filter.c's clip_read and clip_read_ring, the stock clip reader and its kernel - then
 the engine's own clock advance (0x080696d8), in the control tick's order; the pad constructor and the real param-set
 for every setting (Pad Mode, Launch, Loop, Beat Count, Quant, Sync, Pitch, slice markers, a live Sync change, Launch
-Trigger relaunches, the transport stopped and its start message 0x57); the cell's class-H object (its constructor,
+Trigger relaunches, Toggle stops, the transport stopped and its start message 0x57) and where Loop Len forces Sync from
+clipwin_tick, which duck_block hands the engine; the cell's class-H object (its constructor,
 linked at pad + 8, its block method after the pad's, its param-set storing Loop Start / End / Mode from the same
 queue); clipwin_tick reading the app's pad stores
 through the stock settings lookup, once a block where duck_block calls it; filter.c's machine readers (every machine
@@ -30,7 +31,12 @@ Slip changes included; for a region (a2/r2/k_region.py, k_seam.py), stock playin
 (every sample at rs + (its frame + slip_f) mod vlen, the same gain away from the wraps; every recompute field), a
 change heard from the next wrap on (the one after when made in the last Sync step; the next on its own grid when it
 moves the wrap grid, against stock's live Beat Count change, which doubles) with no silence added, and no zero-gain
-sample nor doubling at a seamless wrap, a clip of one step included; for
+sample nor doubling at a seamless wrap, a clip of one step included; for Loop Len (a2/r2/k_looplen.py), the model's
+numbers (the in-point from the sounding segment's phase, a forced Sync re-gridding the playing segment, the launch held
+until it has sounded), the review's cases with absolute frames (a 44.1 kHz file whose re-indexed step runs ahead of its
+position, Off and on within a step, a stop and relaunch, Sync None) and every segment starting on (int)((float)w x
+fps) for the window's step w, then playing on, the gain of the run without it where Sync is not forced, no zero-gain
+sample added where it is; for
 the reader, the stock reader on the file turned circular; for a machine-mode pad, filter.c's
 own clip_read on the file turned circular (at the seam, on the last blocks before it, near the start: bit for bit) and
 test_clip.py's drop-sample model off the seam; for the seam hint, notes/re/a2's provider (a hint covers the block of
@@ -40,7 +46,10 @@ app writing the store from the knob (SetCellParam) and a negative value through 
 the seam (the source is in RAM: the hints are checked - H1's, and H2's one at rs per crossing segment - not whether the
 unit's cache still holds the hinted blocks when the read gets there: the miss counter 0x24013930, on the unit); Fidelity
 machine modes inside the whole process (the reader alone is); the playhead on the waveform (left stock); relaunches at
-the other recompute sites beyond the retriggers (a pad relaunched while it plays keeps its region: not run); the app's
+the other recompute sites beyond the retriggers (a pad relaunched while it plays keeps its region: not run); Loop Len
+with Pitch (rate != 1 is run once, a 44.1 kHz file), with a region change or a Beat Count change while it is engaged,
+and a Trigger / Gate relaunch while it is engaged; whether a preset load stops a pad (Loop Len's in-point resets on a
+stopped pad); the app's
 loader and Pad Mode change feeding the class-H object (posted here as the app posts them, x3); the knob's counts per
 revolution on the hardware (the acceleration's K); how it sounds; CPU on the chip.
 """
@@ -63,7 +72,7 @@ e = Emu(IMAGE, "out/cave.elf")
 img, stock = open(IMAGE, "rb").read(), open(STOCK, "rb").read()
 S = e.sym
 
-P_SLIP, P_REGION = 0x1C9, 0x1C8
+P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
 APP = 0x24020088
 APP_PADS = APP + 0x1840
@@ -72,9 +81,9 @@ PMEM, PCHECK, KEY = 0x38800F70, 0x38800F74, 0x5052534D
 BLOCK = 0xC0000000                                   # master.c's boot-time SDRAM block, here
 BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
 B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x4A8
-B_WRAP, B_REGION, B_GOOD = 0x4BE, 0x4C0, 0x540
-B_SIZE = 0x5C0                                       # sizeof(struct cw_bank)
-CW_MAGIC = 0x43574E33
+B_WRAP, B_REGION, B_GOOD, B_ORIGIN, B_LL, B_FORCED, B_SF = 0x4BE, 0x4C0, 0x540, 0x5C0, 0x600, 0x610, 0x620
+B_SIZE = 0x720                                       # sizeof(struct cw_bank)
+CW_MAGIC = 0x43574E34
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -234,20 +243,25 @@ sizes = {l.split()[3]: int(l.split()[1], 16) for l in subprocess.run(["arm-none-
 duck = code("duck_block", sizes["duck_block"])
 order = [int(x[2].lstrip("#"), 16) for x in duck if x[1] == "bl"]
 tail = img[S["duck_block"] - BASE:S["duck_block"] - BASE + sizes["duck_block"]]
-check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, before the pads), then the tail call into the "
-      "engine's control tick (0x08053164)", order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]]
-      and order.count(S["clipwin_tick"]) == 1 and struct.pack("<I", 0x08053165) in tail, [hex(t) for t in order])
+at_tick = [i for i, x in enumerate(duck) if x[1] == "bl" and int(x[2].lstrip("#"), 16) == S["clipwin_tick"]] or [1]
+r4_writes = [x for x in duck[:at_tick[0]] if x[2].split(",")[0].strip() == "r4" and not x[1].startswith(("str", "cmp", "tst"))]
+check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, before the pads) with r0 = the engine (duck_block's "
+      "own r0, kept in r4: 'mov r4, r0' is the only write to r4 before it), then the tail call into the engine's control tick (0x08053164)",
+      order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
+      and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
+      and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
-    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), then 30 "
-          "empty slots", got == (0x8D, 0xD2, 0x47, 0x94, P_REGION, P_SLIP) + (0,) * 30
+    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
+          "(0x1ca), then 29 empty slots", got == (0x8D, 0xD2, 0x47, 0x94, P_REGION, P_SLIP, P_LOOPLEN) + (0,) * 29
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:8]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
            "FUN_08064a94 (recompute)": (0x08064A94, 0x3C8, [0x08064B2C, 0x08064C5A]),
            "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080669D6, 0x08066E9E, 0x08066FAC]),
            "FUN_08066454": (0x08066454, 856, [0x08066622]), "FUN_080662e4 (stock clip reader)": (0x080662E4, 368, []),
            "FUN_080b0728": (0x080B0728, 36, [0x080B0746]), "FUN_080b0d54": (0x080B0D54, 772, [0x080B0DDE, 0x080B0E18]),
-           "the Clip Pos page": (0x080EF990, 72, [0x080EF998, 0x080EF99A]), "its class-0x4c copy": (0x080EF288, 72, [0x080EF290, 0x080EF292])}
+           "the Clip Pos page": (0x080EF990, 72, [0x080EF998, 0x080EF99A, 0x080EF99C]),
+           "its class-0x4c copy": (0x080EF288, 72, [0x080EF290, 0x080EF292, 0x080EF294])}
 for name, (start, size, at) in touched.items():
     allowed = {a + i for a in at for i in range(4 if a < 0x080EF000 else 2)}
     diff = {start + i for i in range(size) if img[start - BASE + i] != stock[start - BASE + i]}
@@ -310,15 +324,22 @@ check(f"... and 0x1c8 once, before it: 'Region:', a list (type {region_reg[0][1]
       f"{lists.get(P_REGION)}, saved as 'clipregion'", len(region_reg) == 1 and region_reg[0][2] == "Region:"
       and region_reg[0][5] == "clipregion" and {region_reg[0][1]} == list_type and lists.get(P_REGION) == ["Auto", "File", "Loop"]
       and regs.index(region_reg[0]) < regs.index(ours[0]), (region_reg, list_type, lists.get(P_REGION)))
-check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9)
-check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8 and 0x1c9 there",
-      not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF] and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP],
+ll_reg = [r for r in regs if r[0] == P_LOOPLEN]
+LL_NAMES = ["Off", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+check(f"... and 0x1ca once, after Slip: 'Loop Len:', a list of {lists.get(P_LOOPLEN)} (stock's own strings), saved as "
+      "'cliplooplen'", len(ll_reg) == 1 and ll_reg[0][2] == "Loop Len:" and ll_reg[0][5] == "cliplooplen"
+      and {ll_reg[0][1]} == list_type and lists.get(P_LOOPLEN) == LL_NAMES and regs.index(ll_reg[0]) > regs.index(ours[0]),
+      (ll_reg, lists.get(P_LOOPLEN)))
+check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
+      and ll_reg and len(ll_reg[0][2]) <= 9)
+check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8, 0x1c9 and 0x1ca there",
+      not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF] and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN],
       [hex(r[0]) for r in regs if 0x1C8 <= r[0] <= 0x1CF])
 xmls = [r[5] for r in regs if r[5]]
 dups = sorted({x for x in xmls if xmls.count(x) > 1})
 stock_xmls = [r[5] for r in stock_regs if r[5]]
-check("'clipslip' and 'clipregion' are unique among every registered xml name (and new to the image)",
-      all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock for x in ("clipslip", "clipregion")))
+check("'clipslip', 'clipregion' and 'cliplooplen' are unique among every registered xml name (and new to the image)",
+      all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock for x in ("clipslip", "clipregion", "cliplooplen")))
 if dups:
     info(f"xml names registered more than once (stock's own: {sorted({x for x in stock_xmls if stock_xmls.count(x) > 1})}): {dups}")
 check(f"the patched registrar still registers stock's {len(stock_regs)} ids under their stock xml names (JOEBOX relabels a few)",
@@ -334,8 +355,9 @@ del e.stubs[0x0804436C]
 count, cap = e.r16(PSTORE + 10), e.r16(PSTORE + 12)
 entries = [struct.unpack_from("<HHi", bytes(e.uc.mem_read(PARR + 8 * i, 8))) for i in range(count)]
 ids = [x[0] for x in entries]
-check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto) and Slip 0 once each ({count} of {cap} entries used)",
-      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP)) and cap == 96 and count < cap,
+check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0 and Loop Len 0 (Off) once each ({count} of "
+      f"{cap} entries used)", all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN))
+      and cap == 96 and count < cap,
       (count, cap, ids[-4:]))
 
 # ====================================================================================================== the poll (unit)
@@ -344,12 +366,13 @@ e.uc.mem_write(BANK, bytes(0x800))
 values = {0: 960, 1: -30, 2: 7, 3: 3839, 4: -3840, 5: 5000, 6: -9999, 9: 1}
 for q in range(16):
     store(e, q, {0x4: 500} if q == 7 else {0x4: 500, P_SLIP: values.get(q, 0)})
-e.call("clipwin_tick")
-check("clipwin_tick with a fresh block: the bank is set up (magic 'CWN2') and one pad polled per call",
+e.call("clipwin_tick", 0)
+check(f"clipwin_tick with a fresh block: the bank is set up (magic '{CW_MAGIC.to_bytes(4, 'big').decode()}') and one pad "
+      "polled per call",
       u32(e, BANK) == CW_MAGIC and e.r32(BANK + 4) == 1 and bank_slip(e, 0) == 960 and bank_slip(e, 1) == 0,
       (hex(u32(e, BANK)), e.r32(BANK + 4), bank_slip(e, 0), bank_slip(e, 1)))
 for _ in range(15):
-    e.call("clipwin_tick")
+    e.call("clipwin_tick", 0)
 want = [max(-3840, min(3840, values.get(q, 0))) for q in range(16)]
 check("sixteen calls read all sixteen pads' stores (row * 0xf0 + col * 0x30), clamped to +-3840; a store without the id reads 0",
       [bank_slip(e, q) for q in range(16)] == want, [bank_slip(e, q) for q in range(16)])
@@ -376,7 +399,7 @@ def done():
 
 def tick_until(q):
     for _ in range(16):
-        e.call("clipwin_tick")
+        e.call("clipwin_tick", 0)
         if (e.r32(BANK + 4) - 1) & 15 == q:
             return
 
@@ -397,7 +420,7 @@ for what, cls, cell_q in (("a cached object that is not a class-B pad", 0x48, 9)
     check(f"{what}: the new value is taken, nothing is dropped", done() == [0, 0, 0, 0] and bank_slip(e, 9) in (-480, 300), done())
 sdram(e, False)
 e.uc.mem_write(BANK, bytes(16))
-e.call("clipwin_tick")
+e.call("clipwin_tick", 0)
 check("no SDRAM block (master_alloc did not run): clipwin_tick writes nothing", bytes(e.uc.mem_read(BANK, 16)) == bytes(16))
 
 
@@ -569,10 +592,17 @@ class Rig:
     def _new(self, k, how, step, start, stock_pos, launch=0):
         self.nsid += 1
         self.sid[k] = self.nsid
+        ours = self.patched and self.q < 16
+        p = self.pad
         self.made.append(dict(sid=self.nsid, k=k, how=how, step=step, start=start, block=self.block, stock_pos=stock_pos, launch=launch,
                               valid_before=(bank_valid(self.m, self.q) >> k) & 1 if self.patched else 0,
-                              h1_before=(self.m.r8(BANK + B_H1 + self.q) >> k) & 1 if self.patched and self.q < 16 else 0,
-                              prefetch_at=len(self.prefetches)))
+                              h1_before=(self.m.r8(BANK + B_H1 + self.q) >> k) & 1 if ours else 0,
+                              prefetch_at=len(self.prefetches),
+                              # what H1 has to go on: the pad's steps (final here) and the bank's Loop Len
+                              tps=self.i64(p + 0x208), n=u32(self.m, p + 0x210),
+                              fps=struct.unpack("<f", bytes(self.uc.mem_read(p + 0x1FC, 4)))[0],
+                              ll=self.m.r8(BANK + B_LL + self.q) if ours else 0,
+                              origin=self.m.r32(BANK + B_ORIGIN + 4 * self.q) if ours else 0))
 
     def _on_h1(self):
         uc, m = self.uc, self.m
@@ -659,7 +689,7 @@ class Rig:
 
 
 def poll(r):
-    r.m.call("clipwin_tick")
+    r.m.call("clipwin_tick", r.engine, count=20_000_000)
 
 
 def starts(r):
@@ -671,19 +701,20 @@ def starts(r):
 
 
 def scenario(frames=96000, beats=4, quant=3, sync=3, at=287000, blocks=900, slip=0, others=None, pre=None, setup=None,
-             note=60, launch=2, loop=1, region=None, points=None, **kw):
+             note=60, launch=2, loop=1, region=None, points=None, vals=None, **kw):
     """A Clip pad (Launch Toggle, Loop On) with Slip `slip` (and Region `region`, if given) in its store, the app's other
     pads per `others`; the poll has seen the stores before the note (as on the unit, where the app writes its store
     before it posts). points = (Loop Start, Loop End, Loop Mode): posted to the cell's queue a block before the rest,
-    so its class-H object (h, implied) holds them, as the app's posts leave it."""
+    so its class-H object (h, implied) holds them, as the app's posts leave it. vals: more of the pad's store ({id: value},
+    e.g. Sync and Loop Len), from the start."""
     if points is not None:
         kw["h"] = True
     r = Rig(frames=frames, **kw)
     d = dict(others or {})
     d[r.q] = slip
     slips(r.m, d)
-    if region is not None:
-        store(r.m, r.q, {0x4: 500, P_SLIP: slip, P_REGION: region})
+    if region is not None or vals:
+        store(r.m, r.q, {0x4: 500, P_SLIP: slip, **({} if region is None else {P_REGION: region}), **(vals or {})})
     if r.patched:
         for _ in range(16):
             poll(r)
@@ -2358,6 +2389,443 @@ hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (("wr
 check(f"in a Region run, every write clipwin.c makes into the SDRAM block lands in cw_bank's {B_SIZE:#x} bytes (wrap and "
       f"region written: {hit})", w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w)
       and region_bank(r.m, 6) == (24000, 24000), (sorted({hex(a_) for a_, s_ in w if not BANK <= a_ < BANK + B_SIZE})[:4], region_bank(r.m, 6)))
+
+# ====================================================================================================== 11. Loop Len
+# Loop Len (README section 3, notes/re/a2 k_looplen; D-004): only a window of W ticks loops, on the clock, where the music
+# was when it was engaged. Each segment H1 makes plays the window's step that lines up with its own, w = (origin + ((j x
+# tps - origin) mod W)) / tps, from (int)((float)w x fps) (+ slip_f): stock's own product. origin = the phase of the
+# sounding segment that started last, rounded down to W. A W the steps do not divide forces the pad's Sync through the
+# class-B param-set (0x94), given back on Off as the app's store has it; never while a launch waits for its bar.
+# Reference: the research model's numbers (a2/r2/k_looplen.out: L1 origin 7 680, steps 3 and 0 replaying 192 000; L2
+# origin 1 200, Sync 1/16 forced, the next segment at 324 000 and every one after playing 30 000, Sync 1/4 back and step
+# 2 at 432 000 playing 48 000; L3 every later step replaying 48 000; L4 the engage held until the launch sounded, the
+# launch on its bar with +0x140 = 11 520), the same run with Loop Len never on (same gains, sample for sample, where the
+# Sync is not forced), and the formula above, evaluated per segment from what H1 saw.
+def f32(x):
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def fl(w, fps):
+    """stock's first frame of step w: vcvt.f32.u32, vmul.f32 by +0x1fc, vcvt.s32.f32 (truncation)"""
+    return int(f32(float(w) * fps))
+
+
+def want_first(m_, sf=0, vlen=None):
+    """the frame segment m_ starts on, from what H1 saw: its step, the pad's steps, the bank's Loop Len and origin"""
+    j, tps, n, o = m_["step"], m_["tps"], m_["n"], m_["origin"]
+    W = 240 << (m_["ll"] - 1) if m_["ll"] else 0
+    w = (o + (j * tps - o) % W) // tps if W and W < tps * n and not W % tps and not o % tps else j
+    f = fl(w, m_["fps"]) + sf
+    return f % vlen if vlen else f
+
+
+def ll_pre(events, slip=0, sync=3, region=None, then=None):
+    """pre_block: the pad's store as the app keeps it (Sync, Slip, Loop Len) with Loop Len set at the blocks in
+    `events` {block: value}; the bank's Loop Len state after each block's poll in rr.llog"""
+    def pre(rr):
+        if not hasattr(rr, "llog"):
+            rr.llog = []
+        q = rr.q
+        rr.llog.append((rr.block, rr.m.r8(BANK + B_LL + q), rr.m.r32(BANK + B_ORIGIN + 4 * q), rr.m.r8(BANK + B_FORCED + q),
+                        rr.i64(rr.pad + 0x220)))
+        if rr.block in events:
+            store(rr.m, q, {0x4: 500, P_SLIP: slip, P_SYNC: sync, P_LOOPLEN: events[rr.block],
+                            **({} if region is None else {P_REGION: region})})
+        if then:
+            then(rr)
+    return pre
+
+
+def taken(r, ll):
+    """the first block whose poll took Loop Len `ll`, and the state then (block, ll, origin, forced, Sync ticks)"""
+    for i, x in enumerate(r.llog):
+        if x[1] == ll and (i == 0 or r.llog[i - 1][1] != ll):
+            return x
+    return None
+
+
+def seg_firsts(d, after=0, rate=1.0):
+    """each segment that sounded alone somewhere, from sample `after`: (its first sample, step, the frame it started on,
+    read back from the first sample it sounds alone, at `rate` source frames a sample)"""
+    r = d["rig"]
+    first = {}
+    for x in r.reads:
+        first.setdefault(x[SID], x[AT])
+    out = []
+    for m_ in r.made:
+        s0 = first.get(m_["sid"])
+        idx = np.where(d["sid"] == m_["sid"])[0]
+        if s0 is None or not len(idx) or s0 < after:
+            continue
+        out.append((s0, m_["step"], int(round(d["frame"][idx[0]] - (d["base"] + idx[0] - s0) * rate))))
+    return sorted(out)
+
+
+def follows(d, sf=0, rs=0, vlen=None, after=0, rate=1.0, off=0.0, tol=0.02):
+    """every sample where one segment sounds (from `after`): plays rs + (want_first(its segment) + the samples since it
+    started x rate) mod vlen, read back `off` frames on (the reader's own at rate != 1). Returns (samples, max error,
+    samples off by more than `tol` frame)"""
+    r = d["rig"]
+    vlen = vlen or r.len
+    first = {}
+    for x in r.reads:
+        first.setdefault(x[SID], x[AT])
+    by = {m_["sid"]: m_ for m_ in r.made}
+    f, sid, base = d["frame"], d["sid"], d["base"]
+    at = base + np.arange(len(f))
+    ok = ~np.isnan(f) & (sid > 0) & (at >= after)
+    want = np.full(len(f), np.nan)
+    for s_ in set(sid[ok].tolist()):
+        m_ = by.get(s_)
+        if m_ is None or m_["how"] != "H1" or s_ not in first:
+            ok &= sid != s_
+            continue
+        sel = ok & (sid == s_)
+        want[sel] = rs + np.mod(want_first(m_, sf, vlen) + (at[sel] - first[s_]) * rate + off, vlen)
+    err = np.abs(f - want)[ok]
+    err = np.minimum(err, vlen - err)
+    return int(ok.sum()), float(err.max()) if len(err) else 9e9, int((err > tol).sum())
+
+
+def zeros_after(d, start):
+    g = d["gain"][:len(d["gain"]) - N]
+    return {int(x) + d["base"] for x in np.where(np.abs(g) < 1e-7)[0] if x + d["base"] >= start}
+
+
+def same_gain(a, b, start):
+    lo, w = window(a, b)
+    at = lo + np.arange(len(w["gain"][0]))
+    keep = at >= start
+    return int((np.abs(w["gain"][0][keep] - w["gain"][1][keep]) > 1e-6).sum())
+
+
+# L1: Quant 1 beat < Sync 1 bar, a 16-beat 384 000-frame clip launched on beat 2 (tick 8 640): stock's phase is its step
+# index, not ticks - launch. Engaged 1 bar inside step 2 (sounding frame ~195 520, phase ~7 821), Off two bars on.
+eng = (387520 - 200000) // N
+kw = dict(frames=384000, beats=16, quant=5, sync=1, at=200000, blocks=3900, vals={P_SYNC: 1})
+ref_ = audio(pre=ll_pre({}, sync=1), **kw)
+cw = audio(pre=ll_pre({eng: 5, eng + 1500: 0}, sync=1), **kw)
+r = cw["rig"]
+on, off = taken(r, 5), taken(r, 0) if taken(r, 5) else None
+off = next((x for x in r.llog if on and x[0] > on[0] and x[1] == 0), None)
+sg = seg_firsts(cw, 300000)
+n_, err, bad_ = follows(cw)
+zc, zr = zeros_after(cw, 200000), zeros_after(ref_, 200000)
+check(f"Loop Len 1 bar engaged inside step 2 of a 16-beat clip launched on beat 2 (Quant 1 beat < Sync 1 bar; taken at "
+      f"block {on and on[0]}, sample {on and 200000 + on[0] * N}): origin {on and on[2]} (a2/r2 k_looplen L1: 7 680; ticks - "
+      f"launch would give 3 840), Sync left alone; steps 3 and 0 replay the bar that was playing, from 192 000 ({sg[:4]})",
+      on and on[2] == 7680 and on[3] == 0 and on[4] == 3840 and sg[:3] == [(384000, 2, 192000), (480000, 3, 192000), (576000, 0, 192000)],
+      (on, sg[:4]))
+check(f"  Off two bars on (block {off and off[0]}): step 1 at 672 000 plays its own 96 000 again, in phase, as without Loop "
+      f"Len ({sg[3:4]}); every sample plays its segment's step of the window from its first frame ({n_} samples, max error "
+      f"{err:.4f}); summed gain = the run without Loop Len at every sample ({same_gain(ref_, cw, 200000)} differ), no zero-gain "
+      f"sample added ({len(zc - zr)})", off and sg[3:4] == [(672000, 1, 96000)] and n_ > 300000
+      and err <= 0.02 and bad_ == 0 and same_gain(ref_, cw, 200000) == 0 and not zc - zr, (off, sg[3:6], n_, err, bad_))
+
+# L2: the matched 4-beat clip, Sync 1/4, Loop Len 1/16 engaged inside step 1 (frame ~33 000): W < a Sync step, so the
+# pad's Sync is forced to 1/16 and stock re-grids the playing segment; Off one bar on gives Sync 1/4 back.
+kw = dict(frames=96000, at=193000, blocks=2600, vals={P_SYNC: 3})
+ref_ = audio(pre=ll_pre({}), **kw)
+cw = audio(pre=ll_pre({1000: 1, 1750: 0}), **kw)
+r = cw["rig"]
+on = taken(r, 1)
+off = next((x for x in r.llog if on and x[0] > on[0] and x[1] == 0), None)
+sg = seg_firsts(cw, 318000)
+during = [x for x in sg if x[0] < 418000]
+n_, err, bad_ = follows(cw)
+zc, zr = zeros_after(cw, 288300), zeros_after(ref_, 288300)
+check(f"Loop Len 1/16 engaged inside step 1 with Sync 1/4 (taken at sample {on and 193000 + on[0] * N}): origin {on and on[2]} "
+      f"(L2: 1 200), Sync forced to 1/16 (+0x220 {on and on[4]}, forced {on and on[3]}); the playing segment re-gridded, the "
+      f"next at 324 000 and every one after it, a 1/16 apart, replaying frame 30 000 ({during[:3]} ... {len(during)} segments)",
+      on and on[2] == 1200 and on[3] == 1 and on[4] == 240 and during and during[0][0] == 324000
+      and all(x[2] == 30000 for x in during) and [x[0] for x in during] == list(range(324000, 324000 + 6000 * len(during), 6000))
+      and len(during) >= 15, (on, during[:4], len(during)))
+after = [x for x in sg if x[0] >= 418000][:4]
+st_ = audio(frames=96000, at=193000, blocks=2600, image=STOCK, pre=lambda rr: rr.param(P_SYNC, 5) if on and rr.block == on[0]
+            else rr.param(P_SYNC, 3) if off and rr.block == off[0] else None)
+same_starts = [x[:2] for x in starts(r)] == [x[:2] for x in starts(st_["rig"])]
+check(f"  the timing is stock's own Sync change: every segment start and the summed gain at every sample as the stock image "
+      f"sent Sync 1/16 and 1/4 in those two blocks ({same_starts}, {same_gain(st_, cw, 288300)} samples differ)",
+      on and off and same_starts and same_gain(st_, cw, 288300) == 0, (starts(r)[:12], starts(st_["rig"])[:12]))
+check(f"  Off one bar on (block {off and off[0]}): Sync 1/4 given back (+0x220 {off and off[4]}, forced {off and off[3]}), the "
+      f"next segment step 2 on the beat at 432 000 playing 48 000, in phase ({after}); every sample plays its segment's "
+      f"step of the window ({n_} samples, max error {err:.4f}); no zero-gain sample added ({sorted(zc - zr)[:4]}), peak "
+      f"{cw['gain'].max():.3f}", off and off[3] == 0 and off[4] == 960 and after[:3] == [(432000, 2, 48000), (456000, 3, 72000),
+                                                                                 (480000, 0, 0)]
+      and n_ > 150000 and err <= 0.02 and bad_ == 0 and not zc - zr and cw["gain"].max() <= 1.0 + 1e-6, (off, after, n_, err, bad_, sorted(zc - zr)[:5]))
+
+# L3: a launch 300 samples late (+0x140 = 11 532), Loop Len 1/4 inside step 2: a one-beat stutter of the beat that was
+# playing - every later step replays 48 000, the summed gain stock's sample for sample
+kw = dict(frames=96000, at=288300, blocks=1800, vals={P_SYNC: 3})
+ref_ = audio(pre=ll_pre({}), **kw)
+cw = audio(pre=ll_pre({400: 3}), **kw)
+r = cw["rig"]
+on = taken(r, 3)
+sg = seg_firsts(cw, 336000)
+n_, err, bad_ = follows(cw)
+check(f"Loop Len 1/4 inside step 2 of a launch 300 samples late (+0x140 {r.layer()['launch_tick']}): origin {on and on[2]} "
+      f"(L3: 1 920), Sync 1/4 left alone; every step from 360 000 replays the beat at 48 000 ({sg[:6]}), every sample its "
+      f"segment's ({n_} samples, max error {err:.4f}); summed gain = the run without Loop Len ({same_gain(ref_, cw, 288300)} differ)",
+      r.layer()["launch_tick"] == 11532 and on and on[2] == 1920 and on[3] == 0 and sg[0] == (336000, 2, 48000)
+      and [x[2] for x in sg[1:7]] == [48000] * 6 and [x[0] for x in sg[:7]] == list(range(336000, 336000 + 7 * 24000, 24000))
+      and n_ > 100000 and err <= 0.02 and bad_ == 0 and same_gain(ref_, cw, 288300) == 0, (on, sg[:8], n_, err, bad_))
+
+# L4: Loop Len set while the launch waits for its bar (the note at 193 000, the bar at 288 000): nothing until the launch
+# has sounded - it keeps its bar, +0x140 and msg 0x1d - then taken from where it plays (origin 0), Sync forced to 1/16
+kw = dict(frames=96000, at=193000, blocks=1300, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({20: 1}), **kw)
+r = cw["rig"]
+on = taken(r, 1)
+sg = seg_firsts(cw, 0)
+n_, err, bad_ = follows(cw)
+check(f"Loop Len 1/16 set while the launch waits for its bar: not taken while it waits (taken at sample "
+      f"{on and 193000 + on[0] * N}, after the launch at {sg[0][0] if sg else None}); the launch on its bar with +0x140 "
+      f"{r.layer()['launch_tick']} and msg 0x1d; then origin {on and on[2]}, Sync 1/16 forced, every later segment replaying "
+      f"frame 0 ({sg[1:5]}; {n_} samples follow their segment, max error {err:.4f})",
+      on and 193000 + on[0] * N > 288000 and sg[0] == (288000, 0, 0) and r.layer()["launch_tick"] == 11520
+      and [b_ for b_, t_, _ in r.posted if t_ == 0x1D] and on[2] == 0 and on[3] == 1 and on[4] == 240
+      and all(x[2] == 0 for x in sg[2:]) and len(sg) >= 10 and n_ > 60000 and err <= 0.02 and bad_ == 0, (on, sg[:5], n_, err, bad_))
+
+# changing it live keeps the in-point: 1/4 engaged inside step 2 (in-point 1 920 = frame 48 000), then 1/8 (Sync forced to
+# 1/8), then 1/2 (the user's 1/4 divides the window again: given back): the window starts at 48 000 throughout, its
+# out-point moves
+kw = dict(frames=96000, at=287000, blocks=2200, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({400: 3, 900: 2, 1400: 4}), **kw)
+r = cw["rig"]
+t1, t2, t3 = taken(r, 3), taken(r, 2), taken(r, 4)
+sg = seg_firsts(cw, 340000)
+n_, err, bad_ = follows(cw)
+s8 = [x for x in sg if t2 and t3 and 287000 + t2[0] * N + 12000 <= x[0] < 287000 + t3[0] * N]
+s2 = [x for x in sg if t3 and x[0] >= 287000 + t3[0] * N + 12000]
+check(f"Loop Len changed live 1/4 -> 1/8 -> 1/2: the in-point stays (origin {t1 and t1[2]}, {t2 and t2[2]}, {t3 and t3[2]}); at "
+      f"1/8 Sync is forced to 1/8 (+0x220 {t2 and t2[4]}) and every step replays 48 000 ({s8[:3]}...); at 1/2 the user's "
+      f"Sync 1/4 is given back (+0x220 {t3 and t3[4]}, forced {t3 and t3[3]}) and the window [48 000, 96 000) plays in 1/4 "
+      f"steps, on the clock ({[x[2] for x in s2[:8]]}); every sample its segment's ({n_}, max {err:.4f})",
+      t1 and t2 and t3 and t1[2] == t2[2] == t3[2] == 1920 and t2[4] == 480 and t2[3] == 1 and t3[4] == 960 and t3[3] == 0
+      and s8 and all(x[2] == 48000 for x in s8) and len(s2) >= 4 and [x[0] % 24000 for x in s2] == [0] * len(s2)
+      and all(x[2] == 48000 + 24000 * ((x[0] // 24000) % 2) for x in s2) and n_ > 150000 and err <= 0.02 and bad_ == 0,
+      (t1, t2, t3, s8[:4], s2[:8], n_, err, bad_))
+
+# a fast file (88 615 frames, fps 22 153.75 at Sync 1/4): each step of the window starts on stock's own float product
+kw = dict(frames=88615, at=287000, blocks=1900, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({600: 4}), **kw)
+r = cw["rig"]
+on = taken(r, 4)
+sg = seg_firsts(cw, 287000 + 600 * N + 2048 + 24000)
+n_, err, bad_ = follows(cw)
+w_ = [44307 if (x[0] // 24000) % 2 == 0 else 66461 for x in sg]
+check(f"Loop Len 1/2 on 88 615 frames (taken in step 3, origin {on and on[2]}): the steps alternate (int)(2 x 22 153.75) = "
+      f"44 307 and (int)(3 x 22 153.75) = 66 461 ({[x[2] for x in sg[:6]]}); every sample its segment's ({n_}, max {err:.4f})",
+      on and on[2] == 1920 and len(sg) >= 5 and [x[2] for x in sg] == w_ and n_ > 100000 and err <= 0.02 and bad_ == 0,
+      (on, sg[:8], n_, err, bad_))
+
+# stacked: Region [24 000, 72 000) (Beat Count Auto: 2 beats), Slip 480 (slip_f 12 000), Loop Len 1/4 inside step 1 -
+# the window is the region's beat 2, shifted by Slip within the region: every step plays 24 000 + (24 000 + 12 000) mod
+# 48 000 on; gains as the same run without Loop Len (the seamless wrap included)
+kw = dict(frames=96000, beats=0, cell=0x102, points=REG, slip=480, blocks=1500, vals={P_SYNC: 3})
+ref_ = audio(pre=ll_pre({}, slip=480), **kw)
+cw = audio(pre=ll_pre({300: 3}, slip=480), **kw)
+r = cw["rig"]
+on = taken(r, 3)
+sg = seg_firsts(cw, 287000 + 300 * N + 2048 + 24000)
+n_, err, bad_ = follows(cw, sf=12000, rs=24000, vlen=48000)
+out, z, pk = inside(cw, 24000, 48000, 288300)
+check(f"Loop Len 1/4 on Region [24 000, 72 000) with Slip 480 (taken at origin {on and on[2]}): every later step starts on "
+      f"60 000 ({[x[2] for x in sg[:5]]}), every sample 24 000 + (its step's frame + 12 000) mod 48 000 ({n_}, max {err:.4f}); "
+      f"nothing outside the region, summed gain = without Loop Len ({same_gain(ref_, cw, 288300)} differ), {z} zero-gain samples",
+      on and on[2] == 960 and len(sg) >= 5 and all(x[2] == 60000 for x in sg) and n_ > 80000 and err <= 0.02 and bad_ == 0
+      and out == 0 and z == 0 and same_gain(ref_, cw, 288300) == 0, (on, sg[:6], n_, err, bad_, out, z))
+
+# where Loop Len does nothing: Quant None (no grid); Sync None (no clock phase: a1; forcing a Sync there would make
+# stock's None-to-synced re-grid double a whole step at gain 2); a window of the whole clip or more (2 bars on 4 beats);
+# a Slicer pad; Sync = Slice with markers - every read, fetch, sample and message as the same run without it, the pad's Sync
+# untouched (the poll still drops the pending step when it takes the value, and stock makes it again: one more prefetch;
+# on Sync = Slice with markers every segment starts in H1', so the poll never has the pad and never takes it)
+for name, kw in (("Quant None", dict(quant=8)), ("Sync None", dict(sync=6)), ("2 bars on a 4-beat clip", dict(ll=6)),
+                 ("a Slicer pad", dict(setup=lambda r: (r.params(mode=2), None)[1])),
+                 ("Sync = Slice with markers", dict(sync=0, setup=slicer_setup(MK)))):
+    ll = kw.pop("ll", 1)
+    sync = kw.get("sync", 3)
+    a = scenario(frames=96000, at=287000, blocks=700, vals={P_SYNC: sync}, pre=ll_pre({100: ll}, sync=sync), **kw)
+    b = scenario(frames=96000, at=287000, blocks=700, vals={P_SYNC: sync}, pre=ll_pre({}, sync=sync), **kw)
+    ok, d = same(a, b)
+    check(f"Loop Len {'1/16' if ll == 1 else '2 bars'}, {name}: every read, fetch, sample and message as without it "
+          f"({len(a.prefetches) - len(b.prefetches)} prefetch(es) more: the pending step made again), the pad's Sync "
+          f"untouched (forced {a.m.r8(BANK + B_FORCED + a.q)}), no latch", d["reads"] and d["fetches"] and d["out"]
+          and d["posted"] and a.m.r8(BANK + B_FORCED + a.q) == 0 and a.i64(a.pad + 0x220) == b.i64(b.pad + 0x220)
+          and (taken(a, ll) or "markers" in name) and bank_valid(a.m, a.q) == 0, d)
+
+# the app re-sends Sync (a turn of the Sync knob) while Loop Len holds it forced: the next poll forces it again
+kw = dict(frames=96000, at=287000, blocks=1000, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({200: 1}, then=lambda rr: rr.param(P_SYNC, 3) if rr.block == 600 else None), **kw)
+r = cw["rig"]
+back = [x for x in r.llog if x[0] > 600 and x[4] == 960]
+again = next((x for x in r.llog if x[0] > 600 and x[4] == 240), None)
+n_, err, bad_ = follows(cw)
+check(f"Sync re-sent as 1/4 while Loop Len 1/16 holds it at 1/16: forced again by the next poll ({len(back)} blocks on 1/4, "
+      f"then {again}), every sample its segment's ({n_}, max {err:.4f})",
+      again and 0 < len(back) <= 16 and again[3] == 1 and n_ > 80000 and err <= 0.02 and bad_ == 0, (back[:2], again, n_, err))
+
+# a stopped pad: Loop Len set after a Toggle stop is taken at once (no music: the in-point is the clip's start) and its
+# Sync forced while it is quiet; the next launch, on its bar, plays the first 1/16 over and over
+kw = dict(frames=96000, at=287000, blocks=1960, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({900: 1}, then=lambda rr: rr.note_on() if rr.block in (300, 1000) else None), **kw)
+r = cw["rig"]
+on = taken(r, 1)
+sg = seg_firsts(cw, 400000)
+n_, err, bad_ = follows(cw)
+quiet = cw["gain"][(on[0] * N + 287000 - cw["base"]) if on else 0:(480000 - cw["base"])] if on else np.ones(1)
+check(f"Loop Len 1/16 set on a pad stopped by Toggle (taken at sample {on and 287000 + on[0] * N}, the pad silent from "
+      f"there to the relaunch: {not np.abs(quiet).max() > 1e-7}): origin {on and on[2]}, Sync forced at once (+0x220 "
+      f"{on and on[4]}); the relaunch on the bar at 480 000 and every 1/16 after it replay frame 0 ({sg[:4]}), every sample "
+      f"its segment's ({n_}, max {err:.4f})", on and on[2] == 0 and on[3] == 1 and on[4] == 240 and not np.abs(quiet).max() > 1e-7
+      and sg and sg[0] == (480000, 0, 0) and len(sg) >= 8 and all(x[2] == 0 for x in sg)
+      and [x[0] for x in sg[:8]] == list(range(480000, 528000, 6000)) and n_ > 40000 and err <= 0.02 and bad_ == 0,
+      (on, sg[:6], n_, err, bad_))
+
+# the engage at rate != 1 (a 44.1 kHz file, rate 0.91875; notes/re/a1): the app sends Sync 1/2 late in step 1 of 1/4 and
+# stock's re-index puts the playing segment on step 1 of 1/2 while it still plays frame 43 063 < (int)(1 x 44 100): its
+# elapsed frames are negative. Loop Len 1/2 taken there (block 374, the clock at 1 875 ticks, in the first half) takes
+# the first half (origin 0, signed; an unsigned difference gave 186 992 640, a frame 78 247 window); the re-indexed
+# segment plays on to 384 000, then every step replays frame 0. Frames read back as the reader gives them at this rate:
+# 1 frame on, +-0.1 (the run without Loop Len reads the same way)
+def late_sync(rr):
+    if rr.block == 370:
+        rr.param(P_SYNC, 2)
+        store(rr.m, rr.q, {0x4: 500, P_SLIP: 0, P_SYNC: 2})
+
+
+kw = dict(frames=88200, src_rate=44100, at=287000, blocks=1300, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 374
+RT = 44100 / 48000
+ref_ = audio(pre=ll_pre({}, sync=2, then=late_sync), **kw)
+cw = audio(pre=ll_pre({371: 4}, sync=2, then=late_sync), **kw)
+r = cw["rig"]
+on = taken(r, 4)
+sg, sr = seg_firsts(cw, 300000, RT), seg_firsts(ref_, 300000, RT)
+n_, err, bad_ = follows(cw, rate=RT, off=1.0, tol=0.12)
+nr, er, br = follows(ref_, rate=RT, off=1.0, tol=0.12)
+check(f"Loop Len 1/2 on a 44.1 kHz file, taken where stock's re-index has put the playing segment a step ahead of its "
+      f"position (block {on and on[0]}): origin {on and on[2]} (the clock's half, 1 875 ticks: 0), Sync 1/2 left alone; the "
+      f"re-indexed segment plays on, then every step replays frame 0 ({sg[:4]}; without Loop Len {sr[:4]}); every sample "
+      f"its segment's ({n_}, max {err:.3f} with the reader's 1-frame offset, as without it: {er:.3f}); summed gain = the run "
+      f"without Loop Len ({same_gain(ref_, cw, 288300)} differ)",
+      on and on[0] == 374 and on[2] == 0 and on[3] == 0 and on[4] == 1920 and len(sg) >= 3 and sg[0] == sr[0]
+      and [x[:2] for x in sg[1:3]] == [(384000, 0), (432000, 1)] and [x[2] for x in sg[1:]] == [1] * (len(sg) - 1)
+      and sr[2][2] == 44101 and n_ > 150000 and bad_ == 0 and br == 0 and nr > 150000
+      and same_gain(ref_, cw, 288300) == 0, (on, sg[:5], sr[:5], n_, err, bad_, er, br))
+
+# Off, then on again within the same Sync step (the stutter gesture): after Off the sounding segment still plays the
+# window (frames 26 000 .. 34 000 at 362 000 .. 370 000), so the new engage takes its in-point from that frame, not from
+# stock's unlooped position (72 000 + ..., which would give 2 880): the same beat, 24 000, from 384 000 on. Then Off at
+# 415 000 (step 1: the steps after it play their own, 48 000 at 432 000) and on again at 453 400, inside step 2, where
+# the sounding segment plays its own step: the in-point is where stock plays (1 920), 48 000 from 456 000 on
+kw = dict(frames=96000, at=287000, blocks=1700, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 214 + 16k
+cw = audio(pre=ll_pre({200: 3, 600: 0, 618: 3, 1000: 0, 1300: 3}), **kw)
+r = cw["rig"]
+tr = [x[:4] for i, x in enumerate(r.llog) if i and x[1] != r.llog[i - 1][1]]
+sg = seg_firsts(cw, 300000)
+n_, err, bad_ = follows(cw)
+fr = [cw["frame"][x - cw["base"]] for x in (362000, 366000, 370000)]
+check(f"Loop Len 1/4 on, Off and on again inside one Sync step (taken at blocks {[x[0] for x in tr[:3]]}): the window "
+      f"still sounding after Off ({fr}) gives the in-point again (origins {[x[2] for x in tr[:3]]}), and the steps from "
+      f"384 000 replay 24 000; Off (block {tr[3][0] if len(tr) > 3 else None}) and on again inside step 2 (block "
+      f"{tr[4][0] if len(tr) > 4 else None}): the in-point where stock plays (origin {tr[4][2] if len(tr) > 4 else None}) "
+      f"({[x[::2] for x in sg if 384000 <= x[0] <= 480000]}); every sample its segment's ({n_}, max {err:.4f})",
+      len(tr) == 5 and [x[1:3] for x in tr] == [(3, 960), (0, 960), (3, 960), (0, 960), (3, 1920)]
+      and tr[1][0] < 627 < tr[2][0] < 640 and 1300 < tr[4][0] < 1320 and fr == [26000.0, 30000.0, 34000.0]
+      and [x[::2] for x in sg if 384000 <= x[0] <= 480000] == [(384000, 24000), (408000, 24000), (432000, 48000),
+                                                                (456000, 48000), (480000, 48000)]
+      and n_ > 150000 and err <= 0.02 and bad_ == 0, (tr, sg[:16], fr, n_, err, bad_))
+
+# a pad stopped while Loop Len is on (taken inside step 1: in-point 960), then the store written again with the same
+# Loop Len (as a preset reload leaves it), then relaunched: a stopped pad starts the window over at the clip's start, as
+# a launch after power-on does (origin 0 from the first poll that sees it stopped), so the relaunch on the bar at 480 000
+# and every step after it replay frame 0
+kw = dict(frames=96000, at=287000, blocks=1960, vals={P_SYNC: 3})
+cw = audio(pre=ll_pre({200: 3, 850: 3}, then=lambda rr: rr.note_on() if rr.block in (700, 1000) else None), **kw)
+r = cw["rig"]
+on = taken(r, 3)
+reset = next((x for x in r.llog if on and x[0] > on[0] and x[2] != on[2]), None)
+sg = seg_firsts(cw, 300000)
+n_, err, bad_ = follows(cw)
+quiet = cw["gain"][384300 - cw["base"]:480000 - cw["base"]]
+check(f"Loop Len 1/4 taken inside step 1 (origin {on and on[2]}), the pad stopped by Toggle (silent from 384 300: "
+      f"{not np.abs(quiet).max() > 1e-7}), its store written again with the same value, then relaunched: the in-point "
+      f"is the clip's start again once the pad is stopped ({reset}); the relaunch on the bar at 480 000 and every step "
+      f"after it replay frame 0 ({[x for x in sg if x[0] >= 480000][:4]}; before the stop {[x[2] for x in sg if x[0] < 400000]}); "
+      f"every sample its segment's ({n_}, max {err:.4f})",
+      on and on[2] == 960 and reset and reset[2] == 0 and 287000 + reset[0] * N < 384000 + 16 * N + 2048
+      and not np.abs(quiet).max() > 1e-7 and [x[2] for x in sg if x[0] < 400000] == [24000] * 4
+      and [x[:3] for x in sg if x[0] >= 480000][:3] == [(480000, 0, 0), (504000, 1, 0), (528000, 2, 0)]
+      and n_ > 100000 and err <= 0.02 and bad_ == 0, (on, reset, sg[:10], n_, err, bad_))
+
+# a new file under a pad playing a window (5b's chain; Loop Len latches at Slip 0 too): the segments latched for the old
+# file read as stock reads, at their own positions in the new file, and the next ones latch the new file, the window's
+# step played from the new file's frames per step (the in-point is in ticks: it stays)
+for length in (50000, 192000):
+    cw = audio(pre=ll_pre({100: 3}, then=new_file(length)), frames=96000, at=287000, blocks=900, vals={P_SYNC: 3})
+    r = cw["rig"]
+    on = taken(r, 3)
+    old = {m_["sid"] for m_ in r.made if m_["block"] < SWAP}
+    rows = [x for x in r.reads if x[0] >= SWAP + CLOSED and x[SID] in old]
+    moved = [x for x in rows if (x[FET][0][1] != x[POS] if x[FET] else x[POS] < length)]
+    held = [made_for(r.m, r.q, k) for k in range(4) if bank_valid(r.m, r.q) >> k & 1]
+    fresh = [m_ for m_ in r.made if m_["block"] > SWAP + CLOSED + 1]
+    t_new = min((x[AT] for x in r.reads if fresh and x[SID] == fresh[0]["sid"]), default=-1)
+    sg = seg_firsts(cw, t_new)
+    n_, err, bad_ = follows(cw, after=t_new + 256, vlen=length)
+    check(f"Loop Len 1/4 taken in step 0 (origin {on and on[2]}), a {length}-frame file under the playing pad from {T_SWAP}: the "
+          f"segments latched for the old file read from the file opening on as stock reads, at their own positions in the new "
+          f"file ({len(rows)} reads, {len(moved)} mapped; past its end nothing, as stock); the next ones latch the new "
+          f"file (made for {sorted(set(held))}) and replay its frame 0 ({sg[:3]}), every sample its segment's step of the "
+          f"window ({n_} samples, max {err:.4f})",
+          on and on[2] == 0 and len(rows) > 200 and not moved and held and set(held) == {length}
+          and t_new == 360000 and sg[:3] and all(x[2] == 0 for x in sg[:3]) and n_ > 20000 and err <= 0.02 and bad_ == 0,
+          (on, len(rows), moved[:2], held, t_new, sg[:4], n_, err, bad_))
+
+# every write clipwin.c makes in a Loop Len run (engaged with Sync forced, changed, Off with Sync given back) lands in
+# the bank; the param-set it calls writes the pad, as a 0x39 message would
+w = []
+r = Rig(cell=0x102)
+r.uc.hook_add(UC_HOOK_MEM_WRITE, lambda u_, acc, addr, size_, v, d_: w.append((addr, size_)) if any(
+    a_ <= u_.reg_read(UC_ARM_REG_PC) < b_ for a_, b_ in cw_code) else None, begin=BLOCK, end=BLOCK + 0x100000)
+store(r.m, 6, {0x4: 500, P_SYNC: 3})
+for _ in range(16):
+    poll(r)
+r.pre_block = lambda rr: (poll(rr), ll_pre({300: 1, 500: 3, 700: 0})(rr))
+r.params()
+r.goto(287000)
+r.note_on()
+r.run(900)
+hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (("origin", B_ORIGIN, B_LL), ("ll", B_LL, B_FORCED),
+                                                                           ("forced", B_FORCED, B_SF), ("sf", B_SF, B_SIZE))}
+check(f"in a Loop Len run, every write clipwin.c makes into the SDRAM block lands in cw_bank's {B_SIZE:#x} bytes (origin, "
+      f"Loop Len, forced and the latches' Slip part written: {hit}); Sync forced to 1/16, eased to 1/8 at 1/4 (the largest "
+      f"that divides the in-point), given back on Off ({[x[4] for i, x in enumerate(r.llog) if i and x[4] != r.llog[i - 1][4]]})",
+      w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w)
+      and [x[4] for i, x in enumerate(r.llog) if i and x[4] != r.llog[i - 1][4]] == [240, 480, 960] and r.i64(r.pad + 0x220) == 960,
+      (sorted({hex(a_) for a_, s_ in w if not BANK <= a_ < BANK + B_SIZE})[:4], hit))
+
+# a window that is not a whole number of the pad's steps although longer: Loop Len 1/2 on a 5-beat clip with Sync 1/2
+# (n = 2, steps of 2 400 ticks), engaged inside step 1: forced to 1/4, the largest Sync that divides the window, its
+# in-point and the clip. Stock plays this clip with a gap (its step 1 snaps to the 2 400 grid) and its re-grid to 1/4
+# skips steps: the stock image sent Sync 1/4 in the same block does exactly the same, sample for sample
+kw = dict(frames=120000, beats=5, at=287000, sync=2, blocks=1700, vals={P_SYNC: 2})
+cw = audio(pre=ll_pre({600: 4}, sync=2), **kw)
+r = cw["rig"]
+on = taken(r, 4)
+st_ = audio(frames=120000, beats=5, at=287000, sync=2, blocks=1700, image=STOCK,
+            pre=lambda rr: rr.param(P_SYNC, 3) if on and rr.block == on[0] else None)
+sg = seg_firsts(cw, 287000 + on[0] * N + 2048 if on else 0)
+n_, err, bad_ = follows(cw)
+same_starts = [x[:2] for x in starts(r)] == [x[:2] for x in starts(st_["rig"])]
+check(f"Loop Len 1/2 on a 5-beat clip with Sync 1/2 (steps of {r.made[0]['tps']} ticks), taken inside step 1: Sync forced "
+      f"to 1/4 (+0x220 {on and on[4]}), origin {on and on[2]}; the steps play the window's two beats, 48 000 and 72 000 "
+      f"({sg[:5]}), every sample its segment's ({n_}, max {err:.4f}); starts and summed gain as the stock image sent Sync "
+      f"1/4 in that block ({same_starts}, {same_gain(st_, cw, 288300)} samples differ)",
+      r.made[0]["tps"] == 2400 and on and on[4] == 960 and on[3] == 1 and on[2] == 1920 and len(sg) >= 4
+      and all(x[2] == 48000 + 24000 * (((x[1] * 960 - 1920) % 1920) // 960) for x in sg) and {x[2] for x in sg} == {48000, 72000}
+      and n_ > 80000 and err <= 0.02 and bad_ == 0 and same_starts and same_gain(st_, cw, 288300) == 0, (on, sg[:8], n_, err, bad_))
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

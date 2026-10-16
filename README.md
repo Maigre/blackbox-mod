@@ -36,6 +36,14 @@ New since 3.1.n:
   from the next time the loop comes round, or the time after that if it is made during the loop's last Sync step. A
   change that makes the loop longer can wait a little more: it starts where a launch would start the new loop (on the
   Quant, or on the new loop's own length when that is shorter), so it never doubles. Saved with the preset.
+- **Loop Len on Clip pads**: a "Loop Len" row on a Clip pad's Pos tab, after Slip: Off, 1/16, 1/8, 1/4, 1/2, 1 bar,
+  2 bars or 4 bars. Only that much of the clip loops, in time, and it is the part that was playing when you turned it
+  on, like a KP3's loop: 1/4 repeats the beat that was playing, 1/16 a sixteenth of it. Turned Off and on again
+  before the next Sync step, it takes the same beat back. Changing the length while it is on keeps the same start and
+  moves the end. Off goes back to the whole loop, in phase, as if it had played on all along. A length shorter than
+  the pad's Sync step sets Sync to fit, and your Sync comes back as soon as the length fits it again, or at Off. It
+  works over Region and with Slip, which shifts what the window plays. A change is heard at the pad's next Sync step.
+  Saved with the preset.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -90,8 +98,8 @@ From 3.1.n and earlier:
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
-  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, and without its
-  region, for up to two Sync steps, then as set.
+  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, without its region
+  or Loop Len, for up to two Sync steps, then as set.
 - Region does nothing on those pads either, and the playhead line is wrong on a pad playing a region. Switching a Clip
   pad to Sample mode clears its loop points (stock does that), so a pad sent back to Sample mode to adjust the loop
   needs it set again. A Beat Count that is not Auto, including one read from the WAV when it was loaded, is taken as
@@ -100,6 +108,13 @@ From 3.1.n and earlier:
   Auto is the old one. A region shorter than half a beat counts 0 beats on Beat Count Auto, as a file that short does
   on stock: it loops on its own length, restarting slightly early with a short overlap, and Slip does nothing there.
   Give it a Beat Count.
+- Loop Len needs a Quant and a Sync (with Quant None or Sync None it does nothing), does nothing on the pads Slip
+  ignores, and a length of the whole loop or more does nothing. It is taken from what the pad plays: set while a launch
+  waits for its bar, it starts once the pad plays; on a pad not played since power-on, at its first launch. A pad that
+  stops forgets what it was looping: its next launch loops from the start of the clip. While it holds a shorter Sync,
+  the Sync row still shows yours, and turning that knob puts yours back for a moment (up to 43 ms) before Loop Len sets
+  it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
+  playhead line shows the position without Loop Len.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 

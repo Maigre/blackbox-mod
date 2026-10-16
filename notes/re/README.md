@@ -325,6 +325,44 @@ corrected accordingly.
   tps / fps`, `origin = floor(phase / W) × W` (not `+0x140`, not `ticks − launch`; A2 ✓ off-grid). W < tps → force
   Sync with `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx}, engine + 0x128E0)`, idx 0..6 only (table
   `0x080EC82C`, no bounds check), restore on Off, never while a launch is pending. Needs Quant ≠ None.
+  **As built** (`test_clipwin.py` section 11 reproduces every `k_looplen.out` number: L1 origin 7 680, steps 3 and 0 on
+  192 000; L2 origin 1 200, Sync 1/16, 324 000 then every 1/16 on 30 000, Sync 1/4 back and step 2 at 432 000 on 48 000;
+  L3 48 000 every beat; L4 held until the launch sounded, the launch at 288 000 with `+0x140` = 11 520):
+  - Poll: `clipwin_tick(engine)` (`duck_block` now passes its r0, the engine = the clock, A4) reads `0x1ca` with Slip,
+    one pad a block. The window is `W = 240 << (v − 1)` (no table). The engage needs the pad cached by H1 (a pad never
+    launched since boot takes it at its first launch) and no pending launch (active, not done, `+0x3C`): otherwise the
+    value is not taken and the next poll tries again. The newest sounding segment = the one with the least elapsed
+    frames, **signed** (`p − (int)((float)j × fps)`: at rate ≠ 1 stock's `0x94` re-index puts `j` ahead of `p`, e < 0;
+    as u32 it won and gave a garbage origin, review F1), active, not done, delay ≤ 0; none (stopped) → origin 0. Its
+    phase = the frame it plays × tps / fps: `fold(fold(p, vlen) + delta − sf, vlen)` from its latch when valid (`sf` =
+    Slip's part of delta, kept per slot), else `p`. So a window still sounding after Off is taken again by an On inside
+    that step (review F3: stock's `p` would give the unlooped beat); with no latch it equals `j·tps + e·tps/fps` up to
+    the truncation of `j × fps`. A change W → W' (neither Off) keeps origin (the in-point). A poll that finds no active
+    segment (stopped) sets origin 0, so a relaunch, a power-cycle and (if a load stops the pad) a preset load all loop
+    from the clip's start (review F4). Every take drops the pending steps (the Slip drop), so H1 re-latches them.
+  - H1: the window applies when `W < clip` (= tps × n), `W % tps == 0` and `origin % tps == 0`; then `delta =
+    (int)((float)w × fps) − start + slip_f` folded into the region (or the file), `w = (origin + ((j·tps − origin) mod
+    W)) / tps`. A segment made while it does not apply plays its own step (Off, or Sync not yet forced).
+  - Forcing: not "W < tps" but "the window does not apply" (W or origin not a multiple of tps), or already forced; W <
+    clip, Quant ≠ 0, **synced** (`+0x1F5`: on Sync None stock's None-to-synced re-grid doubles a whole step at gain 2,
+    and there is no clock phase, review F2), not Slicer, not Slice + markers. Sync = the largest of the user's (store
+    `0x94`, idx 1..5, else 1 bar) … 1/16 dividing W, origin and the clip (`n = clip / sync` then gives tps = that
+    exactly; W = 1/2 on a 5-beat clip forces 1/4, since 1/2 gives tps 2 400). Powers of two: when the user's does not
+    divide them, no larger one does, so this is the largest overall; when it does, the user's comes back (W grown,
+    review F5; `forced` = idx ≠ the user's). Sent only when the pad's `+0x220` differs, so it is re-sent when the app
+    re-sends Sync (✓: back to 1/16 within 16 blocks). Off sends the user's (whatever it became), only if ≤ 6. A Sync change from `duck_block` is
+    fine: same task, before the module chain; its recompute goes through H3 (a stopped pad adopts its region there). ✓
+    Every segment start and the summed gain at every sample equal the stock image's sent that Sync as a `0x39` message
+    in the same block (L2; and a 5-beat clip on Sync 1/2, where stock's own re-grid to 1/4 skips steps and leaves gaps:
+    the same ones).
+  - State: `cw_bank` `CWN3`, + `origin[16]`, `ll[16]`, `forced[16]`, `sf[16][4]` = `0x620` B of the `0x800`.
+  - Known limits: a clip W does not divide restarts the window at each wrap (the phase is the clip's step index, not
+    absolute ticks); a Region/Beat Count change while it is on keeps the origin (it may fall outside a shorter clip: the
+    content then folds round it); rate ≠ 1 run once (a 44.1 kHz file, a late Sync change: origin 0 = the clock's half,
+    the re-indexed segment plays on to its end, then the window), Pitch not; a Trigger/Gate relaunch while it is on
+    keeps the in-point (not run). The Off (and any take) drops the pending step: stock re-makes it at once, so its H1
+    prefetch leads by only the rest of the current step, and after Off it jumps back in phase, possibly far on a 2–4
+    bar clip (open question 9).
 - **Waveform knobs** (A3): binders `bl 0x080A7EE0` at `0x080A5806`/`12`/`1E`/`2A` (TL/TR/BL/BR); fix step → range →
   value at `0x080A53B0` (after `FUN_080A52C4`) and `0x080A5B0E` (after `FUN_080C6E8C`, every refresh); `KNOB_STEP` =
   `(int)view+0x1A0`; optional exact count `FUN_080B0984(knob+0x270, n)` against the top-end dead travel. Bracket:
@@ -380,11 +418,11 @@ corrected accordingly.
 | 2 | Slip on a machine-mode (Fidelity) pad, and the seam block | P2 | Unicorn: `test_clip.py` harness with a latch set |
 | 3 | A negative type-1 value of a new id through preset save → load | P2 | Gate 2 step 6 on hardware; or Unicorn of the writer `0x08095328` + loader `0x08096AD8` on one pad store |
 | 4 | Counts per knob revolution, GUI pass period (K tuning) | P2 | USB peek: `0x24001A30 + 4k` before/after one turn; `0x2402EEE0` in a loop |
-| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region, `.bank2` 12,896 (`arm-none-eabi-size -A out/cave.elf`); before Loop Len, pick the leaf maths for `BANK2_SRCS` (behind `b2_live()`) |
+| 5 | Cave space left after v1 (plan says ~4.5 KB free) | P2 | **measured**: `.cave` 55,792 of 57,736 B (1,944 free) after v1 + fixes; 56,800 (936 free) after Region; **57,688 (48 free) after Loop Len** and its review fixes (`fold` out of line saves 68 B), which fit in bank 1 (`.bank2` 12,896, unchanged; `arm-none-eabi-size -A out/cave.elf`). The Waveform knobs need room: pick the leaf maths for `BANK2_SRCS` (behind `b2_live()`, needs `BANK2_NEW=1` and a reprogrammed bank 2) or trim bank-1 code first |
 | 6 | Does the app send a slice table to a Clip pad (Slip silently off there) | P2 doc | USB peek of pad `+0x250` on a Clip pad whose cell has markers |
 | 7 | Attack 0 (`pad+0xBA1` = 1) on real presets (hard wrap start) | P2/P3 | USB peek on a few loaded pads |
 | 8 | Live Slip under Sync None takes effect at the next restart | P2 doc | Unicorn: one `Rig` run |
-| 9 | SD streaming at a region seam (cache misses) | P3 | USB peek of the miss counter `0x24013930`, stock vs Region = Loop with a mid-step seam; listen |
+| 9 | SD streaming at a region seam, and at a Loop Len take / Off (cache misses) | P3 | USB peek of the miss counter `0x24013930`, stock vs Region = Loop with a mid-step seam; Loop Len 1/16 on a 4-bar clip, Off, on again (the step after Off reads far from the window, prefetched only the rest of a step ahead); listen. Misses → one `fw_prefetch` of the in-phase position at Off |
 | 10 | When a provider reports 0 frames (`0x10000000` sentinel) | P3 | USB peek of `fw_src_len` inputs on a freshly loaded pad |
 | 11 | Writers of `L+0x24` outside `0x08063000..0x0806A000` | P3 | whole-image store scan (static), or a hardware watch across a load |
 | 12 | Does `0x08064C5A` feed the unsynced count `+0x240`? (notes disagree, §5) | P3 | Unicorn: A1's `t_len2.py` override, Sync None |

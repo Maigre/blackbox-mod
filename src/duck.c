@@ -71,7 +71,7 @@ struct duck_state {
 /* Replaces the call to the engine's control tick (FUN_08053164). */
 void lfo_tick(uint32_t now);
 void insert_tick(void);          /* insert.c: one pad's insert settings per block */
-void clipwin_tick(void);         /* clipwin.c: one pad's Slip per block */
+void clipwin_tick(uint8_t *engine); /* clipwin.c: one pad's Slip and Loop Len per block */
 
 int duck_block(uint8_t *engine, void *a, void *b)
 {
@@ -130,7 +130,7 @@ int duck_block(uint8_t *engine, void *a, void *b)
     }
     lfo_tick(now);
     insert_tick();
-    clipwin_tick();
+    clipwin_tick(engine);
     return fw_process(engine, a, b);
 }
 
