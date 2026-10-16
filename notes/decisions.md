@@ -58,6 +58,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   shift); test_clipwin.py's direction check: -0.480 plays every sample 12 000 samples later at 120 BPM. Same session:
   the knob gives single ticks slow, one 1/64 (60 ticks) a turn event fast, snapped to the 1/64 grid, and a turn stops
   on 0 (held while it goes on; a 250 ms pause or the other direction moves on) — Thomas: "tricky to set back to 0".
+  *The knob part is revised in 37.2.1 (t-021; the feel is Thomas's to approve on the unit): 0 is a detent the same
+  turn passes 150 ms after it arrived, and a medium tier (10 ticks a turn event) at speeds 3–4, the 1/64 at 5–6.*
 - **D-015 (2026-10-15) — Ideas parked (Thomas: "later").** (a) A colour theme + splash branding, data-only (no cave
   bytes): the UI palette is 33 ARGB32 at `0x080F1D84` in 3.1.9, cyan accent `#09D7F5` at slots 4 6 9 26 28 30 (checked on
   our image; found by unremarkablegarden/blackbox-firmware-hacking, no license there: facts only, credit them). It would

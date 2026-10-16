@@ -190,7 +190,8 @@ in 1 KB. Add `_Static_assert(sizeof(struct cw_bank) <= …)` and a build-time as
 fix's `len`), magic `CWN4`, `0x720` of the `0x800` (`CWN1` was 37.1.x, `CWN2` the stale-latch fix, `CWN3` Region,
 `CWN4` Loop Len). There `h1` is at `0x498`, `hinted` at `0x4A8`, and after it, at `0x4B8`, come:
 
-- `zero_at`, `zero_dir`, `zero_hold` (the Slip knob's stop on 0, D-016);
+- `zero_at`, `zero_dir`, `zero_hold` (the Slip knob's stop on 0, D-016; from `CWN5`, 37.2.1, `zero_at` and
+  `zero_dir` only: the detent's arrival, and the knob's bench fields at `0x720`);
 - `wrap` at `0x4BE` (the pad whose wrap recompute runs);
 - `region[16]` `{rs, vlen}` at `0x4C0`;
 - `good[16][2]` at `0x540` (the fallback pair);
@@ -288,6 +289,12 @@ the row negated, lasted one Gate 2 session.)
     < 250 ms apart; the state is in `cw_bank`).
   - The value is set by parking the stepper's accumulator mid-step on the target.
   - The counts per revolution are still unmeasured (question 4).
+  *v2 (37.2.1, after Thomas tried 37.2.0d: "blocking at 0 is not great ... accelerator is too fast it seems"):*
+  three tiers, m < 3 as above, m 3–4 one 10-tick step a turn event onto the 10-tick grid, m ≥ 5 the 1/64 step;
+  and 0 is a detent: the same turn passes it 150 ms after it arrived there (`zero_at` is the arrival, no longer
+  refreshed by each event). Every number is a `#define` in `src/clipwin.c`; the feature doc
+  (`notes/features/clip-window.md` §2) has the reasons. Each event's counts and speed are left in `cw_bank + 0x720`
+  for `bbusb.py knob`.
 
 ### 2.8 What v1 leaves stock
 

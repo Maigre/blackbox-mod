@@ -59,9 +59,9 @@ struct cw_bank {
     struct cw_latch latch[16][4];
     uint8_t h1[16];                  /* bit k: slot k's segment was made through H1 (not a slice segment, H1') */
     uint8_t hinted[16];              /* bit k: H2 has hinted rs for slot k's crossing of the region end */
-    uint32_t zero_at;                /* the knob: GUI ms of the last turn event held on 0 */
+    uint32_t zero_at;                /* the Slip knob: GUI ms a turn last arrived on 0 (the detent counts from there) */
     int8_t zero_dir;                 /* ...and the direction that turn was going */
-    uint8_t zero_hold;               /* 1 while a turn that reached 0 goes on */
+    uint8_t spare;                   /* free (CWN4's zero_hold) */
     uint8_t wrap;                    /* 1 + the pad whose wrap is recomputing right now (clipwin_wrap), else 0 */
     struct {
         int32_t rs, vlen;            /* the region the pad plays this pass, frames; vlen 0 = the whole file */
@@ -71,11 +71,16 @@ struct cw_bank {
     uint8_t ll[16];                  /* Loop Len as taken (0 Off, else W = 240 << (ll - 1) ticks) */
     uint8_t forced[16];              /* 1: Loop Len has forced the pad's Sync; Off gives the store's back */
     int32_t sf[16][4];               /* Slip's part of latch[q][k].delta, frames (Loop Len's engage takes it out) */
+    int16_t knob_counts;             /* the Slip knob's last turn event: its counts, */
+    uint8_t knob_speed;              /* ...and the accelerator's speed for it (1 .. 6): bbusb.py knob reads both */
 };
-#define CW_MAGIC  0x43574e34u        /* "CWN4": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e35u        /* "CWN5": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 _Static_assert(sizeof(struct cw_bank) <= 0x800, "master.c's EXTRA_BYTES gives the bank 0x800");
 _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
+_Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_bank, zero_dir) == 0x4bc &&
+               offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
+               sizeof(struct cw_bank) == 0x724, "bench/bbusb.py knob and test_clipwin.py read the knob's fields here");
 
 /* clipwin_b2.c, in bank 2 (call only when b2_live()): Loop Len's take, and its window for a segment H1 makes */
 int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, int force);

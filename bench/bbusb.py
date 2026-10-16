@@ -11,6 +11,8 @@ never part of a feat/* branch or a PR.
   bbusb.py crash                        src/fault.c's records: reset cause, fault / watchdog PC, the trail into the reset
   bbusb.py catch [SECONDS]              boot loop: read those records at every boot as soon as the unit enumerates
   bbusb.py slip                         Clip Window bank: polled Slip per pad, latched slots (src/clipwin.c)
+  bbusb.py knob [SECONDS]               the Slip knob's last turn event: counts, accelerator speed, the detent on 0;
+                                        with SECONDS, sampled while you turn: each change, then the speeds seen
   bbusb.py record SECONDS FILE.wav      capture the 6 USB channels (arecord)
   bbusb.py offsets FILE.wav [A B]       onset offsets between channel A and B (default 0 = Out1 L, 2 = Out2 L)
   bbusb.py shift BASE.wav NEW.wav [BPM] how far Out 1 moved between two takes, aligned on the metronome (Out 2)
@@ -117,6 +119,26 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
+CW_MAGIC = 0x43574E35            # "CWN5": src/clipwin.h's cw_bank layout this tool reads
+GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
+
+
+def cw_bank():
+    """the Clip Window bank in SDRAM (src/clipwin.h): master.c's block (its pointer in backup SRAM) + 0x83900"""
+    mem = word(0x38800F70)
+    if not 0xC0000000 <= mem < 0xC4000000:
+        sys.exit(f"no SDRAM block (Prism pointer {mem:#x})")
+    return mem + 0x83900
+
+
+def knob_state(bank):
+    """(counts, speed, zero_at, zero_dir, now): cw_bank + 0x720 i16 knob_counts, u8 knob_speed; + 0x4b8 u32 zero_at,
+    i8 zero_dir (clipwin_turn); the GUI clock"""
+    zero_at, zero_dir = struct.unpack("<Ib3x", peek(bank + 0x4B8, 8))
+    counts, speed = struct.unpack("<hBx", peek(bank + 0x720, 4))
+    return counts, speed, zero_at, zero_dir, word(GUI_MS)
+
+
 def alsa_card():
     out = subprocess.run(["arecord", "-l"], capture_output=True, text=True).stdout
     for line in out.splitlines():
@@ -148,10 +170,7 @@ def main(argv):
         low, high = word(0x2400008C), word(0x24000088)
         print(f"permanent pointer {low:#010x}, temporary pointer {high:#010x}, free {high - low:,} B")
     elif cmd == "slip":
-        mem = word(0x38800F70)
-        if not 0xC0000000 <= mem < 0xC4000000:
-            sys.exit(f"no SDRAM block (Prism pointer {mem:#x})")
-        bank = mem + 0x83900
+        bank = cw_bank()
         hdr = peek(bank, 8 + 64 + 64 + 16)
         magic, scan = struct.unpack_from("<II", hdr)
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -162,6 +181,29 @@ def main(argv):
             if slip[q] or valid[q]:
                 print(f"cell row {q >> 2} col {q & 3}: Slip row {slip[q]:+5} ticks (+ = ahead)  pad object {pads[q]:#010x}  "
                       f"latched slots {valid[q]:04b}")
+    elif cmd == "knob":
+        # src/clipwin.c clipwin_turn leaves each Slip turn event's counts and the stock accelerator's speed m (1 .. 6,
+        # about 8/7 x the counts per ms) in cw_bank: which speeds a hand makes, against the tiers (KNOB_MEDIUM,
+        # KNOB_FAST there). Read only: nothing is written to the unit.
+        bank = cw_bank()
+        magic = word(bank)
+        if magic != CW_MAGIC:
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN5, 37.2.1 on): another layout, no knob fields")
+        counts, speed, zero_at, zero_dir, now = knob_state(bank)
+        print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
+              + (f"{now - zero_at} ms ago, turning {'up' if zero_dir > 0 else 'down'}" if zero_dir else "none"))
+        if args:
+            secs, seen, last, t0 = float(args[0]), {}, (counts, speed, zero_at), time.time()
+            print(f"sampling for {secs:g} s: turn the Slip knob (a line per change; two events between samples count once)")
+            while time.time() - t0 < secs:
+                counts, speed, zero_at, zero_dir, now = knob_state(bank)
+                if (counts, speed, zero_at) != last:
+                    arrived = zero_at != last[2]
+                    last = (counts, speed, zero_at)
+                    seen[speed] = seen.get(speed, 0) + 1
+                    print(f"{time.time() - t0:7.3f} s  {counts:+5d} counts  speed {speed}" + ("  arrived on 0" if arrived else ""))
+                time.sleep(0.005)
+            print("speeds seen: " + (", ".join(f"{m}: {n}" for m, n in sorted(seen.items())) or "none (no turn?)"))
     elif cmd == "crash":
         print_crash()
     elif cmd == "catch":

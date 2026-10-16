@@ -34,8 +34,8 @@
  * playhead on the waveform still shows the unslipped position.
  * Setting: "Slip:" on the Clip Pos page after Sync, -3840 .. +3840 ticks shown as beats.ticks ("+1.480" is one beat and
  * 480 ticks), + = ahead of the beat, - = behind (a CDJ jog: clockwise speeds up, counter-clockwise slows down), per
- * pad, saved with the preset as "clipslip". The knob: single ticks slow, 1/64 steps fast, and a turn stops on 0
- * (clipwin_turn).
+ * pad, saved with the preset as "clipslip". The knob: single ticks slow, 10-tick steps faster, 1/64 steps at the
+ * top speeds, and a detent on 0: a turn stops there, and passes after a short pause (clipwin_turn).
  *
  * Region (notes/re/README.md section 3, a2, x3): a Clip pad plays its Sample-mode loop [Loop Start, Loop End) instead
  * of the whole file - no Trim. Stock keeps those points in Clip mode, in the cell's class-H object (pad + 8), so they
@@ -594,23 +594,40 @@ void clipwin_format(uint8_t *knob)
     fw_knob_redraw(knob);
 }
 
-/* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde). For the Slip knob (Thomas, after
-   Gate 2: "tricky, especially to set back to 0"):
-     slow     single ticks: 40 counts a tick, twice that rate at speed 2 (the stepper's own accumulator does the rest);
-     fast     (speed 3 and up) one 1/64 step a turn event, onto the 1/64 grid (60 ticks): round values are easy to hit;
-     zero     a move that reaches or crosses 0 stops on it, and stays there while that turn goes on (events less than
-              ZERO_HOLD ms apart, the same way); a pause or the other direction moves it again.
+/* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde), which every screen's turn of a
+   type-1 knob goes through: the Pos page's list and the Clip-mode Waveform screen's BL are the same code. For the
+   Slip knob (Thomas, after Gate 2: "tricky, especially to set back to 0"; v2 after 37.2.0d: "blocking at 0 is not
+   great ... accelerator is too fast it seems"), by the stock accelerator's speed m (fw_ring_speed: 1 .. 6, about
+   8/7 x the counts per ms over the last 8 events):
+     slow     m < KNOB_MEDIUM: single ticks, 40 counts a tick, twice that rate at speed 2 (the stepper's own
+              accumulator does the rest);
+     medium   m < KNOB_FAST: one KNOB_STEP_MEDIUM (10 ticks, a 1/384 note) a turn event, onto its own grid;
+     fast     m >= KNOB_FAST: one SLIP_GRID (60 ticks, a 1/64 note) a turn event, onto the 1/64 grid: round values are
+              easy to hit. KNOB_STEP_MEDIUM divides SLIP_GRID, so the first fast step from a medium value is on it;
+     zero     a detent, not a wall: a move that reaches or crosses 0 stops on it, and the same turn going on stays
+              there until ZERO_DETENT_MS after it ARRIVED (from the arrival, not from the last event: a turn that goes
+              on passes 0 after that pause, however steadily it turns), then moves on at its own speed. The other
+              direction leaves 0 at once, and so does a turn that starts from 0 at rest. A rule in time, not counts:
+              the same felt pause whatever the speed, and no counts per revolution (still unmeasured) in it.
    The stepper (A3): +0x00 i64 accumulated counts, +0x08 counts per step (400 for type 1), +0x0c index, +0x18 start;
-   index = floor(acc / step) with a step/3 hysteresis, so a value is set by parking acc mid-step. */
-#define SLIP_GRID 60                 /* a 1/64 note */
-#define ZERO_HOLD 250                /* ms */
+   index = floor(acc / step) with a step/3 hysteresis, so a value is set by parking acc mid-step. Each event leaves
+   its counts and speed in cw_bank for a bench read (bbusb.py knob): which speeds a hand makes on the unit.
+   Tuning, one number each: the stop on 0 too long or too short = ZERO_DETENT_MS; the 10-tick steps come too soon or
+   too late = KNOB_MEDIUM; the 1/64 steps too soon = KNOB_FAST (6: the top speed only); the medium steps too fine =
+   KNOB_STEP_MEDIUM (15, a 1/256 note; 20 and 30 also divide 60). test_clipwin.py reads them from here. */
+#define KNOB_MEDIUM      3           /* the speed (1 .. 6) from which a turn event is one medium step, */
+#define KNOB_FAST        5           /* ...and from which one 1/64 */
+#define KNOB_STEP_MEDIUM 10          /* ticks: a 1/384 note; it must divide SLIP_GRID */
+#define SLIP_GRID        60          /* a 1/64 note */
+#define ZERO_DETENT_MS   150         /* how long a turn that arrived on 0 is held there */
+_Static_assert(SLIP_GRID % KNOB_STEP_MEDIUM == 0, "a medium step must divide the 1/64 grid");
 
-static int32_t grid_next(int32_t v, int dir)
+static int32_t grid_next(int32_t v, int dir, int32_t grid)
 {
-    int32_t q = v / SLIP_GRID, r = v % SLIP_GRID;
+    int32_t q = v / grid, r = v % grid;
     if (dir > 0)
-        return (q - (r < 0)) * SLIP_GRID + SLIP_GRID;    /* the next multiple above v */
-    return (q + (r > 0)) * SLIP_GRID - SLIP_GRID;        /* ...below v */
+        return (q - (r < 0)) * grid + grid;              /* the next multiple above v */
+    return (q + (r > 0)) * grid - grid;                  /* ...below v */
 }
 
 void clipwin_turn(uint8_t *stepper, int counts)
@@ -625,17 +642,16 @@ void clipwin_turn(uint8_t *stepper, int counts)
     int dir = counts > 0 ? 1 : -1;
     fw_ring_push(knob + KNOB_RING, counts, now);
     unsigned m = fw_ring_speed(knob + KNOB_RING);
-    if (b && b->zero_hold) {
-        if (dir == b->zero_dir && now - b->zero_at < ZERO_HOLD) {
-            b->zero_at = now;                            /* the same turn: stay on 0 */
-            return;
-        }
-        b->zero_hold = 0;
-    }
     int32_t step = *(int32_t *)(stepper + 0x08), start = *(int32_t *)(stepper + 0x18);
     int32_t acc = *(int32_t *)stepper;                   /* < steps x step = 7 681 x 400: the low word is all of it */
     int32_t v = *(int32_t *)(stepper + 0x0c) + start, target;
-    if (m < 3) {
+    if (b) {
+        b->knob_counts = (int16_t)counts;
+        b->knob_speed = (uint8_t)m;
+        if (!v && dir == b->zero_dir && now - b->zero_at < ZERO_DETENT_MS)
+            return;                                      /* in the detent: the turn that arrived, too soon */
+    }
+    if (m < KNOB_MEDIUM) {
         int32_t add = counts * 10 * (int32_t)m;
         target = (acc + add) / step + start;             /* where the stepper would land (acc + add >= 0 here) */
         if (acc + add < 0 || !((v > 0 && target <= 0) || (v < 0 && target >= 0))) {
@@ -644,14 +660,13 @@ void clipwin_turn(uint8_t *stepper, int counts)
         }
         target = 0;
     } else {
-        target = grid_next(v, dir);
+        target = grid_next(v, dir, m < KNOB_FAST ? KNOB_STEP_MEDIUM : SLIP_GRID);
         if ((v > 0 && target < 0) || (v < 0 && target > 0))
             target = 0;
     }
     target = target < -SLIP_MAX ? -SLIP_MAX : target > SLIP_MAX ? SLIP_MAX : target;
     if (target == 0 && v != 0 && b) {
-        b->zero_hold = 1;
-        b->zero_dir = (int8_t)dir;
+        b->zero_dir = (int8_t)dir;                       /* arrived: the detent starts now */
         b->zero_at = now;
     }
     fw_stepper_add(stepper, (target - start) * step + step / 2 - acc);   /* park mid-step on the target */
