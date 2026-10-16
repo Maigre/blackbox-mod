@@ -13,6 +13,8 @@ never part of a feat/* branch or a PR.
   bbusb.py slip                         Clip Window bank: polled Slip per pad, latched slots (src/clipwin.c)
   bbusb.py knob [SECONDS]               the Slip knob's last turn event: counts, accelerator speed, the detent on 0;
                                         with SECONDS, sampled while you turn: each change, then the speeds seen
+  bbusb.py fit                          Fit per pad: the row as taken, fitted or not, Auto's beats, and the pad's step
+                                        fields (+0x1f0 rate, +0x204, +0x208, +0x210, +0x230)
   bbusb.py record SECONDS FILE.wav      capture the 6 USB channels (arecord)
   bbusb.py offsets FILE.wav [A B]       onset offsets between channel A and B (default 0 = Out1 L, 2 = Out2 L)
   bbusb.py shift BASE.wav NEW.wav [BPM] how far Out 1 moved between two takes, aligned on the metronome (Out 2)
@@ -119,7 +121,7 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E38            # "CWN8": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E39            # "CWN9": src/clipwin.h's cw_bank layout this tool reads
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
@@ -177,7 +179,7 @@ def main(argv):
         if magic != CW_MAGIC:
             # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
             # bank set up this boot, every field below is a previous boot's, not live
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN8, 37.3.0 on): "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN9, Fit on): "
                      + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
                         "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -196,8 +198,8 @@ def main(argv):
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN8, 37.3.0 on): another layout, no knob fields "
-                     "- or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN9, Fit on): another layout, no knob "
+                     "fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         counts, speed, zero_at, zero_dir, zero_slow, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
               + (f"{now - zero_at} ms ago, turning {'up' if zero_dir > 0 else 'down'}, "
@@ -215,6 +217,35 @@ def main(argv):
                           + (f"  arrived on 0 ({'slow' if zero_slow else 'fast'})" if arrived else ""))
                 time.sleep(0.005)
             print("speeds seen: " + (", ".join(f"{m}: {n}" for m, n in sorted(seen.items())) or "none (no turn?)"))
+    elif cmd == "fit":
+        # src/clipwin_b2.c cw_fit: cw_bank + 0x784 u8 fit[16] (the row as the pad took it, with its region: 0 Off,
+        # 1 Auto, then 1/4 .. 8 bars), + 0x7a4 u8 fon[16] (its last recompute stored Fit's step fields), + 0x7b4 u16
+        # abeats[16] and + 0x7d4 i32 alen[16] (Auto's count and the length it counted), + 0x814 f32 bpm[16] (the tempo
+        # they were made at); the pad object (+ 0x48 + 4q) for its step fields. Read only.
+        bank = cw_bank()
+        magic = word(bank)
+        if magic != CW_MAGIC:
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWN9, Fit on): another layout, no Fit fields "
+                     "- or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
+        names = ["Off", "Auto", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
+        fit, fon = peek(bank + 0x784, 16), peek(bank + 0x7A4, 16)
+        abeats = struct.unpack("<16H", peek(bank + 0x7B4, 32))
+        alen = struct.unpack("<16i", peek(bank + 0x7D4, 64))
+        bpm = struct.unpack("<16f", peek(bank + 0x814, 64))
+        pads = struct.unpack("<16I", peek(bank + 0x48, 64))
+        for q in range(16):
+            if not (fit[q] or fon[q]):
+                continue
+            line = (f"cell row {q >> 2} col {q & 3}: Fit {names[fit[q]] if fit[q] < len(names) else fit[q]}, "
+                    + (f"fitted at {bpm[q]:.2f} BPM" if fon[q] else "not fitted")
+                    + (f", Auto {abeats[q]} beats for {alen[q]} frames" if alen[q] else ""))
+            if (0x20000000 <= pads[q] < 0x40000000 or 0xC0000000 <= pads[q] < 0xC4000000) and not pads[q] & 3:
+                f = peek(pads[q] + 0x1F0, 0x48)
+                rate, = struct.unpack_from("<f", f, 0)
+                out, tps, n = struct.unpack_from("<fqI", f, 0x14)
+                grid, = struct.unpack_from("<q", f, 0x40)
+                line += f"; pad +0x1f0 {rate:.6f} +0x204 {out:.1f} +0x208 {tps} +0x210 {n} +0x230 {grid}"
+            print(line)
     elif cmd == "crash":
         print_crash()
     elif cmd == "catch":

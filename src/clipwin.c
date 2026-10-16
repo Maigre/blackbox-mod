@@ -1,5 +1,5 @@
 /*
- * Clip Window: Slip, Region and Loop Len. Original 1010music Blackbox, firmware 3.1.9.
+ * Clip Window: Slip, Region, Loop Len and Fit. Original 1010music Blackbox, firmware 3.1.9.
  *
  * Why: a clip that plays in sync can only start on the grid. A loop cut by ear from an unsynced recording (a song off a
  * phone, a take from other hardware) then sits a little ahead of or behind the groove of everything else, and nothing
@@ -75,6 +75,16 @@
  * Needs Quant and Sync (no grid, or no clock phase, without them); a W of the whole clip or more does nothing.
  * Setting: "Loop Len:" Off | 1/16 | 1/8 | 1/4 | 1/2 | 1 bar | 2 bars | 4 bars after Slip, saved as "cliplooplen".
  *
+ * Fit (Gate 3 findings 3, 4; hub #t-022): a loop that is no whole number of beats, or a region under a WAV's own Beat
+ * Count, is re-placed at every Sync step (Mk1 Clip mode never stretches). Fit makes what the pad plays last a whole
+ * number of beats at the tempo - Auto the nearest (14.015 -> 14), else the list's - by storing stock's own step fields
+ * again at H3 site 3 (cw_fit: the wrap grid, ticks and steps, frames and output samples per step) with the rate every
+ * segment takes (+0x1f0), so each step lands where the audio already is. A clip that is no whole number of Quants is
+ * polymetric: its wrap grid is gcd(Quant, clip), its steps gcd(Sync, clip). It is taken with the region; the poll
+ * recomputes a fitted pad when the tempo moves; a fitted file wraps seamlessly, as a region does.
+ * Setting: "Fit:" Off | Auto | 1/4 | 1/2 | 3 beats | 1 bar | 6 beats | 2 bars | 4 bars | 8 bars after Loop Len,
+ * saved as "clipfit".
+ *
  * The Waveform screen in Clip mode (notes/re/a3, README section 3): stock unbinds all four knobs and draws no loop
  * bracket. TL = Loop Start, TR = Loop End (stock's 0x91 / 0x92, sample positions one zoom pixel a step, ranged as in
  * Sample mode), BL = Slip, BR = Loop Len; the white bracket shows the loop Region plays, from the view's store, so a
@@ -86,8 +96,8 @@
  * wrap's hold, the poll and its drop, Loop Len's take, its window and its Sync message, the knob's tiers and detent,
  * the Slip row's text, the bracket). This file keeps the hooks, every stock call they make and the bank's set-up,
  * which leaves room in the bank 1 cave. bank() asks b2_live() first: without this build's payload up there every
- * hook passes straight through to stock, so every Clip pad plays as stock does, Slip, Region and Loop Len do nothing
- * (their rows are kept, as stored), the Slip row shows stock's plain number and the waveform no bracket.
+ * hook passes straight through to stock, so every Clip pad plays as stock does, Slip, Region, Loop Len and Fit do
+ * nothing (their rows are kept, as stored), the Slip row shows stock's plain number and the waveform no bracket.
  */
 #include <stdint.h>
 
@@ -145,6 +155,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
 #define P_SLIP      0x1c9
 #define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
+#define P_FIT       0x1cb            /* Off, Auto, then 1/4 .. 8 bars (clipwin_b2.c's fit_beats) */
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
@@ -178,14 +189,20 @@ void clipwin_register(void *table)
     static const char *const looplen_names[LOOPLEN_MAX + 1] = {
         (const char *)0x080cd7a8, (const char *)0x080ce714, (const char *)0x080ce710, (const char *)0x080ce70c,
         (const char *)0x080ce708, (const char *)0x080ce700, (const char *)0x080ce6f8, (const char *)0x080ce6f0};
+    /* stock's "Off" and "Auto" (0x080cd7b4), Quant Size's names for 1 beat .. 8 bars, and two of our own between */
+    static const char *const fit_names[FIT_MAX + 1] = {
+        (const char *)0x080cd7a8, (const char *)0x080cd7b4, (const char *)0x080ce70c, (const char *)0x080ce708,
+        "3 beats", (const char *)0x080ce700, "6 beats", (const char *)0x080ce6f8, (const char *)0x080ce6f0,
+        (const char *)0x080ce6e8};
     fw_register_list(table, P_REGION, "Region:", region_names, 3, "clipregion");
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
     fw_register_list(table, P_LOOPLEN, "Loop Len:", looplen_names, LOOPLEN_MAX + 1, "cliplooplen");
+    fw_register_list(table, P_FIT, "Fit:", fit_names, FIT_MAX + 1, "clipfit");
 }
 
 void clipwin_defaults(void *store)
 {
-    for (int p = P_REGION; p <= P_LOOPLEN; p++)   /* Region, Slip, Loop Len (0x1c8 .. 0x1ca), in that order */
+    for (int p = P_REGION; p <= P_FIT; p++)   /* Region, Slip, Loop Len, Fit (0x1c8 .. 0x1cb), in that order */
         fw_store_add(store, p, 0);   /* stock only overwrites ids already in a store: without these nothing saves */
 }
 
@@ -228,18 +245,18 @@ static const void *pad_store(unsigned q)
    the real length, clipwin_read folds. A playing pad takes its region only at its wrap; a stopped one at its next
    recompute, which nothing triggers when only the Region row or the loop points change: at the latest the one before
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
-   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the three store rows the region comes
-   from. */
-static const uint16_t region_rows[3] = {P_REGION, P_LOOP_START, P_LOOP_END};   /* CW_SET_* order */
+   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, and
+   Fit. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
+static const uint16_t region_rows[CW_SET_ROWS] = {P_REGION, P_LOOP_START, P_LOOP_END, P_FIT};   /* CW_SET_* order */
 
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
-    int32_t len = fw_src_len(src), set[3];
+    int32_t len = fw_src_len(src), set[CW_SET_ROWS];
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     if (!b)
         return len;
-    for (unsigned i = 0; site == 1 && i < 3; i++)
+    for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
         set[i] = fw_setting(pad_store((unsigned)q), region_rows[i]);
     return cw_len(b, (unsigned)q, pad, site, clip, len, set);
 }
@@ -309,6 +326,8 @@ void clipwin_tick(uint8_t *engine)
     uint32_t msg[6];
     int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
     uint8_t *pad = b->pad[q];
+    if (r & 8)                           /* Fit: a fitted pad made at another tempo */
+        fw_recompute(pad, engine);
     if (r & 4)                           /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
         cw_retire(pad, fw_src_len(*(void **)(pad + PAD_SOURCE)));
     if (r & 2)

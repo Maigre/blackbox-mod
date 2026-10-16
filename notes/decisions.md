@@ -31,6 +31,22 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-019 (2026-10-16) — Fit: Auto = the nearest whole beat, polymetric; the clip's own wrap grid; the bank 0x1000**
+  (hub #t-022; the design and Thomas's answers 1-5: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`). Thomas at Gate 3
+  (~13:00), of pad 1's 14.015-beat take: « that weird length is intended as polyrhythmic loop and should be handled
+  properly ». So Fit Auto is the nearest whole number of beats (14.015 → 14, 3.74 → 4, 15.6 → 16; ties up, at least 1,
+  at most 1 024), counted once per loop length (and again once a recompute finds the file closed), not stock's
+  power-of-two Beat Count Auto (answer 2, replaced). The list is Off, Auto, 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2, 4,
+  8 bars (answers 2, 3: stock's names, 3 and 6 beats kept since their wrap grid holds). A clip that is no whole number
+  of Quants cycles against the bar: its wrap grid is gcd(Quant, clip), on which every launch point and pass start lies;
+  its steps one when Sync is the clip or longer, else gcd(Sync, clip), on the clock's grid of their length as stock's
+  are, so a pad launched off the Sync grid is pulled onto it at its first step as on stock (the review's F1: steps of
+  gcd(Sync, gcd(Quant, clip)) kept it there, a 1/16 late for good). Under emulation stock's own min(Quant, clip) does
+  not keep such a clip (a 14-beat file at Quant 1 bar: every other pass a 1/16 early, then a 1/16 of silence), which
+  the Gate 3 report heard clean on the unit: Gate 3b check 21 measures it again. The wrap-grid hold (H3') holds Fit
+  with the region and reads the clip's own grid. A whole file fitted is seamless (answer 5). The fields (`fit` …
+  `engine`) took `cw_bank` past 0x800 (0x858, `CWN9`): `EXTRA_BYTES` + 0x800, the bank 0x1000, the boot block
+  0x84900 B.
 - **D-018 (2026-10-16) — Bank-1 room: the Clip Window's maths in bank 2; Slip and Region need `BBEXTRA.BIN` too;
   updates D-017** (Thomas at Gate 3: "move everything (that can be moved) to bbextra then so we give back room now",
   the room Fit and Loop Fade need, `#t-023`). Every piece of the Clip Window's own code that is maths or policy moved

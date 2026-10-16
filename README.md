@@ -1,8 +1,8 @@
 # blackbox-mod
 
-> **Fork 37.x** (Maigre/blackbox-mod): JOEBOX 1 + the restart-loop fix + Clip Window (Slip, Region, Loop Len) and,
-> on its way, a KP3-style looper. What it adds, its versions and its upstream PRs: [`FORK.md`](FORK.md). The text below
-> is upstream's README, with each fork feature's bullet added where it lands.
+> **Fork 37.x** (Maigre/blackbox-mod): JOEBOX 1 + the restart-loop fix + Clip Window (Slip, Region, Loop Len, Fit)
+> and, on its way, a KP3-style looper. What it adds, its versions and its upstream PRs: [`FORK.md`](FORK.md). The text
+> below is upstream's README, with each fork feature's bullet added where it lands.
 
 An unofficial feature mod for the **original 1010music Blackbox** (not the Blackbox 2), built on stock firmware 3.1.9.
 
@@ -54,6 +54,18 @@ New since 3.1.n:
   it had played on all along. A length shorter than the pad's Sync step sets Sync to fit, and your Sync comes back as
   soon as the length fits it again, or at Off. It works over Region and with Slip, which shifts what the window
   plays. A change is heard at the pad's next Sync step. Saved with the preset.
+- **Fit on Clip pads**: a "Fit" row on a Clip pad's Pos tab, after Loop Len: Off, Auto, 1/4, 1/2, 3 beats, 1 bar,
+  6 beats, 2 bars, 4 bars or 8 bars. The loop (the Region, or the whole file) then lasts exactly that many beats at the
+  tempo: it plays a little faster or slower, and its pitch moves with it (it is not a time-stretch). A loop cut by ear
+  that is not a whole number of beats no longer stutters at every Sync step, and a WAV's own Beat Count no longer chops
+  a shorter Region. Auto takes the nearest whole number of beats (a loop of 14.015 beats plays as 14, one of 3.74 as
+  4), counted once for each loop length: change the tempo and it keeps its beats and follows. A length that is not a
+  whole number of bars (3, 5, 7 or 14 beats, say) is a polyrhythm: the loop comes round every so many beats against the
+  bar, each pass in time and seamless; the pad's Sync steps then fall on that loop's own grid (14 beats with Sync 1 bar
+  re-sync every half bar). The loop point crossfades into the start like any other step, a whole file's too. A change
+  while the pad plays is heard from the next time the loop comes round; one that moves where the loop can start (1 bar
+  to 2 bars on a Quant of 4 bars) waits for a point where a launch would start it, as a Region change does. Saved with
+  the preset; Off is stock.
 - **Knobs on a Clip pad's waveform**: stock leaves all four blank in Clip mode. Top-left is Loop Start and top-right
   Loop End, the same loop points as Sample mode's, which Region plays: one step is one pixel of the waveform, so zoom
   in for finer steps. The white loop bracket shows the loop Region plays, as soon as you turn: a playing pad takes the
@@ -113,9 +125,9 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Slip, Region and Loop Len all run from the second file (`BBEXTRA.BIN`, flash bank 2), which has to come from the
-  same download as `BLACKBOX.bin`. Without it (or with one from another build) every Clip pad plays exactly as on
-  stock: the three rows are there and save, but do nothing; the Slip row shows a plain number of ticks instead of
+- Slip, Region, Loop Len and Fit all run from the second file (`BBEXTRA.BIN`, flash bank 2), which has to come from
+  the same download as `BLACKBOX.bin`. Without it (or with one from another build) every Clip pad plays exactly as on
+  stock: the four rows are there and save, but do nothing; the Slip row shows a plain number of ticks instead of
   beats.ticks and turns like any number row, and the Clip-mode waveform shows no loop bracket (its four knobs still
   turn: Loop Start and Loop End move the loop points, which the pad then does not play; Slip and Loop Len there do
   nothing). TOOLS shows the `!`.
@@ -127,7 +139,8 @@ From 3.1.n and earlier:
 - Region does nothing on those pads either, and the playhead line is wrong on a pad playing a region. Switching a Clip
   pad to Sample mode clears its loop points (stock does that), so a pad sent back to Sample mode to adjust the loop
   needs it set again. A Beat Count that is not Auto, including one read from the WAV when it was loaded, is taken as
-  the region's length in beats. A pad that never loops round (Launch Trigger, or Loop Off) takes a new region at its
+  the region's length in beats (Fit Auto or a Fit length overrides it).
+  A pad that never loops round (Launch Trigger, or Loop Off) takes a new region at its
   next launch after it has stopped, and so does a stopped pad: until that launch, the length it reports for Beat Count
   Auto is the old one. A region shorter than half a beat counts 0 beats on Beat Count Auto, as a file that short does
   on stock: it loops on its own length, restarting slightly early with a short overlap, and Slip does nothing there.
@@ -142,6 +155,16 @@ From 3.1.n and earlier:
   playhead line shows the position without Loop Len. A slow, steady turn (about 0.2 s on each value) takes the values
   it passes, and the first of them sets where the window starts.
   Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
+- Fit changes the speed, so the pitch: a 3.74-beat loop fitted to 4 beats plays 6.5% slower and a little lower. The
+  Beat Count row and the clip length the app shows stay stock's (Beat Count Auto's), not Fit's. Pitch on a fitted pad
+  re-places the loop at every Sync step, as on stock. After a tempo change the pad follows within 43 ms; the step
+  already under way finishes at the old tempo and overlaps the next one once, as on stock. A fitted loop that has to
+  play at another speed than its own reads through the interpolating reader (as a 44.1 kHz file does on stock), which
+  costs more CPU. Fit does nothing on the pads Slip ignores (Slicer, Sync Slice with markers), and has no knob on the
+  waveform screen. When your Sync step does not divide a fitted loop, the pad re-syncs on the largest step that does
+  (half a bar for 14 beats at Sync 1 bar, a beat for 5 beats at Sync 1/2). Auto's count is kept while the pad's file
+  stays open: a preset at another tempo that plays the same file may keep the count made at the old tempo (not yet
+  checked on the unit). To count it again at the tempo now, play a pass with Fit on another value, then Auto.
 - On a Clip pad's waveform, Loop Start turned all the way up to Loop End (or Loop End down to Loop Start) leaves no
   loop, so the pad plays the whole file until they are apart again. With Region on File the two knobs still move the
   loop points but nothing is heard and no bracket shows.
@@ -165,14 +188,14 @@ From 3.1.n and earlier:
 
 ### The second file
 
-Part of the mod (Prism, Confetti, the per-pad insert effects and Clip pads' Slip, Region and Loop Len) is too big to
-fit beside 1010music's firmware. The chip has a second block of flash that 1010music's installer never touches, so the
-mod keeps that code there and installs it itself from `BBEXTRA.BIN` the first time it starts. The file holds this
+Part of the mod (Prism, Confetti, the per-pad insert effects and Clip pads' Slip, Region, Loop Len and Fit) is too big
+to fit beside 1010music's firmware. The chip has a second block of flash that 1010music's installer never touches, so
+the mod keeps that code there and installs it itself from `BBEXTRA.BIN` the first time it starts. The file holds this
 project's own code and nothing of 1010music's. You can leave it on the card.
 
 - **`!` in front of the load figures on TOOLS** (for example `!62/75%`) means the second part is not installed or
   does not match this build. Everything else works; those three effects are switched off, and Clip pads play as on
-  stock (Slip, Region and Loop Len do nothing).
+  stock (Slip, Region, Loop Len and Fit do nothing).
 - **`---` in the Insert, Master FX or delay Type lists** is the same thing seen from the menus: the effect that
   belongs there is not installed. A preset that uses one keeps its setting and gets the effect back once it is.
 - To fix either: put the `BBEXTRA.BIN` **from the same download** as your `BLACKBOX.bin` in the root of the card and

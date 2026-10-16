@@ -9,8 +9,8 @@
  * and take, then everything else that is maths or policy. clipwin.c keeps the hooks, every stock call (the settings
  * lookup, the source's length and prefetch, the readers, the param-set, the recompute, the knob's ring, stepper and
  * text) and the bank's set-up, and calls in here only when b2_live() says the payload up there is this build's.
- * Without it every hook is a straight pass to stock: Slip, Region and Loop Len do nothing, the Slip row shows stock's
- * plain number and the waveform no bracket.
+ * Without it every hook is a straight pass to stock: Slip, Region, Loop Len and Fit do nothing, the Slip row shows
+ * stock's plain number and the waveform no bracket.
  */
 #include <stdint.h>
 
@@ -56,9 +56,11 @@ static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, i
 /* The region pad q plays from now: its Region setting over the loop points. From the cell's class-H object, which
    stores them in queue order with everything else the pad hears; from the app's store (set, which clipwin.c read)
    when that link does not hold, keeping the last pair that made sense there (the app writes Loop Start and Loop End
-   one at a time). */
+   one at a time). Fit comes with it, from the store; the one the pad had is kept for cw_hold. */
 static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len, const int32_t *set)
 {
+    b->pfit[q] = b->fit[q];
+    b->fit[q] = (uint8_t)((uint32_t)set[CW_SET_FIT] <= FIT_MAX ? set[CW_SET_FIT] : 0);
     const uint8_t *h = *(uint8_t *const *)(pad + PAD_SIBLING);
     int32_t ls, le;
     if (h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
@@ -102,10 +104,85 @@ static __attribute__((noinline)) int32_t region_of(const struct cw_bank *b, unsi
     return v;
 }
 
+static uint32_t gcd(uint32_t a, uint32_t c)
+{
+    while (c) {
+        uint32_t x = a % c;
+        a = c;
+        c = x;
+    }
+    return a;
+}
+
+/* ---- Fit ---- */
+
+/* Fit's beats for its rows 2 .. FIT_MAX: 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars */
+static const uint8_t fit_beats[FIT_MAX - 1] = {1, 2, 3, 4, 6, 8, 16, 32};
+
+/* H3 site 3 of pad q's recompute (cw_len): stock has just stored the step fields for its own clip (the Beat Count, or
+   Beat Count Auto's power of two). A fitted pad's are stored again, for a clip of Fit's beats, as stock stores them
+   for a Beat Count of that many, and with the source rate (+0x1f0) that makes each step's frames last its ticks: every
+   segment takes +0x1f0 as its rate (FUN_08065550, 0x080656de), so stock's own re-placement at each step lands where
+   the audio already is, and its end countdown and its Sync re-index reckon with the same rate. len = what the pad
+   plays (its region, or the file); the tempo is the engine's, as the poll last had it. Auto is the nearest whole
+   number of beats, at least one (Thomas at Gate 3, of a 14.015-beat take: "that weird length is intended as
+   polyrhythmic loop and should be handled properly"; 3.74 -> 4, 15.6 -> 16), counted once per length: a tempo change
+   then moves only the speed.
+   The count is forgotten when a recompute finds the file closed (len 0, or the provider's 0 frames): a file opened
+   again is counted again, at the tempo then.
+   Polymetric: a clip that is no whole number of Quants (3, 5, 6, 7, 14 beats on Quant 1 bar) cycles against the bar.
+   Pass k starts k clips after a launch on the Quant grid, so its wrap grid is gcd(Quant, clip), which every launch
+   point and every pass start lies on - not stock's min(Quant, clip): there the render snaps the end of every other
+   pass of a 14-beat clip to a bar that is half a bar back, in the past (test_clipwin.py: stock then doubles a step and
+   leaves one silent at the next wrap). Its steps: one when the Sync step is the clip or longer (as stock), else
+   gcd(Sync, clip), the largest step up to Sync that divides the clip (stock cuts 14 beats at Sync 1 bar into 3 steps
+   of 4 480 ticks, on no grid of the bar). Steps lie on the clock's grid of their length, as stock's do: a pad launched
+   off it (Quant 1/16 under Sync 1/4) is pulled onto the beat at its next step, as stock pulls it, and every pass after
+   starts on it (steps of gcd(Sync, gcd(Quant, clip)) kept it off the beat for good). Returns 1 when it stored them, 0
+   when the pad is not fitted (stock's stay). */
+__attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len)
+{
+    unsigned v = b->fit[q];
+    float bpm = b->engine ? *(const float *)(b->engine + ENGINE_BPM) : 0.0f, base = *(const float *)(pad + PAD_RATE);
+    b->fon[q] = 0;
+    if (v != FIT_AUTO || len <= 0 || len >= SRC_BAD)
+        b->alen[q] = 0;              /* Auto counts again when it is chosen again, or its file opened again */
+    if (!v || v > FIT_MAX || sliced(pad) || !(bpm > 0.0f) || len <= 0 || len >= SRC_BAD || !(base > 0.0f))
+        return 0;
+    int32_t beats;
+    if (v == FIT_AUTO) {
+        if (b->alen[q] != len) {
+            int32_t c = (int32_t)((float)len / (base * 48000.0f) * bpm / 60.0f + 0.5f);
+            b->abeats[q] = (uint16_t)(c < 1 ? 1 : c > FIT_AUTO_MAX ? FIT_AUTO_MAX : c);
+            b->alen[q] = len;
+        }
+        beats = b->abeats[q];
+    } else {
+        beats = fit_beats[v - 2];
+    }
+    int32_t clip = beats * 960, quant = *(const int32_t *)(pad + PAD_QUANT), sync = *(const int32_t *)(pad + PAD_SYNC);
+    int32_t grid = quant > 0 ? (int32_t)gcd((uint32_t)quant, (uint32_t)clip) : 0, step = clip;
+    if (pad[PAD_SYNCED] == 1 && sync > 0 && grid > 0 && clip / sync > 1)
+        step = (int32_t)gcd((uint32_t)sync, (uint32_t)clip);
+    int32_t n = clip / step;
+    int32_t samples = (int32_t)(48000.0 * ((double)clip / 960.0 / (double)bpm) * 60.0 + 0.5);   /* as FUN_08070420 */
+    if (samples <= 0)
+        return 0;
+    *(int64_t *)(pad + PAD_WRAP_GRID) = grid;
+    *(int64_t *)(pad + PAD_TPS) = step;
+    *(uint32_t *)(pad + PAD_STEPS) = (uint32_t)n;
+    *(float *)(pad + PAD_FPS) = (float)len / (float)n;
+    *(float *)(pad + PAD_STEP_OUT) = (float)samples / (float)n;
+    *(float *)(pad + PAD_RATE) = (float)len / (float)samples;
+    b->bpm[q] = bpm;
+    b->fon[q] = 1;
+    return 1;
+}
+
 /* H3 (clipwin_len): the clip's length stock is told at site 0 .. 3, len = fw_src_len's. At site 1 (the recompute's
-   first length) the pad takes its region when it is at its wrap (clipwin_wrap) or stopped: set = the three rows of
-   its store (CW_SET_*), read only for that site. Site 1 also keeps len for the Waveform screen (flen: the view's own
-   copy of the file's length is the app's, which can be another pad's, Gate 3 finding 12). */
+   first length) the pad takes its region (and its Fit) when it is at its wrap (clipwin_wrap) or stopped: set = the
+   rows of its store (CW_SET_*), read only for that site. Site 1 also keeps len for the Waveform screen (flen: the
+   view's own copy of the file's length is the app's, which can be another pad's, Gate 3 finding 12). */
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set)
 {
     int32_t rs;
@@ -113,13 +190,17 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
         b->flen[q] = len;
     if (site == 1 && (b->wrap == q + 1 || !(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])))
         adopt(b, q, pad, len, set);
-    int32_t v = region_of(b, q, pad, len, &rs);
+    int32_t v = region_of(b, q, pad, len, &rs), p = v ? v : len;
+    if (site == 3 && cw_fit(b, q, pad, p))
+        return p;
+    /* seamless: no end on the last step (end = 1 - 1 = 0), so it crossfades into the next pass like any other step;
+       H1 latches it with the region, so what it plays past the end is the region's start. Not for a one-shot. A
+       fitted file is a region of the whole file here (Thomas, Fit's design, answer 5: seamless): stock's own end
+       notches the wrap, 2 or 3 silent samples a pass. */
+    if (site == 2 && (v || b->fon[q]) && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)
+        return 1;
     if (!v)
         return len;
-    /* seamless: no end on the last step (end = 1 - 1 = 0), so it crossfades into the next pass like any other step;
-       H1 latches it with the region, so what it plays past the end is the region's start. Not for a one-shot. */
-    if (site == 2 && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)
-        return 1;
     /* A synced clip of one step (Sync >= the clip): stock times that step by the length (+0x204 = the region in output
        samples), not by the clip, so the seamless step would run past the next pass (doubling) or stop short of it (a
        gap), as stock does with a file that long. Time it by the clip, as stock times every step when there are two or
@@ -141,24 +222,24 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
    grids passes every 2): t, t + s, t + 2s ... They meet the new grid iff gcd(s, grid) divides t, and
    then within grid / gcd(s, grid) passes. No old grid (a clip of 0 ticks, a region under half a beat on Beat Count
    Auto: its passes start where its length ends them) or a gcd that does not divide t: no such wrap, and the region is
-   taken now, through stock's own snap (one pass off the grid, then on it). */
+   taken now, through stock's own snap (one pass off the grid, then on it). A Fit adopted with it waits with it (it
+   moves the grid as much); a fitted clip's grid is its own, gcd(Quant, clip) (fit), which divides the clip, so its
+   passes are one clip apart and a polymetric one (14 beats on Quant 1 bar) is never held for being off the bar. */
 int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const int32_t *was)
 {
     uint32_t grid = *(const uint32_t *)(pad + PAD_WRAP_GRID), g = (uint32_t)was[CW_WAS_GRID];
     struct cw_region *r = &b->region[q];
+    uint8_t fit_was = b->pfit[q];    /* the Fit this pass had (adopt kept it): asked once, at this wrap */
+    b->pfit[q] = b->fit[q];
     if (!t || t[1] || !grid || *(const uint32_t *)(pad + PAD_WRAP_GRID + 4) || !(t[0] % grid) ||
-        (r->rs == was[0] && r->vlen == was[1]) || !g || was[CW_WAS_CLIP] <= 0)
+        (r->rs == was[0] && r->vlen == was[1] && b->fit[q] == fit_was) || !g || was[CW_WAS_CLIP] <= 0)
         return 0;
-    uint32_t a = ((uint32_t)was[CW_WAS_CLIP] + g / 2 - 1) / g * g, c = grid;
-    while (c) {                      /* a = gcd(s, grid) */
-        uint32_t x = a % c;
-        a = c;
-        c = x;
-    }
+    uint32_t a = gcd(((uint32_t)was[CW_WAS_CLIP] + g / 2 - 1) / g * g, grid);   /* gcd(s, grid) */
     if (!a || t[0] % a)
         return 0;
     r->rs = was[0];                  /* the pass plays the region it had; a layer is active, so no recompute adopts */
     r->vlen = was[1];
+    b->fit[q] = b->pfit[q] = fit_was;
     return 1;
 }
 
@@ -299,11 +380,12 @@ int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_
     int32_t wd = b->ll[q] ? cw_window(b, q, pad, k, clip) : CW_NO_WINDOW;
     int loop = wd != CW_NO_WINDOW;
     /* Slip needs a clip to turn ticks into frames; a region does not: Beat Count Auto makes a region under half a
-       beat a clip of 0 ticks, and its segments must still read the region, not the file's first frames. */
+       beat a clip of 0 ticks, and its segments must still read the region, not the file's first frames. A fitted file
+       reads round its end as a region of the whole file (its wrap is seamless, cw_len). */
     if (!clip)
         slip = 0;
     if (!vlen) {
-        if ((!slip && !loop) || !pad[PAD_ON] || pad[PAD_SLICER] || len <= 0 || len >= SRC_BAD)
+        if ((!slip && !loop && !b->fon[q]) || !pad[PAD_ON] || pad[PAD_SLICER] || len <= 0 || len >= SRC_BAD)
             return pos;
         vlen = len;
     }
@@ -352,10 +434,10 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k)
 #define LL_SETTLE 4
 
 /* clipwin_tick, pad q: slip and ll as its store has them, sync its Sync (read only when Loop Len is set or taken),
-   engine = the clock (0: no Loop Len). Bit 0 = the pad's pending segments must be made again (cw_drop), bit 1 = send
-   msg to the pad (Loop Len's Sync). The row reads + = AHEAD, like a CDJ jog (Thomas, D-016): clockwise pushes the loop
-   ahead of the beat (it plays from further into the file), counter-clockwise drags it behind. That is the content's
-   shift as this file keeps it. */
+   engine = the clock (0: no Loop Len, no Fit tempo). Bit 0 = the pad's pending segments must be made again (cw_drop),
+   bit 1 = send msg to the pad (Loop Len's Sync), bit 2 = the cached pad is pad q's, bit 3 = recompute it (Fit's tempo).
+   The row reads + = AHEAD, like a CDJ jog (Thomas, D-016): clockwise pushes the loop ahead of the beat (it plays from
+   further into the file), counter-clockwise drags it behind. That is the content's shift as this file keeps it. */
 int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg)
 {
     slip = slip < -SLIP_MAX ? -SLIP_MAX : slip > SLIP_MAX ? SLIP_MAX : slip;
@@ -371,12 +453,19 @@ int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t s
         ll = b->ll[q];               /* not settled: what is taken stays */
     int moved = slip != b->slip[q];
     b->slip[q] = slip;
+    if (engine)
+        b->engine = (const uint8_t *)engine;
     const uint8_t *pad = b->pad[q];
     /* Loop Len waits for a pad H1 has seen (it is taken from what the pad plays) */
     if (!pad || pad[PAD_CLASS] != 0x4c || cw_pad(pad) != (int)q)
         return 0;
     if (engine && (ll | b->ll[q]))
         moved |= cw_looplen(b, q, pad, ll, sync, msg);
+    /* Fit follows the tempo: a fitted pad whose step fields were made at another tempo is recomputed (bit 3): its
+       clip stays, its output samples per step and its rate change. Nothing is re-indexed (the playing segments keep
+       theirs; the next step is made at the new rate), and a pad that plays adopts nothing there. */
+    if (engine && b->fon[q] && b->bpm[q] != *(const float *)((const uint8_t *)engine + ENGINE_BPM))
+        moved |= 8;
     return moved | 4;
 }
 
