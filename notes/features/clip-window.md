@@ -22,7 +22,7 @@ notes are `notes/releases/37.3.1.md` (37.3.0's: `notes/releases/37.3.0.md`). Its
 
 Status on 2026-10-16:
 
-- Every part passes under Unicorn: `test_clipwin.py` 451 checks, `test_bank2.py` 44, `./check.sh` 31 suites,
+- Every part passes under Unicorn: `test_clipwin.py` 455 checks, `test_bank2.py` 44, `./check.sh` 31 suites,
   0 failed.
 - 37.3.1's corner labels (§12b), playhead (§11d) and settle (§11) pass under Unicorn and have not been on the unit:
   §7's checks on 37.3.1d.
@@ -648,7 +648,8 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 - Bank 2's id hashes its `.c` files only (`build.sh`). Bank 1 pairs with the payload on its sum, and a bank-1-only
   edit of `clipwin.h` leaves bank 2's bytes, and so needs no reflash.
 
-**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`, 37.3.1): `.cave` 57 160 of 57 736 B (576 free) and
+**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`, 37.3.1): `.cave` 57 728 of 57 736 B (8 free; 57 160 before
+the dev build's bench tools, +568 B, §6) and
 `.bank2` 16 724 B; the release build (`RELEASE=1`: no USB peek / poke) 57 040 (696 free), the same bank 2. The
 bank-2 payload header is id `0xce1ead5b`, len `0x4180`, sum `0xc6b2bdbc`. 37.3.1 took 416 B of the cave (the corner
 labels 288, H5 128) and 72 B of bank 2 (`cw_playhead`; the settle is a constant). 37.3.0 (and 37.3.0d):
@@ -696,6 +697,16 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   here: before the fix the pad kept mapping its latches over the old length until its next segment, silent past a
   shorter file's end or with the old shift (`37loop/blackbox-t-004` `9ac8c24`, ported into each P3 step). The
   streaming misses and stock's own gaps after a file change are stock's and stay.
+- **The click on pad 1 at Slip −0.645** (F-a, Gate 3b 3b-19, `slip_fit.wav` against `poly_fit.wav`) is not the fold.
+  On that take the file's end and start meet (its unslipped wrap has no step over 0.002), and the fold, 16 126
+  samples into each pass, is clean. The 0.092 step is at the slipped pass's stock wrap (step 55 → step 0, on the
+  beat): for about 180 samples the output is the content twice over (0.193 where the delayed unslipped take has
+  0.099), as if step 0 came in at full gain while step 55 faded out. Under Unicorn the same pad (336 359 frames, Fit
+  Auto, Quant 1 bar, Sync 1/16 and 1/4, Slip −645 and 0, Launch Toggle and Gate, mono and stereo, four passes, 120 and
+  120.0001 BPM) fades step 0 in from 0 at every wrap: not reproduced. Next: pad 1's segment slots on the unit across a
+  slipped wrap (`bbusb.py peek PAD+30 448` just before and just after it: active, done, `+0x3C`, `+0x20`, positions).
+  Where a file's ends do not meet, a fold mid-step is a hard splice (H2's two-part read): no declick is built for it
+  (Loop Fade cannot reach a whole file), since the click heard is not that.
 - **The pad stuck after the browser** (finding 9, stock's own, with or without Slip): fixed by `cw_retire` (§1),
   with this build's bank 2. The 99 % load peak seen during it (finding 10): under emulation the stuck pad's block
   costs about 28 % more (4 456 against 3 471 instructions a block, the stock code included) and asks a prefetch every
@@ -754,8 +765,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   position at Off.
 - **Without this build's bank 2**, the row is there, turns and saves, but does nothing, as Slip and Region (D-018).
   An older payload in bank 2 also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open
-  question 30, Thomas's call: it measured +48 B, which the cave now has (576 B free in the dev build, 696 in the
-  release build).
+  question 30, Thomas's call: it measured +48 B, which the release build's cave has (696 B free; the dev build's has
+  8, after its bench tools).
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
 - A take right after a file change (review F1, release 37.2.0): Loop Len turned Off and on again within two Sync
@@ -824,7 +835,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 
 **Space**
 
-- Bank 1 has 576 B free (`.cave` 57 160 of 57 736, the dev build; 696 in the release build) after 37.3.1's H5
+- Bank 1 has 696 B free in the release build (`.cave` 57 040 of 57 736) and 8 in the dev build (57 728: its bench
+  tools, the bounded peek and poke and the mailbox, took 568 B; §6) after 37.3.1's H5
   (+128 B), 704 after its corner labels (+288 B), 992 after Loop Fade (+144 B, §3.5), 1 136 after Fit (+128), 1 264
   after the Gate 3 fix batch;
   1 424 B after D-018
@@ -958,6 +970,43 @@ Measurements come from `bench/bbusb.py` over the USB audio (Outs 1–3, 24-bit /
 - **The load, without TOOLS**: `cpu.c`'s meter is at `0x2405FFD0`. `peek 2405FFE4` gives the blocks measured (low
   half) and the **peak** in per mille (high half) since TOOLS last drew its bar; `peek 2405FFF0`'s byte 2 is the late
   blocks since then. TOOLS' own figure is the same peak, rounded to a percent (and its draw clears both).
+
+**The dev build's bench tools** (37.3.1d; `src/usbdev.c`, `#ifndef PUBLIC_BUILD`, fork-only: D-019; a release build
+has none of it and is byte for byte the image without it):
+
+- **The peek and poke are bounded** (F-j: a 64-byte peek at `0x38800FD8` read `0x38801000`, past backup SRAM, and the
+  bus fault restarted the unit). A peek reads aligned words inside one of: the LTDC's registers `0x50001000 ..
+  0x50001147` (a read changes none of them), `RCC_RSR` `0x580244D0`, flash `0x08000000 .. 0x081FFFFF`, DTCM, AXI SRAM
+  `0x24000000 .. 0x2407FFFF`, SRAM1–3 `0x30000000 .. 0x30047FFF`, SRAM4 `0x38000000 .. 0x3800FFFF`, backup SRAM
+  `0x38800000 .. 0x38800FFF`, SDRAM `0xC0000000 .. 0xC3FFFFFF`, and stops at its end (a short reply); a request that
+  starts outside them, or unaligned, is stalled. A poke writes an aligned word in the RAMs and SDRAM only (never flash,
+  never a peripheral); anything else is stalled and writes nothing. `bbusb.py peek` aligns its requests.
+- **A new setup drops a stale reply** (F-i: after a host-side timeout each reply was the previous request's). Every
+  setup disables endpoint 0 IN if it is still armed and flushes TX FIFO 0 before it answers.
+- **The parameter mailbox**: the host does what a hand does on the Pos and Waveform rows. A request at **cw_bank +
+  0xF00** (master.c's SDRAM block + `0x84800`; `bbusb.py set` / `get`):
+
+  | offset | field | who |
+  |---|---|---|
+  | `+0x00` | magic `0x3158424D` ("MBX1") | host |
+  | `+0x04` | seq: written last, one more than the last `done` | host |
+  | `+0x08` | op (1 SET, 2 GET), row, col (rows from the bottom), 0 | host |
+  | `+0x0C` | id (u16), 0 | host |
+  | `+0x10` | value (i32) | host |
+  | `+0x14` | done: the seq served, written last | unit |
+  | `+0x18` | result: 0 done, −1 unknown op, −2 not a pad, −3 not a row it sets, −4 out of range | unit |
+  | `+0x1C` | the store's value of the id after it | unit |
+
+  The GUI task serves it right after its knob scan (the app pass's `bl FUN_08040724` at `0x080A2CD6`, patched in dev
+  builds only), as the `0x6E` message a knob's view sends the app (`FUN_080A1718` → `SetCellParam`): the pad's store,
+  the engine's `0x39`, the screens' `0x66`, so a preset save and every Clip Window hook (Region, Slip, Loop Len's
+  settle, Fit, Loop Fade) see it as a turn. Rows: Pad Mode `0x8B` (Sample .. Granular only: never New Rec / New Multi),
+  Loop Mode `0x8D`, Quant Size `0x47`, Loop Start `0x91`, Loop End `0x92` (any frame count: the table holds 0 .. 1000
+  there), Launch Mode `0x93`, Sync `0x94`, Beat Count `0xD2`, Loop Fade `0xFA`, Region `0x1C8`, Slip `0x1C9`, Loop Len
+  `0x1CA`, Fit `0x1CB`; a value is checked against the stock table's min and max (`FUN_0808E2D0`, `FUN_0808E304`).
+  One request at a time, each seq served once, nothing while the magic is absent; no tempo, play / stop, recording,
+  presets or browser. `bbusb.py set 1,2 slip -0.645`, `set q13 looplen 1/4`, `get 1,2 fit`: list values by the
+  unit's own names (read from its table), Slip as beats.ticks.
 
 **The test take.**
 

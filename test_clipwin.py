@@ -4827,5 +4827,80 @@ def png(path, frames, scale=2):
 png("out/halo-preview.png", [frame(st_lc), frame(lc)])
 info("out/halo-preview.png: stock's corner labels (left) and these (right), over the screen's cyan on its background")
 
+# ====================================================================================================== 12c. the mailbox
+# The bench's parameter mailbox (src/usbdev.c, dev builds only): a request the computer pokes into cw_bank's 4 KB
+# (+0xF00) is applied in the GUI task after the knob scan (0x080a2cd6), as the 0x6e message a knob's view sends the app
+# (FUN_080a1718 -> SetCellParam, real): the store, the engine's 0x39 and the screens' 0x66 as from a turn. Real: the
+# app's handler, SetCellParam, the store, the parameter table (the stock registrar's, with our rows). Stubbed: the knob
+# scan's ADC, SetCellParam's posts (recorded).
+MB = BLOCK + 0x56800 + 0x2D100 + 0xF00
+check("the app pass's knob scan at 0x080a2cd6: stock 'bl 0x08040724' is now 'bl usbdev_mailbox_scan' (dev build)",
+      branch(0x080A2CD6, stock) == ("bl", 0x08040724) and branch(0x080A2CD6) == ("bl", S["usbdev_mailbox_scan"]))
+
+
+def mb_screen():
+    sc_ = Screen()
+    m_ = sc_.m
+    sc_.mposts = []
+    m_.stub(0x0804C59C, lambda: sc_.mposts.append(("engine", m_.arg(1), m_.arg(2), m_.arg(3) & 0xFFFFFFFF)))
+    m_.stub(0x080B5758, lambda: sc_.mposts.append(("ui", m_.r16(m_.arg(1)), m_.r16(m_.arg(1) + 8))))
+    m_.stub(0x08040724)                                   # the ADC scan: no knob turned
+    cls = 0x24079000
+    m_.uc.mem_write(cls, struct.pack("<HH", 0x2003, 0x4770))
+    m_.w32(cls + 0x10, cls | 1)
+    rows_ = sorted({**CLIP12, P_FIT: 0, P_FADE: 0}.items())    # a pad store holds both (clipwin_defaults; 0xfa stock's)
+    m_.uc.mem_write(ENT12, b"".join(struct.pack("<HHi", i, 0, v) for i, v in rows_))
+    m_.w32(ST12, cls + 0x10)
+    m_.w32(ST12 + 4, ENT12)
+    m_.uc.mem_write(ST12 + 10, struct.pack("<HH", len(rows_), 96))
+    m_.uc.mem_write(CELL12, struct.pack("<IHH", 0, 0x0012, 0))
+    m_.uc.mem_write(MB, bytes(0x20))
+    return sc_
+
+
+def mb_req(sc_, op, row, col, pid, v, seq=None, magic=0x3158424D):
+    m_ = sc_.m
+    seq = (m_.r32(MB + 0x14) + 1) & 0xFFFFFFFF if seq is None else seq
+    m_.uc.mem_write(MB, struct.pack("<IIBBBBHHi", magic, seq, op, row, col, 0, pid, 0, v))
+    sc_.mposts.clear()
+    m_.call(S["usbdev_mailbox_scan"], 0x24000170, count=20_000_000)
+    done, res, back = struct.unpack("<Iii", bytes(m_.uc.mem_read(MB + 0x14, 12)))
+    m_.call(0x08093E9C, ST12, pid)
+    store_ = struct.unpack("<i", struct.pack("<I", m_.uc.reg_read(66) & 0xFFFFFFFF))[0]
+    return dict(done=done, seq=seq, result=res, back=back, store=store_, posts=list(sc_.mposts))
+
+
+mbx, ref = mb_screen(), mb_screen()
+rows_mb = []
+for pid, v in ((P_SLIP, -645), (P_LOOPLEN, 3), (P_FIT, 1), (0x91, 24576), (0x92, 102072), (P_REGION, LOOP), (0x94, 5), (P_FADE, 50)):
+    x = mb_req(mbx, 1, 1, 2, pid, v)
+    ref.mposts.clear()
+    ref.m.call(0x0809FA50, APP, CELL12, pid, v, 0, count=20_000_000)
+    ref.m.call(0x08093E9C, ST12, pid)
+    rows_mb.append((pid, v, x, (ref.m.uc.reg_read(66), list(ref.mposts))))
+check(f"mailbox SET on row 1 col 2 (Slip -645, Loop Len 1/4, Fit Auto, Loop Start 24 576, Loop End 102 072, Region Loop, "
+      f"Sync 1/16, Loop Fade 5 %): served (done = seq, result 0), the store holds it, the value read back is it, and the "
+      f"posts are SetCellParam's own for it, the engine's 0x39 as cell 0x102 ({rows_mb[0][2]['posts']})",
+      all(x["done"] == x["seq"] and x["result"] == 0 and x["store"] & 0xFFFFFFFF == v & 0xFFFFFFFF == x["back"] & 0xFFFFFFFF
+          and x["posts"] == r_[1] and r_[0] & 0xFFFFFFFF == x["store"] & 0xFFFFFFFF and ("engine", 0x102, pid, v & 0xFFFFFFFF) in x["posts"]
+          for pid, v, x, r_ in rows_mb), [(hex(p_), v, x, r_) for p_, v, x, r_ in rows_mb if not (x["result"] == 0 and x["posts"] == r_[1])])
+bad = {what: mb_req(mbx, *a) for what, a in (("Length 0x90 (not listed)", (1, 1, 2, 0x90, 5)), ("Slip 3 841", (1, 1, 2, P_SLIP, 3841)),
+                                             ("Slip -3 841", (1, 1, 2, P_SLIP, -3841)), ("Pad Mode New Rec (4)", (1, 1, 2, 0x8B, 4)),
+                                             ("Loop Len 8", (1, 1, 2, P_LOOPLEN, 8)), ("row 4", (1, 4, 2, P_SLIP, 0)),
+                                             ("op 3", (3, 1, 2, P_SLIP, 0)))}
+want_bad = {"Length 0x90 (not listed)": -3, "Slip 3 841": -4, "Slip -3 841": -4, "Pad Mode New Rec (4)": -4, "Loop Len 8": -4,
+            "row 4": -2, "op 3": -1}
+check(f"  ...refused, nothing stored and nothing posted, each served once with its reason: "
+      f"{ {k: v['result'] for k, v in bad.items()} }", all(bad[k]["result"] == want_bad[k] and bad[k]["done"] == bad[k]["seq"]
+                                                            and not bad[k]["posts"] for k in bad)
+      and mb_req(mbx, 2, 1, 2, P_SLIP, 0)["back"] == -645, {k: (v["result"], v["posts"]) for k, v in bad.items()})
+g = mb_req(mbx, 2, 1, 2, P_LOOPLEN, 0)
+again = mb_req(mbx, 1, 1, 2, P_SLIP, 960, seq=mbx.m.r32(MB + 0x14))
+gone = mb_req(mbx, 1, 1, 2, P_SLIP, 960, magic=0)
+check(f"  ...GET reads the store back (Loop Len {g['back']}) and posts nothing; a seq already served is not applied again, nor "
+      f"a request without the magic (Slip still {gone['store']})",
+      g["result"] == 0 and g["back"] == 3 and not g["posts"] and not again["posts"] and again["store"] == -645
+      and not gone["posts"] and gone["store"] == -645, (g, again["posts"], gone["posts"], gone["store"]))
+
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

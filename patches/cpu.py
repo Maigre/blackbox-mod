@@ -31,3 +31,7 @@ PATCHES = [
     # vector 77 (OTG_HS): stock points it at a stub and never enables it
     (0x08040174, bytes.fromhex("89620408"), (sym["usbaud_isr"] | 1).to_bytes(4, "little")),
 ]
+# dev builds only (src/usbdev.c, #ifndef PUBLIC_BUILD; a release build has no such function, so no patch here): the
+# app pass's knob scan, then the bench's parameter mailbox
+if "usbdev_mailbox_scan" in sym:
+    PATCHES.append(hook(0x080A2CD6, 0x08040724, "usbdev_mailbox_scan"))

@@ -19,6 +19,11 @@ never part of a feat/* branch or a PR.
   bbusb.py offsets FILE.wav [A B]       onset offsets between channel A and B (default 0 = Out1 L, 2 = Out2 L)
   bbusb.py shift BASE.wav NEW.wav [BPM] how far Out 1 moved between two takes, aligned on the metronome (Out 2)
   bbusb.py note NOTE [VEL]              send a note on (then off 100 ms later) on the Global In channel (amidi)
+  bbusb.py set CELL ROW VALUE           a pad's row as its knob sets it (the parameter mailbox, DEV build: src/usbdev.c):
+                                        CELL = R,C (rows from the bottom) or qN; ROW = slip, region, looplen, fit, fade,
+                                        lps, lpe, sync, quant, beats, loopmode, launch, padmode; VALUE = a number, a
+                                        list row's name ("1/4", "Loop") or Slip as beats.ticks ("-0.645")
+  bbusb.py get CELL ROW                 that row from the pad's store (the same mailbox)
 
 Permissions: the peek / poke needs write access to the device node. Once, as root:
   echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0003", MODE="0660", GROUP="plugdev"' \
@@ -43,12 +48,17 @@ def dev():
 
 
 def peek(addr, n=4):
-    d, out = dev(), b""
-    while len(out) < n:
-        k = min(64, n - len(out))
-        a = addr + len(out)
-        out += bytes(d.ctrl_transfer(0xC0, 0x50, a & 0xFFFF, a >> 16, (k + 3) & ~3))
-    return out[:n]
+    """n bytes at addr. The unit reads aligned words inside one memory at a time (src/usbdev.c, F-j), so the requests
+    are aligned here and none runs past what was asked; a stall means there is nothing readable there."""
+    d, start = dev(), addr & ~3
+    end, out = addr + n, b""
+    while start + len(out) < end:
+        a = start + len(out)
+        got = bytes(d.ctrl_transfer(0xC0, 0x50, a & 0xFFFF, a >> 16, min(64, (end - a + 3) & ~3)))
+        if not got:
+            break
+        out += got
+    return out[addr - start:addr - start + n]
 
 
 def word(addr):
@@ -131,6 +141,62 @@ def cw_bank():
     if not 0xC0000000 <= mem < 0xC4000000:
         sys.exit(f"no SDRAM block (Prism pointer {mem:#x})")
     return mem + 0x83900
+
+
+# The parameter mailbox (src/usbdev.c, DEV builds): cw_bank + 0xF00. magic, seq, op/row/col, id, value; the unit writes
+# done, result and the store's value after. Applied in the GUI task as a knob turn's 0x6e message is (SetCellParam).
+MBOX_MAGIC = 0x3158424D          # "MBX1"
+MBOX_ROWS = {"padmode": 0x8B, "loopmode": 0x8D, "quant": 0x47, "lps": 0x91, "loopstart": 0x91, "lpe": 0x92,
+             "loopend": 0x92, "launch": 0x93, "sync": 0x94, "beats": 0xD2, "beatcount": 0xD2, "fade": 0xFA,
+             "loopfade": 0xFA, "region": 0x1C8, "slip": 0x1C9, "looplen": 0x1CA, "fit": 0x1CB}
+MBOX_RESULT = {0: "done", -1: "unknown op", -2: "not a pad", -3: "not a row the mailbox sets", -4: "out of range"}
+PARAM_TABLE = 0x2401F4FC         # the parameter table's pointer: 0x1c bytes an id (type, label, names, count, min, max)
+
+
+def cstr(addr, n=32):
+    return peek(addr, n).split(b"\0")[0].decode("latin-1")
+
+
+def param(pid):
+    """the stock table's entry for pid: (label, type, list names or None, min, max)"""
+    e = peek(word(PARAM_TABLE) + pid * 0x1C, 0x1C)
+    typ, label, names, count, lo, hi = e[2], *struct.unpack_from("<IIIii", e, 4)
+    lst = [cstr(word(names + 4 * i)) for i in range(count)] if names and 0 < count < 64 else None
+    return (cstr(label) if label else hex(pid)), typ, lst, lo, hi
+
+
+def cell(text):
+    if text.lower().startswith("q"):
+        q = int(text[1:])
+        return q >> 2, q & 3
+    r, c = (int(x) for x in text.split(","))
+    return r, c
+
+
+def mailbox(op, row, col, pid, value=0):
+    mb = cw_bank() + 0xF00
+    poke(mb + 8, op | row << 8 | col << 16)
+    poke(mb + 0xC, pid)
+    poke(mb + 0x10, value & 0xFFFFFFFF)
+    poke(mb, MBOX_MAGIC)
+    seq = (max(word(mb + 4), word(mb + 0x14)) + 1) & 0xFFFFFFFF
+    poke(mb + 4, seq)                                      # last: the request is whole
+    t0 = time.time()
+    while word(mb + 0x14) != seq:
+        if time.time() - t0 > 2:
+            sys.exit("no answer from the mailbox in 2 s (a release build, or the GUI task is not running?)")
+        time.sleep(0.01)
+    result, back = struct.unpack("<ii", peek(mb + 0x18, 8))
+    return result, back
+
+
+def show(pid, v):
+    label, typ, lst, lo, hi = param(pid)
+    if lst and 0 <= v < len(lst):
+        return f"{label} {lst[v]} ({v})"
+    if pid == 0x1C9:
+        return f"{label} {'-' if v < 0 else '+'}{abs(v) // 960}.{abs(v) % 960:03d} ({v} ticks)"
+    return f"{label} {v}"
 
 
 def knob_state(bank):
@@ -332,6 +398,26 @@ def main(argv):
         subprocess.run(["amidi", "-p", hw, "-S", f"90 {note:02X} {vel:02X}"], check=True)
         time.sleep(0.1)
         subprocess.run(["amidi", "-p", hw, "-S", f"80 {note:02X} 00"], check=True)
+    elif cmd in ("set", "get"):
+        row, col = cell(args[0])
+        pid = MBOX_ROWS.get(args[1].lower().replace(" ", "").replace("_", "").replace("-", ""))
+        if pid is None:
+            sys.exit(f"row: one of {', '.join(MBOX_ROWS)}")
+        v = 0
+        if cmd == "set":
+            text, (_, _, lst, lo, hi) = args[2], param(pid)
+            names = [n.lower() for n in lst] if lst else []
+            if text.lower() in names:
+                v = names.index(text.lower())
+            elif pid == 0x1C9 and "." in text:               # Slip as beats.ticks: "-0.645" = 645 ticks behind
+                b_, t_ = text.lstrip("+-").split(".")
+                v = (int(b_) * 960 + int(t_)) * (-1 if text.startswith("-") else 1)
+            else:
+                v = int(text, 0)
+        result, back = mailbox(1 if cmd == "set" else 2, row, col, pid, v)
+        if result:
+            sys.exit(f"cell row {row} col {col}: {MBOX_RESULT.get(result, result)}")
+        print(f"cell row {row} col {col}: {show(pid, back)}")
     else:
         sys.exit(__doc__)
 

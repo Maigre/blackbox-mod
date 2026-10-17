@@ -132,6 +132,7 @@ uint8_t *master_block(void);     /* master.c: the SDRAM block taken at boot, or 
 #define BULK_64   (64u | USBAEP | (2u << 18) | SD0PID)
 #define TXFIFO_1  (1u << 22)
 #define TXFFLSH_1 ((1u << 5) | (1u << 6))
+#define TXFFLSH_0 (1u << 5)
 #define TXFFLSH_2 ((1u << 5) | (2u << 6))
 #define IEPINT    (1u << 18)
 #define IISOIXFR  (1u << 20)
@@ -413,6 +414,27 @@ void usbaud_tap1(const float *src, int frames, uint32_t *dst, int zero, int stri
     ring_put(src, frames, 2u + right, (int)right);           /* stock's last conversion of the block */
 }
 
+#ifndef PUBLIC_BUILD
+/* DEBUG peek and poke, bounded (F-j: a 64-byte peek at 0x38800fd8 read 0x38801000, past the end of backup SRAM, and
+   the bus fault restarted the unit). Aligned words only. A peek reads inside one of these ranges (half-open) and stops
+   at its end: the LTDC's registers (the screen's layers, F-d; a read changes none of them), RCC_RSR (the reset cause
+   fault.c records), flash, DTCM, AXI SRAM, SRAM1-3, SRAM4, backup SRAM, SDRAM. A poke writes from MEM_RAMS on: the
+   RAMs and SDRAM, never flash, never a peripheral. */
+static const uint32_t MEM[][2] = {
+    {0x50001000u, 0x50001148u}, {0x580244d0u, 0x580244d4u}, {0x08000000u, 0x08200000u}, {0x20000000u, 0x20020000u},
+    {0x24000000u, 0x24080000u}, {0x30000000u, 0x30048000u}, {0x38000000u, 0x38010000u}, {0x38800000u, 0x38801000u},
+    {0xc0000000u, 0xc4000000u}};
+#define MEM_RAMS   3             /* from here on, what a poke may write */
+
+static int inside(uint32_t a, unsigned from)
+{
+    for (unsigned i = from; i < sizeof MEM / sizeof MEM[0]; i++)
+        if (!(a & 3) && a >= MEM[i][0] && a <= MEM[i][1] - 4)
+            return 1;
+    return 0;
+}
+#endif
+
 static void request(void)
 {
     uint8_t buf[64];
@@ -421,6 +443,13 @@ static void request(void)
     const uint8_t *from = 0;
 
     S->more_left = 0;
+#ifndef PUBLIC_BUILD
+    /* F-i: a reply the computer gave up waiting for (its timeout) can still be queued in endpoint 0's FIFO; this
+       request's reply would go behind it, and every reply after be the request before's. A setup starts afresh. */
+    if (DIEPCTL0 & EPENA)
+        DIEPCTL0 |= EPDIS | SNAK;
+    flush(TXFFLSH_0);
+#endif
     if (type == 0x80 && req == 6) {                          /* GET_DESCRIPTOR */
         const char *text = 0;
         if (hi == 1)
@@ -452,20 +481,20 @@ static void request(void)
         }
 #ifndef PUBLIC_BUILD                                         /* not in a public build: see release.h */
     } else if (type == 0xc0 && req == 0x50) {                /* DEBUG peek: up to 64 bytes at wIndex:wValue, as words */
-        const volatile uint32_t *at = (const volatile uint32_t *)(lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24);
-        for (len = 0; len < want && len < 64; len += 4) {
-            uint32_t w = *at++;
+        uint32_t a = lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24;
+        for (len = 0; len < want && len < 64 && inside(a + len, 0); len += 4) {   /* stops at its memory's end */
+            uint32_t w = *(const volatile uint32_t *)(a + len);
             for (unsigned k = 0; k < 4; k++)
                 buf[len + k] = (uint8_t)(w >> (8 * k));
         }
-        ok = 1;
+        ok = len > 0;                                        /* nothing readable there: stalled */
     } else if (type == 0x40 && (req == 0x51 || req == 0x52)) {   /* DEBUG poke: 0x51 sets the address, 0x52 writes a word */
         uint32_t v = lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24;
         if (req == 0x51)
             S->poke_at = v;
-        else
+        else if ((ok = inside(S->poke_at, MEM_RAMS)))
             *(volatile uint32_t *)S->poke_at = v;
-        ok = 1;
+        ok |= req == 0x51;                                   /* a poke outside the RAMs: stalled, nothing written */
         data = 0;
 #endif
     } else if (type == 0x00 && req == 5) {                   /* SET_ADDRESS: the core applies it after the status */
@@ -709,3 +738,85 @@ void usbdev_poll(void)
         return;
     }
 }
+
+#ifndef PUBLIC_BUILD
+/*
+ * DEBUG: the bench's parameter mailbox (dev builds only, as the peek and poke; fork-only, D-019). The computer
+ * writes a request with the poke; the GUI task applies it right after its knob scan (the app pass, 0x080a2cd6), as
+ * the 0x6e message a turned knob's view sends the app (FUN_080a1718 -> SetCellParam: the pad's store, the engine's
+ * 0x39, the screens' 0x66), so the store, the engine, a preset save and every Clip Window hook see it as a turn.
+ * At MBOX_AT in the boot-time SDRAM block: cw_bank's 4 KB (CW_OFFSET), past cw_bank (bench/bbusb.py: set, get).
+ *   +0x00 magic MBOX_MAGIC   +0x04 seq (written last)   +0x08 op, row, col (rows from the bottom), 0
+ *   +0x0c id (u16), 0        +0x10 value (i32)
+ *   firmware: +0x14 done (= the seq it served, written last)   +0x18 result   +0x1c the store's value after
+ * op 1 sets a pad row (MBOX_IDS only, in the table's min .. max; Pad Mode only Sample .. Granular, never New Rec /
+ * New Multi), op 2 reads one. Result 0 done, -1 an unknown op, -2 not a pad, -3 not a row it may set, -4 out of range.
+ * One request at a time: a seq is served once; nothing happens while the magic is not there.
+ */
+#include "clipwin.h"
+#define MBOX_AT    (CW_OFFSET + 0xf00u)
+#define MBOX_MAGIC 0x3158424du            /* "MBX1" */
+#define APP        ((uint8_t *)0x24020088u)
+_Static_assert(sizeof(struct cw_bank) <= 0xf00u && 0xf00u + 0x20u <= CW_BYTES, "the mailbox sits past cw_bank, in its 4 KB");
+
+struct mbox {
+    uint32_t magic, seq;
+    uint8_t op, row, col, pad0;
+    uint16_t id, pad1;
+    int32_t value;
+    uint32_t done;
+    int32_t result, back;
+};
+
+typedef void (*scan_fn)(void *hw);
+typedef void (*app_msg_fn)(uint8_t *app, const void *msg);
+typedef int32_t (*param_fn)(unsigned id);
+typedef int32_t (*setting_get_fn)(const void *store, unsigned id);
+#define fw_knob_scan   ((scan_fn)0x08040725u)        /* FUN_08040724: the knobs' ADC scan */
+#define fw_app_msg     ((app_msg_fn)0x080a1719u)     /* FUN_080a1718: the app's message handler (case 0x6e) */
+#define fw_param_min   ((param_fn)0x0808e2d1u)       /* the parameter table: min and max of an id */
+#define fw_param_max   ((param_fn)0x0808e305u)
+#define fw_get         ((setting_get_fn)0x08093e9du) /* a store's value of an id */
+
+/* Pad Mode, Loop Mode, Quant Size, Loop Start, Loop End, Launch Mode, Sync, Beat Count, Loop Fade, Region, Slip, Loop
+   Len, Fit */
+static const uint16_t MBOX_IDS[] = {0x8b, 0x8d, 0x47, 0x91, 0x92, 0x93, 0x94, 0xd2, 0xfa, 0x1c8, 0x1c9, 0x1ca, 0x1cb};
+
+/* Replaces bl FUN_08040724 @0x080a2cd6 (dev builds only: patches/cpu.py), the app pass's knob scan */
+void usbdev_mailbox_scan(void *hw)
+{
+    fw_knob_scan(hw);
+    uint8_t *block = master_block();
+    volatile struct mbox *x = block ? (volatile struct mbox *)(block + MBOX_AT) : 0;
+    uint32_t seq = x ? x->seq : 0;
+    if (!x || x->magic != MBOX_MAGIC || seq == x->done)
+        return;
+    unsigned op = x->op, row = x->row, col = x->col, id = x->id, known = 0;
+    int32_t v = x->value, r = 0;
+    for (unsigned i = 0; i < sizeof MBOX_IDS / sizeof MBOX_IDS[0]; i++)
+        known |= MBOX_IDS[i] == id;
+    if (op != 1 && op != 2)
+        r = -1;
+    else if (row > 3 || col > 3)
+        r = -2;
+    else if (!known)
+        r = -3;
+    else if (op == 1) {
+        int32_t lo = fw_param_min(id), hi = fw_param_max(id);
+        if (id - 0x91u < 2)                          /* Loop Start / End: the table holds 0 .. 1000 there, not frames */
+            lo = 0, hi = SRC_BAD - 1;
+        if (id == 0x8b)
+            hi = 3;
+        if (v < lo || v > hi)
+            r = -4;
+        else {
+            uint32_t msg[6] = {0x6e, 0, row << 4 | col, id, (uint32_t)v, 0};
+            fw_app_msg(APP, msg);
+        }
+    }
+    if (r >= 0)
+        x->back = fw_get(APP + 0x1840u + row * 0xf0u + col * 0x30u, id);
+    x->result = r;
+    x->done = seq;
+}
+#endif
