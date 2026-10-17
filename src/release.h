@@ -9,8 +9,8 @@
 #ifndef RELEASE_H
 #define RELEASE_H
 
-#define RELEASE_NAME "37.3.0"   /* Thomas's fork: 37.<feature step>.<build>; fork-only, never in a feature branch */
-#define DEV_NAME     "37.3.0d"  /* a dev build of the same: USB peek / poke compiled in (see usbdev.c) */
+#define RELEASE_NAME "37.3.1"   /* Thomas's fork: 37.<feature step>.<build>; fork-only, never in a feature branch */
+#define DEV_NAME     "37.3.1d"  /* a dev build of the same: USB peek / poke compiled in (see usbdev.c) */
 _Static_assert(sizeof RELEASE_NAME - 1 <= 8, "a release name is eight characters at most: longer wraps on a knob page");
 _Static_assert(sizeof DEV_NAME - 1 <= 8, "a dev name is eight characters at most: longer wraps on a knob page");
 
