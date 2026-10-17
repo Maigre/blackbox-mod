@@ -109,6 +109,22 @@ At their defaults the pad plays exactly as stock (bit for bit, under emulation).
 - **When a change is heard.** At the next Sync step, through stock's crossfade, with no added silence. A recorded pad
   defaults to Sync 1/16, so that is within a sixteenth. A launch that is waiting for its Quant point still starts on
   its bar, and it plays the new Slip from its first sample. On Sync None, a change waits for the clip's restart.
+- **A step 0 inside the audio** (37.3.3, Gate 3b F-a; D-028). At Attack 0 (`pad + 0xBA1` = 1, stock's default, on
+  both pads of the unit's preset) stock starts every pass's step 0, and every launch, without its 256-sample fade-in
+  (`0x08065790`: the fade-in moved into the countdown, after H1): right at the file's own start, after the last
+  step's fade-out. Slipped, on a region that starts past frame 0, in Loop Len's window, or on a seamless wrap (a
+  region or Fit, Loop On, Launch not Trigger: there the last step crossfades into step 0), that start is inside the
+  audio, and it clicked out of the notch or sounded the audio twice under the crossfade. `cw_latch` (H1) marks such a
+  segment (`cw_bank.fin`: its first frame is not stock's, or it is a pass's step 0, which `cw_hold` flags at each wrap
+  in `cw_bank.wrapped`, on a seamless pad); at its first read `cw_slot` (H2) gives it back the fade-in stock gives
+  every other step, (fade-in, countdown) = (0, c + 256) → (256, c), before the reader's fade stage runs, so its fade-out
+  starts on the same sample: the timing is stock's to the sample. The wrap is then the 256-sample crossfade of any
+  step (summed gain 0.73 .. 1), and a launch inside the audio fades in over 256 samples. Unchanged: a launch on the
+  file's frame 0 (hard, as stock has it, even on a seamless pad), a pad with an Attack (stock fades every step 0 in
+  itself, and the voice's envelope a launch), a pad the hooks leave alone (Slip 0, Region File or the whole file, no
+  window, no Fit), and everything without this build's bank 2. Covered too: the Region seam of finding 6 (Loop
+  Fade's case): its step 0 starts at Loop Start, or on the seamless wrap from frame 0. Loop Fade's own content
+  crossfade at the seam is separate and unchanged.
 - **A new file under a playing pad** (a load, a take landing in it, or the browser's pre-listen, which loads every
   highlighted file into the pad it was opened from): stock does not restart the voice, its segments read on at their
   positions in the new file. The segments made for the old file (the sounding one and the pending one) then read as
@@ -402,12 +418,12 @@ knob, no bracket. The Waveform still binds its four rows (TL and TR are stock's 
 ### 3.3 State: `cw_bank`
 
 The bank lives in SDRAM at `master_block() + 0x83900` (`PRISM_BYTES 0x56800 + 0x2D100`), with `0x1000` reserved
-(`0x800` until Fit: `EXTRA_BYTES` + 0x800, the block 0x84900 B) and `0x878` used. The layout is in `src/clipwin.h`
-and the magic is `CWNA`. The magic history: `CWN1` was 37.1.x, `CWN2`
+(`0x800` until Fit: `EXTRA_BYTES` + 0x800, the block 0x84900 B) and `0x898` used. The layout is in `src/clipwin.h`
+and the magic is `CWNB`. The magic history: `CWN1` was 37.1.x, `CWN2`
 the stale-latch fix (the latch's `len`), `CWN3` the Region step, `CWN4` arrived with Loop Len, and `CWN5` with the
 knob's v2 (37.2.1: the bench fields at `0x720`, `zero_hold` gone), `CWN6` with Loop Len's settle (`llv`, `llc`,
 37.3.0), `CWN7` with the Waveform's file length (`flen`), `CWN8` with the knob's v3 (`zero_slow` at `0x4BD`), `CWN9`
-with Fit (`fit` … `engine`), `CWNA` with Loop Fade (`fade`). (On
+with Fit (`fit` … `engine`), `CWNA` with Loop Fade (`fade`), `CWNB` with the step-0 fade-in (`fin`, `wrapped`; 37.3.3). (On
 `feat/region`,
 without the fix, `CWN2`/`CWN3` were Region/Loop Len and the bank used `0x620`.) When the magic is wrong the bank is
 cleared whole, with a word loop, and the magic set. `master_alloc` clears the magic at every boot, because SDRAM keeps
@@ -417,7 +433,7 @@ exclusive access anywhere (D-013).
 
 | offset | field | meaning |
 |---|---|---|
-| `0x000` | `u32 magic, scan` | `CWNA`; the poll's pad counter (`q = scan++ & 15`) |
+| `0x000` | `u32 magic, scan` | `CWNB`; the poll's pad counter (`q = scan++ & 15`) |
 | `0x008` | `i32 slip[16]` | Slip as last polled, ticks (+ = ahead) |
 | `0x048` | `u8 *pad[16]` | the class-B pad object, cached by H1 (validated before use: class `0x4C`, same cell) |
 | `0x088` | `u8 valid[16]` | bit k: `latch[q][k]` holds |
@@ -444,6 +460,8 @@ exclusive access anywhere (D-013).
 | `0x814` | `f32 bpm[16]` | the tempo a fitted pad's step fields were made at |
 | `0x854` | `u8 *engine` | the engine (the clock) as the poll last had it: `cw_fit`'s tempo |
 | `0x858` | `u16 fade[16]` | Loop Fade as taken with the region (0 … 1000) |
+| `0x878` | `u8 fin[16]` | bit k: slot k's segment starts inside the audio and gets its fade-in back at its first read (`cw_latch` → `cw_slot`, F-a, §1 Slip) |
+| `0x888` | `u8 wrapped[16]` | 1: the pad's wrap has just been recomputed (`cw_hold`): its next segment is that pass's step 0, not a launch (cleared by that latch, a slice segment or the poll) |
 
 Bank 2 reads and writes every field but `magic` and `scan` (D-018), so every offset it is compiled against is pinned
 by `_Static_assert` in `src/clipwin.h`, with the pad, class-H, segment, stepper and waveform fields and the settings it
@@ -697,16 +715,16 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   here: before the fix the pad kept mapping its latches over the old length until its next segment, silent past a
   shorter file's end or with the old shift (`37loop/blackbox-t-004` `9ac8c24`, ported into each P3 step). The
   streaming misses and stock's own gaps after a file change are stock's and stay.
-- **The click on pad 1 at Slip −0.645** (F-a, Gate 3b 3b-19, `slip_fit.wav` against `poly_fit.wav`) is not the fold.
-  On that take the file's end and start meet (its unslipped wrap has no step over 0.002), and the fold, 16 126
-  samples into each pass, is clean. The 0.092 step is at the slipped pass's stock wrap (step 55 → step 0, on the
-  beat): for about 180 samples the output is the content twice over (0.193 where the delayed unslipped take has
-  0.099), as if step 0 came in at full gain while step 55 faded out. Under Unicorn the same pad (336 359 frames, Fit
-  Auto, Quant 1 bar, Sync 1/16 and 1/4, Slip −645 and 0, Launch Toggle and Gate, mono and stereo, four passes, 120 and
-  120.0001 BPM) fades step 0 in from 0 at every wrap: not reproduced. Next: pad 1's segment slots on the unit across a
-  slipped wrap (`bbusb.py peek PAD+30 448` just before and just after it: active, done, `+0x3C`, `+0x20`, positions).
-  Where a file's ends do not meet, a fold mid-step is a hard splice (H2's two-part read): no declick is built for it
-  (Loop Fade cannot reach a whole file), since the click heard is not that.
+- **The click on pad 1 at Slip −0.645** (F-a, Gate 3b 3b-19, `slip_fit.wav` against `poly_fit.wav`): **fixed in
+  37.3.3.** It is not the fold (the take's ends meet; the fold, 16 126 samples into each pass, is clean) but the
+  slipped pass's wrap (step 55 → step 0, on the beat), where for about 180 samples the output was the content twice
+  over (0.193 where the delayed unslipped take has 0.099). Traced on the unit (37.3.2d, `auto/run-1/fa_slots.csv`):
+  every ordinary step's segment starts with fade-in 256 / countdown 5 744, each pass's step 0 with 0 / 6 000, because
+  both pads have Attack 0 (`pad + 0xBA1` = 1, stock's default): stock then starts every step 0 hard
+  (`0x08065790..0x080657BC`, after H1). Every Unicorn run until 37.3.3 had `0xBA1` = 0, so none saw it. Thomas: "an
+  automatic crossfade" (D-028). The cure is in bank 2 (§1 Slip, "A step 0 inside the audio"). A fold mid-step on a
+  file whose ends do not meet is still a hard splice (H2's two-part read): no declick is built for it (Loop Fade
+  cannot reach a whole file), since the click heard was not that.
 - **The pad stuck after the browser** (finding 9, stock's own, with or without Slip): fixed by `cw_retire` (§1),
   with this build's bank 2. The 99 % load peak seen during it (finding 10): under emulation the stuck pad's block
   costs about 28 % more (4 456 against 3 471 instructions a block, the stock code included) and asks a prefetch every
@@ -860,7 +878,10 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   and `SetCellParam`, and bank 2's `cw_looplen` and `cw_window`.
 
 **What it compares against.** Every scenario also runs with the clipwin hooks taken out at run time, and the Slip-0
-ones on the stock 3.1.9 image. Region scenarios run against the stock image playing a file as long as the region.
+ones on the stock 3.1.9 image. **Attack:** the rig's pad had `pad + 0xBA1` = 0 (stock fades every step 0 in) until 37.3.3; §12d
+runs Attack 0 through stock's param-set (`0xBA1` = 1, the unit's presets) and measures F-a's step 0 against the same
+runs with bank 2's marks cleared (37.3.2) and with `0xBA1` = 0: Fit Auto and Off, Slip −645 and +60, Sync 1/16 and
+1/4, a Region from 6 072, the launch, Fit at Slip 0, an Attack, a pad left alone, no bank 2. Region scenarios run against the stock image playing a file as long as the region.
 The research model's numbers (a2/r2) are asserted.
 
 **The sample source** is stubbed with a ramp (frame q holds `(q + 1)·2⁻²⁰`), so every output sample decodes to the

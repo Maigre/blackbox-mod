@@ -32,6 +32,15 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-028 (2026-10-17) — F-a: a step 0 that starts inside the audio gets stock's fade-in, automatically** (Thomas:
+  "an automatic crossfade"; hub #t-023, 37.3.3). Root cause, on the unit: Attack 0 (`pad + 0xBA1` = 1, stock's
+  default, both pads) makes stock start every step 0 and every launch hard; slipped, on a region past frame 0, in
+  Loop Len's window or on a seamless wrap that start is inside the audio and clicks or doubles. No new row, no new
+  setting: such a segment (its first frame not stock's, or a pass's step 0 on a seamless pad) gets the ordinary
+  256-sample fade-in back at its first read, its fade-out on the same sample, all in bank 2 (`cw_latch`, `cw_hold`,
+  `cw_slot`; bank 1 unchanged but for the bank's magic, `CWNB`, and size). A launch on the file's frame 0 stays hard,
+  and so does everything at Attack ≠ 0, on a pad the hooks leave alone, or without this build's bank 2. The Region
+  seam (finding 6) is covered by the same rule; Loop Fade's content crossfade is unchanged (feature doc §1 Slip).
 - **D-027 (2026-10-17) — JOEBOX 1 rc4 supersedes our PR #2: the restart-loop fix is Justin's now** (hub #t-023).
   Upstream `19d29f1` (JOEBOX 1 rc4, 2026-10-17) changes `b2chk` in `cpu.c` with `b2_step`: PRIMASK saved, interrupts
   masked, one read and one write, PRIMASK restored, instead of the LDREXB / STREXB the atomics compiled to. That is

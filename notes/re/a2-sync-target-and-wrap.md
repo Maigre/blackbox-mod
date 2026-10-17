@@ -129,7 +129,10 @@ equal-gain: the summed gain dips to **0.73** mid-fade. The wrap is a fade-out to
 samples of notch), not a crossfade. **Attack = 0** (param `0x3C` → pad `+0xBA1` = 1, read at `0x08065798` /
 `0x08065426`) drops the fade-in of every step-0 segment: the wrap becomes fade-out then **hard start** (2 zero-gain
 samples, then full gain). Attack 0 is the stock default for class-`'L'` cells (above), so a hard start at the wrap
-is the common case. Whether a given preset keeps 0 is not checked. The slow-file doubling reaches the pad's bus at
+is the common case. Whether a given preset keeps 0 is not checked. *Checked at Gate 3b (37.3.2d): both pads of the
+unit's preset have `+0xBA1` = 1 (README open point 7). With the Clip Window that hard start can land inside the audio
+(a slipped or seamless step 0: Gate 3b F-a); 37.3.3 restores its fade-in at its first read, `cw_slot` (feature doc
+§1 Slip).* The slow-file doubling reaches the pad's bus at
 twice the matched file's peak: nothing in the pad limits it.
 
 **Tempo change** (120 → 126 inside step 1) ✓. The step already scheduled keeps its sample delay: it sounds where the

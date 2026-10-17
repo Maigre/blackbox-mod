@@ -75,7 +75,7 @@ the transpose of `duck_thunk.S`'s row×4+col bit index. Call `FUN_0805F2C8` rath
 | `+0xb79` | u8 | launch quantization enabled (the ctor zeroes it, the factory sets 1; no other store found) | factory |
 | `+0xb7c` | u32 | Root Note (`0xd0`; 0 = None, which means key 60 is the reference) | param ✓ |
 | `+0xb80` | u32 | **Beat Count** (`0xd2`; 0 = Auto; no recompute) | param ✓ |
-| `+0xba1` | u8 | Attack (`0x3c`) == 0: step-0 segments start without a fade-in (`0x08065798`) ✓. The same param writes value/1000 to layer `+0x298` | param ✓ |
+| `+0xba1` | u8 | Attack (`0x3c`) == 0: step-0 segments start without a fade-in (`0x08065798`) ✓. The same param writes value/1000 to layer `+0x298`. 1 on both pads of a real preset (Gate 3b; README open point 7); the Clip Window gives a step 0 that starts inside the audio its fade-in back (37.3.3, `cw_slot`) | param ✓ |
 | `+0xba8` / `+0xbb0` | i64 / u8 | clip ticks last resolved / changed flag; the process then posts msg `0x8d` {cell id, clip ticks} to the app queue `ctx + 0x15238` ✓ | recompute ✓ |
 
 ### The recompute `FUN_08064a94(pad, clock)` ✓
