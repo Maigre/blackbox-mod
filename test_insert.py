@@ -139,8 +139,8 @@ e.call("insert_register", 0x24001000)
 check("registered: Insert (Off, Phaser, Flanger, Gate), Input (Off, In 1, In 2, In 1+2), a Model list per effect",
       [(l[0], l[1], l[2]) for l in lists] == [(0x1B6, "Insert:", ["Off", "Phaser", "Flanger", "Gate"]),
                                               (0x1C7, "Input:", ["Off", "In 1", "In 2", "In 1+2"]),
-                                              (0x1B7, "Model:", ["Stone", "Ninety", "Vibe", "Deep", "Steps"]),
-                                              (0x1B8, "Model:", ["Mistress", "ADA", "Tape", "Metal"])], lists)
+                                              (0x1B7, "Model:", ["Pebble", "Ninety", "Vibe", "Deep", "Steps"]),
+                                              (0x1B8, "Model:", ["Electra", "Jet", "Tape", "Metal"])], lists)
 check("...the six Phaser / Flanger knobs 0..100 %: Rate, Depth, Manual, Feedback, Spread, Mix (0x1b9 .. 0x1be)",
       [(n[0], n[1], n[2], n[3]) for n in nums[:6]] == [(0x1B9 + i, lab, 0, 1000) for i, lab in
                                                        enumerate(["Rate:", "Depth:", "Manual:", "Feedback:", "Spread:", "Mix:"])], nums[:6])
@@ -504,7 +504,7 @@ e.uc.mem_write(0x2405FFD0 + 35, b"\x01")           # b2chk: bank 2 checked and m
 count = {"n": 0}
 hook = e.uc.hook_add(0x4, lambda uc, a, s, u: count.__setitem__("n", count["n"] + 1))     # UC_HOOK_CODE
 costs = {}
-for kind, key, m, name in ((1, "ph", 0, "Stone"), (1, "ph", 3, "Deep"), (2, "fl", 1, "ADA")):
+for kind, key, m, name in ((1, "ph", 0, "Pebble"), (1, "ph", 3, "Deep"), (2, "fl", 1, "Jet")):
     store(2, ins=kind, **{key: m}, rate=500, depth=800, manual=500, fb=500, spread=300, mix=500)
     scan()
     buffer(src[:N], src[:N])

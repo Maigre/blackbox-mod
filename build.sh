@@ -32,6 +32,10 @@ CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestandi
 # RELEASE=1 builds the public image: the version is the release's name (src/release.h) and the raw USB peek / poke
 # is left out. Everything else is the same code.
 [ "${RELEASE:-0}" = 1 ] && CFLAGS="$CFLAGS -DPUBLIC_BUILD=1"
+# FAULT_SHOW=1: a crash or a watchdog reset draws its record on the screen and holds, instead of resetting (fault.c)
+[ "${FAULT_SHOW:-0}" = 1 ] && CFLAGS="$CFLAGS -DFAULT_SHOW=1"
+# USB_DIAG=1: TOOLS shows the USB device's state and the HSI48 error instead of the load (usbdev.c)
+[ "${USB_DIAG:-0}" = 1 ] && CFLAGS="$CFLAGS -DUSB_DIAG=1"
 [ "${MUNCHI:-1}" = 1 ] || MUNCHI_FLAG=-DMUNCHI_OFF
 arm-none-eabi-g++ $MUNCHI_FLAG -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-exceptions \
   -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -fno-math-errno -std=gnu++17 -Wall -Werror -Wno-unused-function \
