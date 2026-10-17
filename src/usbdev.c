@@ -36,7 +36,8 @@
  *   send: one packet per 1 ms USB frame, loaded by the controller's own interrupt (vector 77, usbaud_isr), which is
  *         the only interrupt this file uses and touches only endpoint 2. 48 frames a packet, 47 or 49 when the ring
  *         runs low or high, silence until the ring has ~4.7 ms in it.
- * State: 48 bytes of backup SRAM at 0x38800650, the MIDI queue at 0x38800908.
+ * State: 48 bytes of backup SRAM at 0x38800680, the MIDI queue at 0x38800908. (Until 3.3.h the state sat at 0x38800650,
+ * where the last 4 bytes of comp.c's Limit lookahead overwrote the first 4 of the SETUP packet - see comp.c.)
  *
  * DEBUG (3.1.N; compiled OUT of a public build, PUBLIC_BUILD - see release.h): two vendor requests on endpoint 0 let the computer read memory and
  * write a word (peek 0xc0 / 0x50, poke 0x40 / 0x51 + 0x52), so registers and counters can be read on the running unit.
@@ -179,9 +180,116 @@ struct usbdev_state {
 #define MQ_N 32u
 #define MQ ((volatile uint32_t *)0x38800908u)                /* USB-MIDI events as they came off the wire */
 
-#define S ((volatile struct usbdev_state *)0x38800650u)
+#define S ((volatile struct usbdev_state *)0x38800680u)
+_Static_assert(0x38800680u + sizeof(struct usbdev_state) <= 0x388006f0u, "usbdev state runs into rotate.c's ACC at 0x388006f0");
 
 enum { WAIT_BOOT, WAIT_RESET, WAIT_MODE, RUNNING, FAILED };
+
+#ifdef USB_DIAG
+/*
+ * USB_DIAG=1 (2026-10-15): what the USB device side did, for a unit whose computer never sees it (a tester's: M1 Mac,
+ * data cable, compressor Off, "not even an unknown device"). cpu.c puts usbdev_diag_text() on TOOLS in place of the
+ * load, so one photo says where it stops: the phase, how many bus resets the computer sent (0 = it never saw the
+ * device: wiring or pull-up), whether it got configured, and how far the 48 MHz oscillator is off. That oscillator
+ * is HSI48: stock picks it for both USB controllers (D2CCIP2R USBSEL = 3) and never turns the CRS on, so it runs on
+ * its factory trim; a full-speed device has to be within 0.25 %. Measured once, read-only, never trimmed here.
+ */
+struct usbdiag {
+    uint8_t resets, setups, measured, _r;
+    int32_t hsi_err;             /* HSI48 cycles in 1 ms of the crystal clock, minus 48000; + = fast */
+};
+#define DIAG ((volatile struct usbdiag *)0x388006b0u)
+_Static_assert(0x388006b0u + sizeof(struct usbdiag) <= 0x388006f0u, "usbdiag runs into rotate.c's ACC");
+_Static_assert(0x38800680u + sizeof(struct usbdev_state) <= 0x388006b0u, "usbdev state runs into usbdiag");
+
+#define CRS_CR       REG(0x40008400u)   /* ST's CRS_TypeDef: CR +0, CFGR +4, ISR +8, ICR +0xc (cmsis stm32h743xx.h) */
+#define CRS_CFGR     REG(0x40008404u)
+#define CRS_ISR      REG(0x40008408u)
+#define CRS_ICR      REG(0x4000840cu)
+#define CRS_CEN      (1u << 5)
+#define CRS_AUTOTRIM (1u << 6)
+#define CRS_SWSYNC   (1u << 7)
+#define RCC_APB1HENR REG(0x580244ecu)   /* bit 1 CRSEN */
+#define RCC_PLLCKSELR REG(0x58024428u)
+#define RCC_PLL1DIVR REG(0x58024430u)
+#define RCC_D1CFGR   REG(0x58024418u)
+#define DWT_CYC      REG(0xe0001004u)
+#define CYC_PER_MS   399360u            /* HSE 6.144 MHz / 3 x 390 / 2 - the test unit's PLL1, checked before use */
+
+static int32_t hsi48_error(void)
+{
+    uint32_t sel = RCC_PLLCKSELR, div = RCC_PLL1DIVR;
+    if ((sel & 3u) != 2u || ((sel >> 4) & 0x3fu) != 3u || (div & 0x1ffu) != 389u || ((div >> 9) & 0x7fu) != 1u ||
+        ((RCC_D1CFGR >> 8) & 0xfu) >= 8u)
+        return 0x7fffffff;              /* not the clock this was worked out for: no number rather than a wrong one */
+    uint32_t had = RCC_APB1HENR & 2u, cfgr;
+    RCC_APB1HENR |= 2u;
+    (void)RCC_APB1HENR;
+    CRS_CR &= ~(CRS_CEN | CRS_AUTOTRIM);
+    cfgr = CRS_CFGR;
+    CRS_CFGR = (cfgr & ~((3u << 28) | (0xffu << 16) | 0xffffu)) | (0xffu << 16) | 47999u;   /* SYNCSRC 0 (unwired pin), widest limit */
+    CRS_ICR = 0xfu;
+    CRS_CR |= CRS_CEN;
+    uint32_t pm;
+    __asm__ volatile("mrs %0, primask\n cpsid i" : "=r"(pm));
+    CRS_CR |= CRS_SWSYNC;               /* the counter starts from RELOAD ... */
+    uint32_t t0 = DWT_CYC;
+    while (DWT_CYC - t0 < CYC_PER_MS)
+        ;
+    CRS_CR |= CRS_SWSYNC;               /* ... and what is left of it 1 ms of crystal later is the error */
+    __asm__ volatile("msr primask, %0" : : "r"(pm));
+    for (volatile int i = 0; i < 64; i++)
+        ;
+    uint32_t isr = CRS_ISR;
+    CRS_CR &= ~CRS_CEN;
+    CRS_CFGR = cfgr;
+    if (!had)
+        RCC_APB1HENR &= ~2u;
+    if (isr & ((1u << 8) | (1u << 9) | (1u << 10)))     /* SYNCERR / SYNCMISS / TRIMOVF */
+        return 0x7fffffff;
+    int32_t cap = (int32_t)(isr >> 16);
+    return (isr & (1u << 15)) ? -cap : cap;              /* FEDIR 1: counting down still, the oscillator is slow */
+}
+
+static char *put_dec(char *p, unsigned v)
+{
+    char t[10];
+    int n = 0;
+    do t[n++] = (char)('0' + v % 10u); while ((v /= 10u) && n < 10);
+    while (n)
+        *p++ = t[--n];
+    return p;
+}
+
+/* "U3r2c1+0.12%" (at most 14 + NUL, cpu.c's buffer is 16 with its "!"): phase, bus resets (9 = 9 or more), configured, oscillator error in hundredths of a percent. */
+char *usbdev_diag_text(char *p)
+{
+    bkp_enable();
+    *p++ = 'U';
+    *p++ = (char)('0' + (S->phase <= FAILED ? S->phase : 9));
+    *p++ = 'r';
+    *p++ = (char)('0' + (DIAG->resets > 9 ? 9 : DIAG->resets));
+    *p++ = 'c';
+    *p++ = S->config ? '1' : '0';
+    if (!DIAG->measured) {
+        *p++ = '-';
+        *p++ = '-';
+    } else if (DIAG->hsi_err == 0x7fffffff) {
+        *p++ = '?';
+    } else {
+        int32_t e = DIAG->hsi_err;                           /* counts of 48000: 4.8 counts = 0.01 % */
+        unsigned h = (unsigned)((e < 0 ? -e : e) * 5 + 12) / 24u;
+        *p++ = e < 0 ? '-' : '+';
+        p = put_dec(p, h / 100u);
+        *p++ = '.';
+        *p++ = (char)('0' + h / 10u % 10u);
+        *p++ = (char)('0' + h % 10u);
+        *p++ = '%';
+    }
+    *p = 0;
+    return p;
+}
+#endif
 #define BOOT_BLOCKS 400          /* ~2 s of audio blocks after the host controller's clock is seen running */
 #define MODE_BLOCKS 10           /* the core wants 25 ms after a mode change */
 
@@ -575,6 +683,10 @@ static void serve(void)
     uint32_t ints = GINTSTS;
     if (ints & USBRST) {
         GINTSTS = USBRST;
+#ifdef USB_DIAG
+        if (DIAG->resets < 255)
+            DIAG->resets++;
+#endif
         DCFG &= ~(0x7fu << 4);
         DOEPTSIZ0 = SETUP_ARM;
         S->config = 0;
@@ -608,6 +720,10 @@ static void serve(void)
     DOEPINT1 = DOEPINT1;
     DIEPINT1 = DIEPINT1;
     if (out & STUP) {
+#ifdef USB_DIAG
+        if (DIAG->setups < 255)
+            DIAG->setups++;
+#endif
         request();
     } else if ((in & XFRC) && S->more_left) {                /* next packet of a long descriptor */
         unsigned n = S->more_left > 64 ? 64 : S->more_left;
@@ -690,11 +806,21 @@ void usbdev_poll(void)
         if (S->phase != WAIT_BOOT) {
             S->phase = WAIT_BOOT;
             S->count = 0;
+#ifdef USB_DIAG
+            DIAG->measured = 0;                              /* backup SRAM: last boot's numbers are not this one's */
+            DIAG->resets = 0;
+#endif
         }
         if (!(RCC_AHB1ENR & OTGFSEN) || !(RCC_D2CCIP2R & USBSEL))
             return;                                          /* stock has not started its own USB yet */
         if (++S->count < BOOT_BLOCKS)
             return;
+#ifdef USB_DIAG
+        DIAG->resets = 0;
+        DIAG->setups = 0;
+        DIAG->hsi_err = hsi48_error();
+        DIAG->measured = 1;
+#endif
         PWR_CR3 |= USB33DEN;
         RCC_AHB1LPENR &= ~OTGHSULPIEN;                       /* no external transceiver: its clock must not gate ours */
         RCC_AHB1ENR |= OTGHSEN;

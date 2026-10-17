@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 enum { INS_OFF, INS_PHASER, INS_FLANGER, INS_GATE, INS_TYPES };
-enum { PH_STONE, PH_NINETY, PH_VIBE, PH_DEEP, PH_STEPS, PH_MODELS };
-enum { FL_MISTRESS, FL_ADA, FL_TAPE, FL_METAL, FL_MODELS };
+enum { PH_PEBBLE, PH_NINETY, PH_VIBE, PH_DEEP, PH_STEPS, PH_MODELS };
+enum { FL_ELECTRA, FL_JET, FL_TAPE, FL_METAL, FL_MODELS };
 
 #define INS_LINE   1024          /* frames of delay line per channel (21 ms), a power of two */
 #define INS_STAGES 12

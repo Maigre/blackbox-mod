@@ -150,6 +150,9 @@ struct comp_state {
     float la[LA_MAX][2];
 };
 #define S ((volatile struct comp_state *)0x38800400u)
+/* 596 bytes: up to 3.3.g this ran 4 bytes into usbdev.c's state at 0x38800650, and Limit's lookahead wrote its last
+   slot over the USB SETUP packet. usbdev.c moved to 0x38800680; this keeps it from coming back. */
+_Static_assert(0x38800400u + sizeof(struct comp_state) <= 0x38800680u, "comp.c's state runs into usbdev.c's at 0x38800680");
 #define MAGIC 0x434f4d31u        /* "COM1" */
 #define SMASH_MAGIC 0x534d5331u    /* "SMS1": switching between Smash and a model re-starts whichever comes next */
 

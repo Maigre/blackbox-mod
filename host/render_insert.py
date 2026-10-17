@@ -48,13 +48,13 @@ def save(name, l, r):
 
 
 #        name                kind     model rate  depth manual fb    spread mix
-SHOW = [("01_phaser_Stone", PHASER, 0, 0.36, 0.85, 0.50, 0.50, 0.25, 0.5),
+SHOW = [("01_phaser_Pebble", PHASER, 0, 0.36, 0.85, 0.50, 0.50, 0.25, 0.5),
         ("02_phaser_Ninety", PHASER, 1, 0.48, 0.75, 0.45, 0.35, 0.00, 0.5),
         ("03_phaser_Vibe", PHASER, 2, 0.58, 0.95, 0.50, 0.20, 0.30, 0.5),
         ("04_phaser_Deep", PHASER, 3, 0.26, 0.80, 0.50, 0.75, 0.25, 0.5),
         ("05_phaser_Steps", PHASER, 4, 0.52, 0.85, 0.55, 0.65, 0.50, 0.5),
-        ("06_flanger_Mistress", FLANGER, 0, 0.28, 0.80, 0.45, 0.60, 0.25, 0.5),
-        ("07_flanger_ADA", FLANGER, 1, 0.22, 1.00, 0.50, 0.85, 0.25, 0.5),
+        ("06_flanger_Electra", FLANGER, 0, 0.28, 0.80, 0.45, 0.60, 0.25, 0.5),
+        ("07_flanger_Jet", FLANGER, 1, 0.22, 1.00, 0.50, 0.85, 0.25, 0.5),
         ("08_flanger_Tape", FLANGER, 2, 0.24, 1.00, 0.50, 0.30, 0.00, 0.5),
         ("09_flanger_Metal", FLANGER, 3, 0.30, 0.70, 0.50, 0.85, 0.25, 0.5)]
 

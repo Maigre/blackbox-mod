@@ -202,7 +202,8 @@ check("the four places that show the version point at our string in the cave, no
 # 0x24050000..0x2407ffff as Device memory (regions 3-5: TEX 0, C 0, B 1; read off a unit over USB, 2026-10-15). An
 # LDREX / STREX there is a precise bus fault (CFSR 0x8200, BFAR = &b2chk), the fault recorder resets, and the next boot
 # faults again: splash, Pads, reset, every 4 s, with or without BBEXTRA.BIN. The __atomic_* builtins on b2chk compiled
-# to exactly that; b2_change does each change with interrupts masked instead. This keeps an exclusive from coming back.
+# to exactly that; b2_step (JOEBOX 1 rc4's) does each change with interrupts masked instead. This keeps an exclusive
+# from coming back.
 dis = subprocess.run(["arm-none-eabi-objdump", "-d", "out/cave.elf"], capture_output=True, text=True, check=True).stdout
 excl = [line.strip() for line in dis.splitlines() if re.search(r"\t(ldrex|strex|clrex)", line)]
 check("no exclusive access (LDREX / STREX / CLREX) anywhere in the cave or bank 2", not excl, excl[:4])
