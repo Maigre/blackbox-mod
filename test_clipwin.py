@@ -233,6 +233,7 @@ sites = {"H1 (segment start, FUN_08065550)": (0x0806578C, PREFETCH, "clipwin_seg
          "F (set-value text, FUN_080b0728)": (0x080B0746, 0x080B0528, "clipwin_format"),
          "F (type-1 turn text)": (0x080B0E18, 0x080B0528, "clipwin_format"),
          "K (type-1 turn stepper)": (0x080B0DDE, 0x080B0B74, "clipwin_turn"),
+         "H5 (the render's playhead message, 0x4a)": (0x080668FC, 0x0804F504, "clipwin_playhead_b"),
          "W (the Waveform's Clip bind block, its last unbind: BR)": (0x080A582A, 0x080A7EE0, "clipwin_bind"),
          "W (FUN_080a53a2: the position knobs at every bind and zoom change)": (0x080A53B0, 0x080A52C4, "clipwin_zoom"),
          "W (the Waveform refresh's Clip case: the slice markers)": (0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
@@ -258,6 +259,10 @@ c = code("clipwin_len_steps_b", 10)
 check("clipwin_len_steps_b: r1 = r4 (the pad), r2 = site 3, r3 = r9 (the clip in output samples at 0x08064c5a), then b.w "
       "clipwin_len", [(x[1], x[2]) for x in c[:3]] == [("mov", "r1, r4"), ("movs", "r2, #3"), ("mov", "r3, sb")]
       and branch(c[3][0]) == ("b.w", S["clipwin_len"]), c)
+c = code("clipwin_playhead_b", 8)
+check("clipwin_playhead_b: r2 = r6 (the pad), r3 = fp (the slot of the segment just read), then b.w clipwin_playhead "
+      "(r0 the UI's queue, r1 the message, as the render set them)",
+      [(x[1], x[2]) for x in c[:2]] == [("mov", "r2, r6"), ("mov", "r3, fp")] and branch(c[2][0]) == ("b.w", S["clipwin_playhead"]), c)
 c = code("clipwin_wrap_b", 6)
 c2 = code("clipwin_wrap_free_b", 6)
 check("clipwin_wrap_b: r2 = sp + 0x58 (the render's tick of the next pass), clipwin_wrap_free_b: r2 = 0; then b.w clipwin_wrap "
@@ -299,7 +304,7 @@ for page in (0x080EF990, 0x080EF288):
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
            "FUN_08064a94 (recompute)": (0x08064A94, 0x3C8, [0x08064B2C, 0x08064C5A]),
-           "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080669D6, 0x08066E9E, 0x08066FAC]),
+           "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080668FC, 0x080669D6, 0x08066E9E, 0x08066FAC]),
            "FUN_08066454": (0x08066454, 856, [0x08066622]), "FUN_080662e4 (stock clip reader)": (0x080662E4, 368, []),
            "FUN_080b0728": (0x080B0728, 36, [0x080B0746]), "FUN_080b0d54": (0x080B0D54, 772, [0x080B0DDE, 0x080B0E18]),
            "FUN_080a54a0 (the Waveform setup; slice.py's four Slicer hooks in it too)":
@@ -586,6 +591,7 @@ class Rig:
             m.stubs[S["clipwin_slice_start_b"]] = go(PREFETCH)
             m.stubs[S["clipwin_read"]] = go(S["clip_read"])
             m.stub(S["clipwin_tick"])
+            m.stubs[S["clipwin_playhead_b"]] = go(0x0804F504)
         if (bypass or region_off) and self.patched:
             for t in ("clipwin_len_recompute_b", "clipwin_len_steps_b", "clipwin_len_b", "clipwin_len_end_b"):
                 m.stubs[S[t]] = go(SRC_LEN)
@@ -1183,13 +1189,14 @@ check("armed while the transport is stopped (delay 1, +0x3c set, layer +0x148 = 
       and not held["reads"] and held["latch"] == (0, 96000, 24000) and held["pf"] == [23992], (before[0], held))
 timing = lambda rr: [x[:SID] + x[AT:FET] for x in rr.reads]          # every read but its fetches
 step1 = [x for x in r.reads if r.made[x[SID] - 1]["step"] == 1]
+no_ph = lambda rr: [p for p in rr.posted if p[1] != 0x4A]          # the playhead's: H5 posts the slipped frame
 check("  PLAY (msg 0x57) on the bar at 384 000: it sounds from 384 001 (stock's delay 1; +0x140 = 15 360, msg 0x1d), every "
-      "read's timing and bookkeeping and every message as with the hooks out, and it plays slipped from its first read: "
-      "first fetch 24 000 (slip_f; hooks out: 0), the next step 48 000",
+      "read's timing and bookkeeping and every message but the playhead's (H5, §11d) as with the hooks out, and it plays "
+      "slipped from its first read: first fetch 24 000 (slip_f; hooks out: 0), the next step 48 000",
       r.reads and by.reads and r.reads[0][AT] == by.reads[0][AT] == 384001 and r.layer()["launch_tick"] == by.layer()["launch_tick"] == 15360
-      and [b for b, t, _ in r.posted if t == 0x1D][:1] == [30] and timing(r) == timing(by) and r.posted == by.posted
+      and [b for b, t, _ in r.posted if t == 0x1D][:1] == [30] and timing(r) == timing(by) and no_ph(r) == no_ph(by)
       and r.reads[0][FET][0][1] == 24000 and by.reads[0][FET][0][1] == 0 and step1 and step1[0][FET][0][1] == 48000,
-      (r.reads[0][AT] if r.reads else None, r.layer(), by.layer(), timing(r) == timing(by), r.posted == by.posted,
+      (r.reads[0][AT] if r.reads else None, r.layer(), by.layer(), timing(r) == timing(by), no_ph(r) == no_ph(by),
        r.reads[0][FET][:1] if r.reads else None, step1[0][FET][:1] if step1 else None))
 
 # ====================================================================================================== 5b. a new file
@@ -3214,8 +3221,8 @@ for length in (50000, 192000):
 # 43 blocks, 115 ms: its fast end) passes 1/16 and 1/8: 37.2.x took 1/16 at once, inside beat 2 (in-point 2 160, a 1/16
 # boundary), kept it for 1/4 and forced Sync 1/16, the window not starting on a beat (the bench's reading). Now only 1/4
 # is taken, LL_SETTLE polls after the one that saw it, on the beat playing then (an in-point of whole beats), the
-# user's Sync left alone, and every step from the next one replays that beat. A slow step-through (each value held 100
-# blocks, 267 ms) still takes each value in turn, the in-point from the first; Off is taken at once
+# user's Sync left alone, and every step from the next one replays that beat. A slow step-through (each value held 375
+# blocks, a second) still takes each value in turn, the in-point from the first; Off is taken at once
 def ll_turn(events):
     kw = dict(frames=96000, at=287000, blocks=1500, vals={P_SYNC: 3}, cell=0x102)   # pad 6: polled at 214 + 16k
     d = audio(pre=ll_pre(events, settled=False), **kw)
@@ -3235,24 +3242,25 @@ check(f"Loop Len turned Off -> 1/16 -> 1/8 -> 1/4 at blocks 450, 493, 536 (speed
       [x[1] for x in tr] == [3] and tr[0][2] == beat * 960 and tr[0][3] == 0 and syncs == {960}
       and 536 + SETTLE_BLOCKS <= tb <= 536 + SETTLE_BLOCKS + 16 and len(sg) >= 3 and all(x[2] == beat * 24000 for x in sg),
       (tr, sg, syncs))
-# ...a value every 56 blocks (149 ms: the slow end of speed 3) or 64 (171 ms: speed 2's fast half), at four phases of
-# the pad's poll: still only 1/4, on a whole beat. LL_SETTLE 3 took 1/16 or 1/8 on the way at every one of them (the
-# in-point 2 400, Sync forced); at 64 blocks every value is seen by exactly LL_SETTLE polls, one short of being taken
+# ...a value every 56 blocks (149 ms: the slow end of speed 3), 64 (171 ms: speed 2's fast half), 81 (216 ms: the
+# rest on 1/8 that 37.3.0's 4 polls took at Gate 3b, Thomas: "settle") or 112 (299 ms), at four phases of the pad's
+# poll: still only 1/4, on a whole beat. LL_SETTLE 3 took 1/16 or 1/8 on the way at 56 and 64, 4 at 81; at 112 blocks
+# every value is seen by exactly LL_SETTLE polls, one short of being taken
 sl = {}
-for gap in (56, 64):
+for gap in (56, 64, 81, 16 * LL_SETTLE):
     for ph in (0, 4, 8, 12):
         cw, tr = ll_turn({450 + ph: 1, 450 + gap + ph: 2, 450 + 2 * gap + ph: 3})
         sl[gap, ph] = [x[:4] for x in tr]
-check(f"...a value every 56 or 64 blocks (149, 171 ms: speed 3's slow end, speed 2's fast half) at four poll phases: only "
-      f"1/4 is taken, on a whole beat, Sync not forced ({sl})",
+check(f"...a value every 56, 64, 81 or {16 * LL_SETTLE} blocks (149, 171, 216, {16 * LL_SETTLE * N / 48:.0f} ms) at four poll "
+      f"phases: only 1/4 is taken, on a whole beat, Sync not forced ({sl})",
       all([x[1] for x in t_] == [3] and t_[0][2] % 960 == 0 and t_[0][3] == 0 for t_ in sl.values()), sl)
-cw, tr = ll_turn({450: 1, 550: 2, 650: 3})
-check(f"...a slow step-through (each value held 100 blocks): each is taken in turn ({[x[:4] for x in tr]}), the in-point "
+cw, tr = ll_turn({450: 1, 825: 2, 1200: 3})
+check(f"...a slow step-through (each value held 375 blocks, a second): each is taken in turn ({[x[:4] for x in tr]}), the in-point "
       "from the first (a 1/16 boundary inside beat 2) kept, as a value that stays is taken (D-004: changing it keeps the "
       "in-point)",
       [x[1] for x in tr] == [1, 2, 3] and len({x[2] for x in tr}) == 1 and tr[0][2] % 240 == 0 and tr[0][2] % 960
       and 1920 < tr[0][2] < 2880
-      and all(e + 1 <= x[0] <= e + SETTLE_BLOCKS + 16 for e, x in zip((450, 550, 650), tr)), tr)
+      and all(e + 1 <= x[0] <= e + SETTLE_BLOCKS + 16 for e, x in zip((450, 825, 1200), tr)), tr)
 cw, tr = ll_turn({450: 3, 800: 0})
 check(f"...and Off is taken at once, at the first poll after it ({[x[:4] for x in tr]})",
       [x[1] for x in tr] == [3, 0] and 800 < tr[1][0] <= 816, tr)
@@ -3958,7 +3966,9 @@ for what, kw in (("Launch Trigger", dict(launch=0)), ("Loop Off", dict(loop=0)),
 
 # ...and while Loop Len is taken: a window goes back to its own start, never on into Loop Start, so it is not faded (on
 # the region's last beat each repetition would end on the audio before Loop Start). Loop Len 1/4 taken in the last beat
-# of a one-bar region [40 000, 136 000), Loop Fade 1 % (960 frames, inside that beat): as at Loop Fade 0
+# of a one-bar region [40 000, 136 000), Loop Fade 1 % (960 frames, inside that beat): as at Loop Fade 0. Loop Len is
+# written SETTLE_BLOCKS before block 574, so that it is taken at block 582 whatever the settle, before either run's seam
+# hint (Loop Fade's, at rs - F, comes about 8 blocks earlier than Loop Fade 0's at rs)
 def ll_fade(fade, block, ll=3):
     """pre_block: the pad's store with Loop Fade `fade` throughout and Loop Len `ll` written at `block`; the block whose
     poll took it in rr.took"""
@@ -3971,7 +3981,7 @@ def ll_fade(fade, block, ll=3):
 
 
 RL = dict(frames=192000, region=LOOP, points=(40000, 136000, 1), beats=0, cell=0x102)
-a, b = (scenario(blocks=1500, vals={P_FADE: f_, P_SYNC: 3}, pre=ll_fade(f_, 510), **RL) for f_ in (10, 0))
+a, b = (scenario(blocks=1500, vals={P_FADE: f_, P_SYNC: 3}, pre=ll_fade(f_, 574 - SETTLE_BLOCKS), **RL) for f_ in (10, 0))
 ok_, d_ = same(a, b)
 took = (getattr(a, "took", None), getattr(b, "took", None))
 check(f"Loop Fade 1 % and Loop Len 1/4 taken in the region's last beat (block {took[0]}: sample "
@@ -3997,6 +4007,77 @@ for fade in (0, 250):
 check(f"Loop Fade 25 %, Slip 480: before each seam crossing a prefetch covers rs = {RSH} (crossing block, those "
       f"prefetches; the hints: {rows}), as at Loop Fade 0", all(g_ and all(c for _, c in g_) for g_, _ in rows.values())
       and {p for _, p, _ in rows[250][1]} == {0, RSH}, rows)
+
+# ====================================================================================================== 11d. the playhead
+# H5 (clipwin_playhead at the render's post of msg 0x4a, 0x080668fc): stock posts each segment's own position, which
+# the reader never shows: counted from the region's start, unslipped, never in Loop Len's window. Now the frame heard:
+# cw_map's mapping of the slot's latch (the reader's own), per mille as stock reckons it ((float)pos x 1000 / file).
+# Checked against the audio: in every block that one segment plays from start to end (no crossfade, which posts the
+# fading segment's tail as stock does), the position posted is the frame after the block's last sample (to the frame
+# at rate 1, the decoded frame's float error aside; at Fit's 0.935 the posted whole frame is 1 to 2.1 behind the
+# decoded one plus the rate: the kernel reads about a frame behind the position, and the fraction is cut). Without bank 2 the
+# messages are the stock image's.
+def heads(d, frames, rs=0, vlen=None, rate=1.0, at=287000):
+    """per block with one 0x4a post and one segment sounding throughout: (block, posted, per mille, frame heard + rate)"""
+    r_, vlen = d["rig"], vlen or frames
+    pre = 1 if r_.h else 0                                   # a rig with the class-H object runs a block before `at`
+    per = {}
+    for b_, t_, w_ in r_.posted:
+        if t_ == 0x4A:
+            per.setdefault(b_, []).append((w_[3], w_[4] & 0xFFFF))
+    rows = []
+    for b_, ps in sorted(per.items()):
+        i0 = at + (b_ - pre) * N - d["base"]
+        if len(ps) != 1 or i0 < 0 or i0 + N > len(d["cnt"]) or not np.all(d["cnt"][i0:i0 + N] == 1):
+            continue
+        f = d["frame"][i0 + N - 1]
+        if np.isnan(f):
+            continue
+        rows.append((b_, ps[0][0], ps[0][1], float(f) + rate))
+    dv = lambda x: ((x[1] - x[3]) + vlen / 2) % vlen - vlen / 2
+    ok = [x for x in rows if (abs(dv(x)) <= 0.01 if rate == 1.0 else -2.5 <= dv(x) <= 0.5)
+          and rs <= x[1] < rs + vlen and x[2] == int(np.float32(np.float32(x[1]) * np.float32(1000.0) / np.float32(frames)))]
+    return rows, ok, len(per)
+
+
+PH = {"a region from 6 072 (B's [6 072, 102 072) of 192 000 frames)": dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1)),
+      "...with Slip +0.060 (1 500 frames ahead)": dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1), slip=60),
+      "...with Slip -0.120 (3 000 behind: the line wraps at Loop End)": dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1), slip=-120),
+      "a whole file with Slip +0.480": dict(frames=96000, beats=4, slip=480),
+      "Loop Len 1/4 on a whole file (each step replays the window's beat)": dict(frames=96000, beats=4, vals={P_SYNC: 3, P_LOOPLEN: 3}),
+      "Fit Auto on a 3.74-beat file (rate 0.935)": dict(frames=89760, beats=0, vals={P_FIT: 1})}
+for what, kw in PH.items():
+    d = audio(blocks=900, **kw)
+    rate = struct.unpack("<f", bytes(d["rig"].m.uc.mem_read(d["rig"].pad + 0x1F0, 4)))[0]
+    rs, vlen = (6072, 96000) if kw.get("region") == LOOP else (0, kw["frames"])
+    rows, ok, n_ = heads(d, kw["frames"], rs, vlen, rate)
+    ex = rows[len(rows) // 2] if rows else None
+    check(f"H5, {what}: in each of the {len(rows)} blocks (of {n_} with a post) that one segment plays throughout, the "
+          f"line is the frame heard next, its per mille stock's reckoning (block {ex and ex[0]}: {ex and ex[1:3]} after "
+          f"frame {ex and ex[3] - rate:.1f})", len(rows) > 0.7 * n_ and len(ok) == len(rows),
+          ([x for x in rows if x not in ok][:4], len(rows), n_))
+
+
+# stock's own message on that region (H5 alone taken out): 6 072 frames behind the audio, which is the same
+def h5_out(rr):
+    rr.m.stubs[S["clipwin_playhead_b"]] = lambda: rr.uc.reg_write(UC_ARM_REG_PC, 0x0804F504 | 1)
+
+
+kw = dict(PH["a region from 6 072 (B's [6 072, 102 072) of 192 000 frames)"], blocks=900)
+d, nd = audio(**kw), audio(setup=h5_out, **kw)
+nrows = heads(nd, 192000, 6072, 96000)[0]
+lag = sorted({x[3] - x[1] for x in nrows})
+check(f"  ...H5 taken out, the same region's line is stock's: {lag} frames behind the audio (the region's start), which "
+      "is the same with it in", lag == [6072.0] and np.array_equal(d["frame"], nd["frame"], equal_nan=True)
+      and np.array_equal(d["gain"], nd["gain"]), (lag[:4], len(nrows)))
+# without bank 2: the messages are the stock image's, bit for bit (a region and Slip set, which then do nothing)
+kw = dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1), slip=60, blocks=600)
+nb = scenario(bank2=False, **kw)
+sti = scenario(image=STOCK, **kw)
+p_nb, p_st = [x for x in nb.posted if x[1] == 0x4A], [x for x in sti.posted if x[1] == 0x4A]
+check(f"H5 without bank 2: the {len(p_nb)} playhead messages of a region with Slip are the stock image's, bit for bit "
+      f"(and every other message), no bank-2 function entered", p_nb == p_st and nb.posted == sti.posted and p_nb
+      and not nb.b2_entered, (len(p_nb), len(p_st), nb.b2_entered[:3]))
 
 # ====================================================================================================== 12. the Waveform knobs
 # Clip mode on the Waveform screen (README section 3, notes/re/a3): stock unbinds all four knobs and never draws the loop

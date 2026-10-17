@@ -27,6 +27,17 @@ clipwin_slice_start_b:
     mov     r3, r4
     b.w     clipwin_slice_start
 
+/* H5, the render @0x080668fc posting the playhead: r0 = the UI's queue, r1 = msg 0x4a (sp + 0x58), r6 = the pad, fp =
+   the slot of the segment it has just read (loaded at 0x0806687c, kept across the reader's call). The render reloads
+   r3 from [sp + 0x34] after the post. */
+    .global clipwin_playhead_b
+    .thumb_func
+    .type clipwin_playhead_b, %function
+clipwin_playhead_b:
+    mov     r2, r6
+    mov     r3, fp
+    b.w     clipwin_playhead
+
 /* H3, the clip's length: each replaces a `bl FUN_080636f0` (fw_src_len, r0 = the source) where r4 is the pad, and
    tells clipwin_len which site it is (r2). The callers keep nothing in r1-r3 across that call (it is an AAPCS call
    that reaches the provider through a pointer). */

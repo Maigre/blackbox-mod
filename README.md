@@ -47,8 +47,8 @@ New since 3.1.n:
 - **Loop Len on Clip pads**: a "Loop Len" row on a Clip pad's Pos tab, after Slip: Off, 1/16, 1/8, 1/4, 1/2, 1 bar,
   2 bars or 4 bars. Only that much of the clip loops, in time, and it is the part that was playing when you turned it
   on, like a KP3's loop: 1/4 repeats the beat that was playing, 1/16 a sixteenth of it. It is taken once the knob
-  rests on a value (about 0.2 s), so turning from Off to 1/4 engages 1/4 on the beat playing then, not the 1/16 it
-  passed on the way; stepped through slowly, it takes each value in turn. Off is immediate. Turned Off and on again,
+  rests on a value (about 0.3 s), so turning from Off to 1/4 engages 1/4 on the beat playing then, not the 1/16 or
+  the 1/8 it passed on the way; stepped through slowly, it takes each value in turn. Off is immediate. Turned Off and on again,
   it takes the beat playing when the knob comes to rest: the same one if that beat is still playing then. Changing
   the length while it is on keeps the same start and moves the end. Off goes back to the whole loop, in phase, as if
   it had played on all along. A length shorter than the pad's Sync step sets Sync to fit, and your Sync comes back as
@@ -139,11 +139,12 @@ From 3.1.n and earlier:
   four knobs still turn: Loop Start and Loop End move the loop points, which the pad then does not play; Slip and Loop
   Len there do nothing). TOOLS shows the `!`.
 - Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
-  waveform shows the unslipped position. A new file loaded into a playing Clip pad plays unslipped, without its region
+  waveform shows stock's position there. A new file loaded into a playing Clip pad plays unslipped, without its region
   or Loop Len, for up to two Sync steps, then as set. (A pad that the file browser gave its own file back while it
   played a longer file's last step no longer sticks on its first beat: it plays on from its next pass. That needs the
-  second file too.)
-- Region does nothing on those pads either, and the playhead line is wrong on a pad playing a region. Switching a Clip
+  second file too.) The playhead line on the waveform shows the frame you hear, with Slip, Region, Loop Len and Fit;
+  for a moment at a step change it can show where the fading step was reading.
+- Region does nothing on those pads either. Switching a Clip
   pad to Sample mode clears its loop points (stock does that), so a pad sent back to Sample mode to adjust the loop
   needs it set again. A Beat Count that is not Auto, including one read from the WAV when it was loaded, is taken as
   the region's length in beats (Fit Auto or a Fit length overrides it).
@@ -158,9 +159,9 @@ From 3.1.n and earlier:
   waits for its bar, it starts once the pad plays; on a pad not played since power-on, at its first launch. A pad that
   stops forgets what it was looping: its next launch loops from the start of the clip. While it holds a shorter Sync,
   the Sync row still shows yours, and turning that knob puts yours back for a moment (up to 43 ms) before Loop Len sets
-  it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. The
-  playhead line shows the position without Loop Len. A slow, steady turn (about 0.2 s on each value) takes the values
-  it passes, and the first of them sets where the window starts.
+  it again. On a loop the length does not divide (a 3-beat loop with 1/2) the window starts over with the loop. A
+  slow, steady turn (about 0.3 s or more on each value) takes the values it passes, and the first of them sets where
+  the window starts; so does a quick turn that overshoots and rests there that long before you turn back.
   Turned Off and on again within two Sync steps of a new file loaded into the playing pad, it can take its in-point from the old file's window (the beat before, not the one playing).
 - Fit changes the speed, so the pitch: a 3.74-beat loop fitted to 4 beats plays 6.5% slower and a little lower. The
   Beat Count row and the clip length the app shows stay stock's (Beat Count Auto's), not Fit's. Pitch on a fitted pad

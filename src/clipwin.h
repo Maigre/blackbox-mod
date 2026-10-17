@@ -152,6 +152,8 @@ const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_
 void cw_map(const struct cw_bank *b, unsigned q, const uint8_t *pad, const struct cw_latch *l, int32_t pos,
             int32_t *at);
 int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t real, int32_t fade);
+/* H5: the frame slot k of pad q really reads at stock's position pos (cw_map's), for the playhead; -1 = stock's */
+int32_t cw_playhead(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t pos, int32_t len);
 void cw_fade(float *l, float *r, int count, int32_t i0, int32_t fade);
 /* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg, bit 2 =
    the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source), bit 3 = recompute it

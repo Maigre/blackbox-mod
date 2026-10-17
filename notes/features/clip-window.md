@@ -15,14 +15,17 @@ notes are `notes/releases/37.3.1.md` (37.3.0's: `notes/releases/37.3.0.md`). Its
   outside the repo).
 - **37.3.1**, at Gate 3b: the Waveform screen's four corner labels white with a 1 px black edge, in every pad mode
   (Thomas, on 37.3.0d: "the current light grey is almost unreadable over the blue waveform"; "simple common rules
-  applies everywhere"). Bank 1 only, since it is nothing but stock calls, which bank 2's leaf code may not make
-  (D-018: `clipwin.c` keeps every stock call): bank 2 is 37.3.0's byte for byte.
+  applies everywhere"), all in bank 1 (it is nothing but stock calls, which bank 2's leaf code may not make); H5,
+  the playhead line showing the frame heard (finding F-e: on B's region from 6 072 it ran 6 072 frames behind, wrapped
+  before Loop End and ignored Slip; Thomas: "yes"); Loop Len's settle from 4 polls to 7, 299 to 341 ms (F-g: an
+  ordinary turn rested 216 ms on 1/8 and took it; Thomas: "settle"). Those two change bank 2.
 
 Status on 2026-10-16:
 
-- Every part passes under Unicorn: `test_clipwin.py` 441 checks, `test_bank2.py` 43, `./check.sh` 31 suites,
+- Every part passes under Unicorn: `test_clipwin.py` 451 checks, `test_bank2.py` 44, `./check.sh` 31 suites,
   0 failed.
-- 37.3.1's corner labels pass under Unicorn (§12b) and have not been on the unit: §7's 3b-2 photo again on 37.3.1d.
+- 37.3.1's corner labels (§12b), playhead (§11d) and settle (§11) pass under Unicorn and have not been on the unit:
+  §7's checks on 37.3.1d.
 - Slip v1 was measured on the unit at Gate 2 (37.1.0d, `notes/bench/2026-10-15-gate2-slip.md`).
 - Gate 3 part 1 (37.2.0d, then 37.2.1d) ran on the unit: the first bank-2 install, Region by the knobs, Slip on a
   region, Loop Len 1/4, Off and 1/16, save / power-cycle / reload, the load and the pre-listen, all measured to the
@@ -159,20 +162,23 @@ At their defaults the pad plays exactly as stock (bit for bit, under emulation).
   length's grid in the clip. For example, 1/4 engaged during beat 3 repeats beat 3, and 1/16 repeats the sixteenth of
   it that was playing.
 - **When it is taken.** Once the knob has stopped on a value: a value other than Off is taken after the pad's poll
-  has read it unchanged four more times (171 to 213 ms after the knob stopped there), Off at once. A turn from Off
+  has read it unchanged seven more times (299 to 341 ms after the knob stopped there), Off at once. A turn from Off
   to 1/4 passes 1/16 and 1/8 on the way; 37.2.x took the first of them, so its in-point was a 1/16 of the beat and
   1/4 then forced Sync 1/16 (Gate 3 finding 8). Now 1/4 engages on the beat playing when it is taken. A list value
   is 400 counts and the stock accelerator's speed m is trunc(8/7 × counts a ms), so a turn at speed 3 stays 114 to
-  152 ms on each value, at speed 2 152 to 229 ms, at speed 1 longer (the knob log's mean rates: 142, 184, 241 ms).
-  Speeds 3 and up never settle on a value they pass; speed 2 can in its slow half; a slow step-through takes each
-  value in turn. Three polls (128 to 171 ms, the first cut) still took 1/16 or 1/8 at speed 2 (review F1).
+  152 ms on each value, at speed 2 152 to 229 ms, at speed 1 229 to 457 ms (the knob log's mean rates: 142, 184,
+  241 ms). Speeds 2 and up never settle on a value they pass; a slow step-through, resting about a second on each,
+  takes each value in turn. Three polls (128 to 171 ms, the first cut) still took 1/16 or 1/8 at speed 2 (review F1);
+  four (171 to 213 ms, 37.3.0) took 1/8 at Gate 3b, where an ordinary turn rested 216 ms on it (F-g). A quick
+  correction that rests longer than 341 ms on an overshoot still takes it: the bench's flicks (`ll-off-flick`) rested
+  387 to 693 ms on 4 bars, 1 bar and 1/2 before turning back.
   The stutter gesture (Off and on again) takes the beat playing when the knob rests, so within one Sync step only
   when that step is longer than the pause: not a 1/16 or a 1/8 at 120 BPM.
 - **Changing it:**
   - Changing the length while it is on keeps the in-point and moves the end.
   - Off goes back to the whole loop in phase, as if it had played on all along.
-  - Off and on again within one Sync step takes the same window back (the value turned on again is taken 171 to
-    213 ms after the knob rests: within a 1/4 step at 120 BPM, not within a 1/16 or a 1/8 one).
+  - Off and on again within one Sync step takes the same window back (the value turned on again is taken 299 to
+    341 ms after the knob rests: within a 1/4 step at 120 BPM, not within a 1/16 or a 1/8 one).
   - A change is heard at the pad's next Sync step.
 - **The knob.** It is a list knob: one name per 400 counts, no acceleration (a stock list). It is the same row on the
   Pos tab and on the Waveform's BR.
@@ -372,6 +378,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H3 site 2 | `0x08065690` (the last step's end, `len − 1`) | `bl 0x080636F0` | `clipwin_len_end_b` | seamless wrap: 1 (end = 0) when Loop On and not Trigger; else the region's length |
 | H3′ | `0x08066FAC` (render, the synced wrap) | `bl 0x08064A94` recompute | `clipwin_wrap_b` (r2 = sp + 0x58, the next pass's tick) → `clipwin_wrap(pad, clock, t)` | the recompute with this pad marked wrapping (it adopts); put a grid-moving region back until a wrap on its grid (`cw_hold`) |
 | H3′ | `0x08066E9E` (render, the unsynced wrap) | `bl 0x08064A94` | `clipwin_wrap_free_b` (r2 = 0) | the same, no grid check |
+| H5 | `0x080668FC` (render, msg `0x4A`: the playhead) | `bl 0x0804F504` post | `clipwin_playhead_b` (r2 = r6 the pad, r3 = fp the slot) → `clipwin_playhead(ui, msg, pad, k)` | the position (`+0x10`) the frame heard, as slot k's latch maps it for the reader (`cw_playhead` → `cw_map`: region, Slip, Loop Len's window; Fit's rate is in stock's positions), per mille (`+0x14`) as stock reckons it, `(float)pos × 1000 / file`; stock's message without a latch or bank 2 |
 | F | `0x080B0746` (set value) and `0x080B0E18` (type-1 turn) | `bl 0x080B0528` formatter | `clipwin_format(knob)` | Slip's beats.ticks text (`cw_text`; type 1 or 9, id `0x1C9`, not frozen) |
 | K | `0x080B0DDE` (`FUN_080B0D54`, type-1 turn) | `bl 0x080B0B74` stepper add | `clipwin_turn(stepper, counts)` | Slip's knob (`cw_turn`): one gain curve by the speed, the 1/64 grid at the top speed, a detent on 0 held longer after a slow arrival |
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
@@ -385,7 +392,8 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the four ids `0x1C8..0x1CB` at 0 (`0xFA` is stock's own); a pad store holds 86 of JOEBOX's 96 |
 | M | `master_alloc` (`src/master.c`) | — | `EXTRA_BYTES` `0x2E100` (includes `0x1000` for `cw_bank` since Fit; `0x2D900` and `0x800` before) | the bank's magic cleared at `block + 0x83900` every boot |
 
-H5, the playhead message `0x4A` at `0x080668FC`, is not built. The playhead stays stock's.
+H5 (37.3.1) rewrites only the message: the render keeps stock's position for itself (`pad + 0x248`, its own test
+that the position moved).
 
 Every `cw_*` named above is in bank 2 (§3.5); bank 1 keeps the hooks and the stock calls. Without this build's bank 2
 each hook is a straight pass to stock: no latch, no region, no forced Sync, stock's text and stepper for the Slip
@@ -426,7 +434,7 @@ exclusive access anywhere (D-013).
 | `0x620` | `i32 sf[16][4]` | Slip's part of `latch[q][k].delta`, frames |
 | `0x720` | `i16 knob_counts; u8 knob_speed` | the Slip knob's last turn event: its counts and the accelerator's speed (`bbusb.py knob`) |
 | `0x723` | `u8 llv[16]` | Loop Len as the poll last read it from the store (the settle, finding 8) |
-| `0x733` | `u8 llc[16]` | the polls since it changed: taken at `LL_SETTLE` (4) |
+| `0x733` | `u8 llc[16]` | the polls since it changed: taken at `LL_SETTLE` (7; 4 until 37.3.0) |
 | `0x744` | `i32 flen[16]` | `fw_src_len` at the pad's last recompute (H3 site 1): the Clip Waveform's file length (finding 12) |
 | `0x784` | `u8 fit[16]` | Fit as taken with the region (0 Off, 1 Auto, 2 … 9 = 1/4 … 8 bars) |
 | `0x794` | `u8 pfit[16]` | the Fit the pad had before its wrap's adoption: `cw_hold` puts it back |
@@ -533,8 +541,9 @@ latches its region, with Slip forced to 0.
   `(int)((float)w × fps)`. A tick-domain formula would be a frame off on a non-integer fps.
 - **The take** (bank 2, `cw_looplen`, called from `clipwin_tick`):
   0. **The settle** (bank 2's `cw_tick`, before the take; finding 8): `llv[q]` = the value the poll last read,
-     `llc[q]` = the polls since it changed. A value other than Off waits until `llc` reaches `LL_SETTLE` (4: four
-     more polls of the pad, 16 blocks each, so 171..213 ms at 48 kHz); until then the taken value stays. Off is taken
+     `llc[q]` = the polls since it changed. A value other than Off waits until `llc` reaches `LL_SETTLE` (7: seven
+     more polls of the pad, 16 blocks each, so 299..341 ms at 48 kHz; 4 until 37.3.0); until then the taken value
+     stays. Off is taken
      at once.
   1. A pending launch (a segment active, not done, `+0x3C` set) means nothing is taken this time. A Sync re-grid
      would sound the launch at once, off its bar. The poll comes back within 16 blocks.
@@ -639,9 +648,11 @@ moved the rest of the Clip Window's own code, fourteen leaf functions in all:
 - Bank 2's id hashes its `.c` files only (`build.sh`). Bank 1 pairs with the payload on its sum, and a bank-1-only
   edit of `clipwin.h` leaves bank 2's bytes, and so needs no reflash.
 
-**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`): `.cave` 56 744 of 57 736 B (992 free) and `.bank2`
-16 652 B; the release build (`RELEASE=1`: no USB peek / poke) 56 616 (1 120 free), the same bank 2. The bank-2
-payload header is id `0x2a0e4094`, len `0x4120`, sum `0x2cbfbf38` (37.3.0 and 37.3.0d). Loop Fade took 144 B of the
+**Sizes, this build** (`arm-none-eabi-size -A out/cave.elf`, 37.3.1): `.cave` 57 160 of 57 736 B (576 free) and
+`.bank2` 16 724 B; the release build (`RELEASE=1`: no USB peek / poke) 57 040 (696 free), the same bank 2. The
+bank-2 payload header is id `0xce1ead5b`, len `0x4180`, sum `0xc6b2bdbc`. 37.3.1 took 416 B of the cave (the corner
+labels 288, H5 128) and 72 B of bank 2 (`cw_playhead`; the settle is a constant). 37.3.0 (and 37.3.0d):
+`.cave` 56 744 (992 free), `.bank2` 16 652, id `0x2a0e4094`, len `0x4120`, sum `0x2cbfbf38`. Loop Fade took 144 B of the
 cave (its store row, the second fetch, the hint's place and its second hint at rs, the count before the machine
 readers) and 268 B of bank 2 (`cw_fade`, F in `cw_map`, `cw_hint`). Fit before it: `.cave` 56 600 (1 136 free),
 `.bank2` 16 384, id `0xd926e3db`, len `0x4020`, sum `0x1c35c65c`; it took 128 B of the cave (its row and names, the
@@ -668,8 +679,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   stores and saves the rows through `SetCellParam`. The view's generic forward stores the four Waveform knobs with no
   code of ours.
 - **Excluded pads.** Slicer pads and Clip pads on Sync Slice with markers play stock (their segments start in H1′).
-- **The display.** The playhead line (msg `0x4A`) shows stock's position: unslipped, outside the region, not
-  windowed. Stock's Beat Count, Quant and Sync rows are unchanged; a forced Sync is not shown.
+- **The display.** Stock's Beat Count, Quant and Sync rows are unchanged; a forced Sync is not shown. The playhead
+  line (msg `0x4A`) is ours since 37.3.1 (H5): the frame heard.
 
 ## 4. Limits and known issues
 
@@ -693,8 +704,7 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 
 **Region**
 
-- It does nothing on the pads Slip ignores, nor without this build's bank 2 (no bracket either). The playhead line is
-  wrong on a pad playing a region.
+- It does nothing on the pads Slip ignores, nor without this build's bank 2 (no bracket either).
 - Clip → Sample clears the loop points (stock).
 - A Beat Count that is not Auto, including one read from the WAV's `acid` chunk at load, is taken as the region's
   length in beats.
@@ -713,6 +723,15 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   13). A pad relaunched while it plays keeps its region.
 - SD streaming at the region seam has not been run on the unit. The hint is checked, the cache is not (miss counter
   `0x24013930`, question 9).
+
+**The playhead** (H5, 37.3.1)
+
+- It shows the frame each segment reads, as the reader maps it. At a step change the render posts the fading
+  segment's position too (its tail, past its step), as stock does: for a block (2.7 ms) the line can show that frame,
+  in Loop Len's window the frame after the window's end, before the new segment's post. Under emulation 4 posts in
+  887 on a 1/4 window; whether the screen ever draws one is the unit's to show.
+- Slicer pads and Sync Slice with markers, a file loaded under a playing pad (until its next segment) and a pad
+  without bank 2 keep stock's line.
 
 **Loop Len**
 
@@ -735,7 +754,7 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   position at Off.
 - **Without this build's bank 2**, the row is there, turns and saves, but does nothing, as Slip and Region (D-018).
   An older payload in bank 2 also switches off Prism, Confetti and the inserts. Whether to show `---` instead is open
-  question 30, Thomas's call: it measured +48 B, which the cave now has (992 B free in the dev build, 1 120 in the
+  question 30, Thomas's call: it measured +48 B, which the cave now has (576 B free in the dev build, 696 in the
   release build).
 - **Not run anywhere:** Pitch with it on; a Trigger or Gate relaunch with it on; a Region or Beat Count change with it
   on (the in-point is kept and may fold round a shorter clip).
@@ -805,8 +824,8 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 
 **Space**
 
-- Bank 1 has 704 B free (`.cave` 57 032 of 57 736, the dev build; 832 in the release build) after
-  37.3.1's corner labels (+288 B), 992 after Loop Fade (+144 B, §3.5), 1 136 after Fit (+128), 1 264
+- Bank 1 has 576 B free (`.cave` 57 160 of 57 736, the dev build; 696 in the release build) after 37.3.1's H5
+  (+128 B), 704 after its corner labels (+288 B), 992 after Loop Fade (+144 B, §3.5), 1 136 after Fit (+128), 1 264
   after the Gate 3 fix batch;
   1 424 B after D-018
   moved the Clip Window's maths to bank 2 (−1 312 B;
@@ -849,14 +868,15 @@ frame it plays and the gain it plays at.
 | 8 rate, stereo | a 44.1 kHz file, stereo 48 and 44.1 kHz, Pitch +7 | every sample stock + slip_f, the same gain |
 | 9 knob | texts (`+1.280`, `-0.030`, `+4.000`, a stale or frozen knob); on the pad page and the Waveform turn path (v3): the knob log's median counts at each speed 1..6 (the stepper fed counts × gain, the top speed onto the 1/64 grid; ticks an event 0.5, 1.6, 3.8, 9.7, 22.5, 60, ×2.3 to ×3.2 a speed), the snap at the top speed only, the clamps, the detent (a fast arrival held `ZERO_DETENT_MS`, slow ones at speeds 1 and 2 held `ZERO_DETENT_SLOW_MS`, speed 3 not; a steady 20 ms stream passing 160 ms after it, a new turn inside the pause and one after it, a reversal, a turn from 0 at rest), the bench fields; six other knobs | the stock binder, turn paths and stepper; the numbers read from `src/clipwin_b2.c`'s `#define`s; other knobs post exactly as on stock. Against v2 (37.2.1d) the curve's and the slow detent's checks fail (×5.7 and ×1 steps; 150 ms after a slow arrival) |
 | 10 Region | the rule over 20 cases (Loop Mode not asked: finding 7); each H3 site; adoption only at the wrap; the wrap-grid hold, and only for a wrap that can come (a 0-tick clip, passes that never meet the new grid: finding 5; a region grown from 3/8 beat to 2 beats while it plays); the fallback source; whole-process runs; a new file under a playing region (50 000 frames: the region no longer fits; 192 000: it does) | against stock playing the region as a file: every sample at `rs + (frame + slip_f) mod vlen`, every recompute field equal, no zero-gain sample; seamless wraps (stock: 8 006 zero-gain samples on a short region, peak 2.0 on a long one; ours 0, 1.0); one-step clips (32 000: peak 2.0 → 1.0; 20 000: 16 012 zero-gain → 0); the 9 000-frame region; live changes (heard at the wrap, a pass later from the last step, held to the bar where stock doubles, region → File); Sync None; 44.1 kHz stereo; gating; writes; the new file: the old segments read at their own positions in it (no mapping, nothing past its end, no silence), the next latch `(0, 50 000, 25 000)` or `(24 000, 48 000, 24 000)` made for the new length, Slip 960 = the Slip 0 run + slip_f |
-| 11 Loop Len | the settle (finding 8: Off → 1/16 → 1/8 → 1/4 at speed 3 takes only 1/4, on the beat then playing, Sync not forced, and so does a value every 149 or 171 ms, speed 3's slow end and speed 2's fast half, at four poll phases; a slow step-through takes each value; Off at once; the 37.2.x runs written a settle earlier, so they take where they took); `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
+| 11 Loop Len | the settle (finding 8, F-g: Off → 1/16 → 1/8 → 1/4 at speed 3 takes only 1/4, on the beat then playing, Sync not forced, and so does a value every 149, 171, 216 or 299 ms, speed 3's slow end, speed 2's fast half, Gate 3b's rest on 1/8 and one poll short of the settle, at four poll phases; a slow step-through, a second on each value, takes each value; Off at once; the 37.2.x runs written a settle earlier, so they take where they took); `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
 | 11b Fit | site 3's fields for Auto over eight lengths (14.015, 3.74, 15.6, a 14.5 tie up, 0.3, a bar, 44.1 kHz, 2 000 beats), the list's eight lengths, the polymetric grid and steps (Quant 1 bar / 4 bars / 1/4 / 1/16 / None, Sync 1/16 … 1 bar, Slice, None), counted once per length and forgotten at a closed file (0 frames, the provider's 0), the do-nothing cases; the whole process on a 3.74-beat region and file, Beat Count 8 on a bar, a tempo change, Slip 480, Loop Len 1/4, 44.1 kHz stereo, Pitch +12, a one-shot; 34 polymetric cases (a file and a region of 3, 5, 6, 7, 14 beats at Quant 1 bar and Sync 1/16, 1/4, 1 bar; Quant None; 5 beats at Sync 1/2; `CW_FULL=1`: 60, Quant None at every Sync) against stock playing the same files at their Beat Count; launches 1/16 after the bar, off the Sync grid (a bar, 14 beats, the 3.74-beat region at Quant 1/16 under Sync 1/4; 2 bars at Quant 1/4 under Sync 1 bar), against Fit Off and the stock image; live changes (Off → Auto; 1 bar → 2 bars at Quant 4 bars and 1 bar); a fitted 14-beat region made 16 and 13 beats; the hold's Fit; Fit Off against no row; the writes | the rule's own numbers at site 3, in the M7's single precision; a fitted clip: every pass one clip after the one before (off the Sync grid: the one jump onto the beat at the first step, then passes on the grid, as Fit Off and stock), the audio carrying on at every joint (under half a frame; under a frame where stock starts a step on a whole frame), no zero-gain sample, no gain over 1, where stock passes off the clip, doubles a step or leaves silence; Slip's shift exact (0.004 frame); Fit Off bit for bit as no row; without bank 2 with Fit set, every hook stock's (§11's check) |
 | 11c Loop Fade | 5 % on the 3.74-beat region at rate 1, with Fit Auto, 44.1 kHz stereo and Slip 480; a region from 1 000 (F clamped to Loop Start); a mismatched 441 Hz sine at 0, 1 and 5 %, with Fit; a one-shot, Loop Off, a 2 000-frame region, Pitch +24, Fidelity SP1200; Loop Fade 0 against no row; Loop Len 1/4 taken in the region's last beat; 25 % with Slip 480 (the seam hint); the store and the registration (stock's row) | every sample of the faded run against stock's formula applied to the Loop Fade 0 run's frames (max error 0.005 frame at rate 1, 0.08 through the kernel); the hints where the copy starts and at rs; the sine's splice gone; the do-nothing cases, Loop Len's window among them, bit for bit Loop Fade 0 (prefetches included); a prefetch covering rs before the slipped crossing, as at 0 %; without bank 2 with Loop Fade set, every hook stock's (§11's check) |
+| 11d playhead | H5's site and thunk; a region from 6 072 of a 192 000-frame file, with Slip +0.060 and −0.120; a whole file with Slip +0.480; Loop Len 1/4; Fit Auto on 3.74 beats (rate 0.935); the region with H5 alone taken out; no bank 2 | in every block one segment plays throughout, the position posted is the frame after the block's last sample heard (to the frame at rate 1; at 0.935 the posted whole frame 1 to 2.1 behind the decoded one plus the rate, the kernel's offset and the cut fraction), its per mille `(float)pos × 1000 / file`; stock's line on the region 6 072 behind the same audio; without bank 2 every message the stock image's, bit for bit |
 | 12b corner labels | the four sites; `label_vt` against stock's vtable; `clipwin_label` on the four knobs as the constructor leaves them (the knob's real layout, which makes the line its child); 24 lines (four corners, Clip's and Sample's names, 8 to 12 characters, on the background and on the cyan) through the knob's real draw into an 8-bit layer; the clipped draw (the box as the dirty rectangle, and a rectangle that cuts it); a value that changes (the box repainted between); no bank 2; every pad mode's setup and refresh on the screen; the cost; a preview (`out/halo-preview.png`) | white exactly where stock draws the glyphs in the box inset by a pixel, black exactly on the pixels around them, nothing else changed, all inside the box; the clipped draw the whole draw's pixels inside its rectangle; after a change, a fresh draw's frame; without bank 2 the stock image's frame bit for bit, grey; the vtable and the grey kept through Clip, Sample, Granular, Slicer and New Rec |
 | 12 Waveform | the length (a view holding another pad's 192 000 for a 336 359-frame pad: TR's range, the bracket, the waveform's clamp, the overview; the waveform's real tick following the playhead past 192 000), the bind order, the four rows, names and texts, the lines' width (the real redraw, the knob's set-rect on the constructor's rects, the text draw's measure: each line in its box, clear of its neighbour), the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
 
-**Elsewhere.** `test_bank2.py` (43 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of
-an instruction from a planted `bl`, using the linker's mapping symbols, and plants one in each of the eighteen `cw_*`
+**Elsewhere.** `test_bank2.py` (44 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of
+an instruction from a planted `bl`, using the linker's mapping symbols, and plants one in each of the nineteen `cw_*`
 functions (`cw_fit`, `cw_hint` and `cw_fade` among them), at its first instruction and at its first division where it
 has one.
 `test_insert.py` and `test_lfo.py` hold the pre-listen cell `0x401` off pad 2. `./check.sh` runs all 31 suites.
@@ -1011,7 +1031,7 @@ checks 19–26). Same unit, cabling, setup, pads and takes as §6: 120 BPM, Metr
 | 3b-6 | Region Auto through Sample mode (§6 check 6) | as §6 row 6 | the bracket; `shift` **−L′**. The Pad Mode change feeding the class-H object, never run on the unit |
 | 3b-7 | a region grown from under half a beat (finding 5) | B, Region Loop, Beat Count Auto, Quant 1 bar, Sync 1/16: TR to L + 9 000 (3/8 beat) and play; then TR to L + 48 000 (2 beats) without stopping → `grow.wav` (20 s from the change) | the 2-beat loop is heard from the next time round, no stop / play needed (37.2.x held the old one until a relaunch); one pass out of time, a short gap and one 1/16 doubled (emulated: 496 samples of gap, then 6 903 samples at gain 2), then in time: from the next pass `grow.wav` matches a take of the same region launched from stop (`shift` **0**); `peek B+528 8` = (L, 48 000) |
 | 3b-8 | Loop Len taken when it settles (finding 8; §6 checks 7, 9) | Region File, Slip 0: from Off turn BR at an ordinary speed to 1/4 while beat 3 plays → `ll4b.wav`; then Off; then step Off → 1/16 → 1/8 → 1/4 slowly, resting about 1 s on each | 1/4 engages on the beat playing about 0.2 s after the knob rests: `peek B+600 32`: `ll` byte 13 = 3, `forced` byte 13 = 0; `peek B+5F4` origin a multiple of 960 (1 920 or 5 760 when taken in beat 3); `peek B+730` byte 0 (`llv`) 3, `peek B+740` byte 0 (`llc`) 4; pad `+0x220` 960 (Gate 3: in-point 2 160, Sync forced 1/16); `shift b_file.wav ll4b.wav` **0**. The slow step-through takes each value in turn (1/16: `forced` 1, `+0x220` 240); Off: `forced` 0, `+0x220` 960 |
-| 3b-9 | on / off / on within a beat (§6 check 10) | 1/4 on and taken; Off, then 1/4 again within about 0.3 s | the same beat comes back (origin unchanged), since 1/4 is taken again 171..213 ms after the knob rests and a beat is 500 ms |
+| 3b-9 | on / off / on within a beat (§6 check 10) | 1/4 on and taken; Off, then 1/4 again within about 0.3 s | the same beat comes back (origin unchanged), since 1/4 is taken again 171..213 ms after the knob rests and a beat is 500 ms (37.3.1: 299..341 ms, still inside the beat) |
 | 3b-10 | Loop Len over a region with Slip (§6 check 11, never run) | the region of 3b-5, Slip `+0.060`, Loop Len 1/4 → `llr.wav` | `shift` **−L − 1 500**; the beat repeated is the one that was playing |
 | 3b-11 | the Waveform knobs and the pad's length (§6 checks 12, 19; finding 12) | pad 1, Region Loop over part of it: TR turned to its top, then back; TL / TR at several zooms; `peek B+744 4` (`flen[0]`); then §6 row 19's browser round trip and load | TR's top reads `LpE 336359` (37.2.x stopped at 192 000), `flen[0]` = 336 359 (`0x000521e7`); the view follows the playhead to the loop's end; one step = one pixel; the dead travel at the top counted (question 16); after the round trip and after a load, TR's top and `flen` are the file's length then (a stale one is review F3: §4) |
 | 3b-12 | SD at a seam (§6 checks 14, 26; question 9) | `peek 24013930` before and after 30 s of each: B on File; Region Loop with Slip `+0.060`; a 4-bar clip with Loop Len 1/16, Off, on; the region of 3b-17 at Loop Fade 5 % and 25 %, Slip 0 and `+0.060` | no more misses than B on File (Gate 3: 0 in normal play); no dropout on the step after Loop Len Off |
@@ -1022,8 +1042,18 @@ checks 19–26). Same unit, cabling, setup, pads and takes as §6: 120 BPM, Metr
 | 3b-17 | Loop Fade (§6 check 25; finding 6) | as §6 row 25: B, Region Loop [L, L + 89 760) with L ≥ 4 488, Fit Off; Loop Fade 0 → `fade0.wav`, 5 % → `fade5.wav` | as there; at 5 % F = 4 488 frames; `fit`: Loop Fade 5 % |
 | 3b-18 | the workflow, for real (§6 check 16) | §2 on a phone recording of a real song, no Trim, with Fit Auto and a few % of Loop Fade | sits in the groove; report by ear |
 
-On 37.3.1d, when it is installed (bank 2 unchanged: `BLACKBOX.bin` only, no rewrite, no restart): 3b-2's photo
-again, in Clip mode and in Sample mode; each corner reads white with a black edge on the cyan and on the background.
+On 37.3.1d, when it is installed (both files: bank 2 changed, so the first boot rewrites it and restarts once; the
+header then reads `21324242 ce1ead5b 00004180 c6b2bdbc`):
+
+- 3b-2's photo again, in Clip mode and in Sample mode: each corner reads white with a black edge on the cyan and on
+  the background.
+- The playhead (F-e): B on Region Loop over [6 072, 102 072), Slip 0, then `+0.060` and `-0.120`: the line sits on
+  the hits it plays, starts at the bracket's left edge and wraps at its right edge; on a whole file with Slip it
+  leads or trails stock's by the Slip; Loop Len 1/4: it loops inside the beat; Fit Auto on pad 1's take: it covers
+  the whole file once a pass.
+- The settle (F-g): 3b-8's ordinary turn Off → 1/4 again (`bbusb.py peek B+600`/`B+723`/`B+733` sampled as in
+  `ll4b-bank.txt`): only 1/4 taken, Sync not forced; the slow step-through still takes each value (about 0.3 s after
+  each arrival); a flick that overshoots and comes straight back takes nothing.
 
 Answer along the way, beside §6's three: whether the knob's v3 feels right; whether 3 and 6 beats stay in Fit's list;
 whether stock wraps pad 1's 14-beat take cleanly at Quant 1 bar (check 21: the emulation says it does not); whether

@@ -425,14 +425,16 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k)
 
 /* Loop Len is taken once its value has settled (Gate 3 finding 8): a turn from Off to 1/4 passes 1/16 and 1/8, and
    37.2.x took the in-point at the first of them, a 1/16 boundary (and forced Sync 1/16 for a 1/4 window that did not
-   start on a beat). A value is taken after LL_SETTLE more polls of the pad (16 blocks apart: 43 ms at 48 kHz) with the
-   store unchanged, 171 .. 213 ms after the knob stopped on it; Off is taken at once. Each value of a list knob is 400
-   counts, and the stock accelerator's speed m is trunc(8/7 x counts a ms), so a turn at speed m stays 400 / (7m / 8)
-   .. 400 / (7(m + 1) / 8) ms on each value: speed 3 114 .. 152 ms, speed 2 152 .. 229, speed 1 more (the knob log,
-   notes/bench/2026-10-16-gate3-part1.md: 142, 184 and 241 ms at its mean rates). Speeds 3 and up never settle on a
-   value they pass, speed 2 only in its slow half, and a slow step-through (speed 1) takes each value in turn, as
-   before. 3 polls (128 .. 171 ms) took 1/16 or 1/8 on the way at speed 2 and at the slow end of speed 3. */
-#define LL_SETTLE 4
+   start on a beat). A value is taken after LL_SETTLE more polls of the pad (16 blocks apart: 42.7 ms at 48 kHz) with
+   the store unchanged, 299 .. 341 ms after the knob stopped on it; Off is taken at once. Each value of a list knob is
+   400 counts, and the stock accelerator's speed m is trunc(8/7 x counts a ms), so a turn at speed m stays 400 / (7m /
+   8) .. 400 / (7(m + 1) / 8) ms on each value: speed 3 114 .. 152 ms, speed 2 152 .. 229, speed 1 229 .. 457 (the knob
+   log, notes/bench/2026-10-16-gate3-part1.md: 142, 184 and 241 ms at its mean rates). 37.3.0's 4 polls (171 .. 213 ms)
+   took values on the way at Gate 3b (Thomas, 2026-10-17: "settle"): an ordinary turn Off -> 1/4 rested 216 ms on 1/8
+   and took it. 7 polls take neither that nor anything a turn at speed 2 or up passes; a slow step-through, resting
+   about a second on each value, takes each in turn. A quick correction that rests on an overshoot longer than 341 ms
+   still takes it (the bench's flicks rested 387 .. 693 ms on 4 bars, 1 bar and 1/2 before turning back). */
+#define LL_SETTLE 7
 
 /* clipwin_tick, pad q: slip and ll as its store has them, sync its Sync (read only when Loop Len is set or taken),
    engine = the clock (0: no Loop Len, no Fit tempo). Bit 0 = the pad's pending segments must be made again (cw_drop),
@@ -540,6 +542,19 @@ void cw_map(const struct cw_bank *b, unsigned q, const uint8_t *pad, const struc
     }
     at[0] = rs + fold2(fold2(pos, vlen) + l->delta, vlen);
     at[1] = f;
+}
+
+/* H5, the playhead (msg 0x4a): the frame slot k of pad q reads at stock's position pos, as clipwin_read reads it: the
+   region, Slip and Loop Len's window (the latch's shift) folded as cw_map folds them. Fit needs nothing more: stock's
+   positions are source frames, advanced at the fitted rate. -1 = stock's: no latch for the slot (a slice segment, or
+   one made before the bank was up), or a file that is not the latch's (clipwin_read reads as stock does then too). */
+int32_t cw_playhead(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t pos, int32_t len)
+{
+    if (k > 3 || !(b->valid[q] & (1u << k)) || len <= 0 || b->latch[q][k].len != len)
+        return -1;
+    int32_t at[2];
+    cw_map(b, q, pad, &b->latch[q][k], pos, at);
+    return at[0];
 }
 
 /* ...the read at real takes `fade` of those frames (clipwin_read: none in a machine mode, or above a rate of ~3.9):

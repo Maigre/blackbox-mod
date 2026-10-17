@@ -57,7 +57,8 @@ opening Ghidra.
 - Not in v1: Region, Loop Len, H3/H3′/H4/H5, the seamless wrap, Sync = Slice with markers (those segments never pass
   H1; Slip has no effect on them — document it). *As built (P3):* Region, Loop Len, H3 (four sites), H3′ (both
   wraps) and the seamless wrap are in (§3). H4 has no site of its own: `clipwin_tick` sends the forced Sync. H5, the
-  playhead message, is not built, so the playhead stays stock's. Sync = Slice with markers is still excluded.
+  playhead message, is in since 37.3.1 (the frame heard, through the slot's latch). Sync = Slice with markers is still
+  excluded.
 
 **Active predicate** (H1 latches only when all hold; otherwise it invalidates): the cell id at pad `+0x18` is a real
 pad (`id >> 16 == 0`, row = `id >> 8 & 0xFF` < 4, col = `id & 0xFF` < 4 — this excludes the 17th class-B object, cell
@@ -244,7 +245,8 @@ Capturing the value instead at the class-B param-set call `0x080685D2` (`bl 0x08
 nobody ran a `0x1C9` post through it.
 
 *37.3.0* (the poll's policy is bank 2's `cw_tick` since D-018): Loop Len's value is taken only once it has read the
-same `LL_SETTLE` = 4 more polls (171..213 ms after the knob rests; Off at once: Gate 3 finding 8); a fitted pad whose
+same `LL_SETTLE` = 4 more polls (171..213 ms after the knob rests; Off at once: Gate 3 finding 8; 7 polls, 299..341
+ms, since 37.3.1, Gate 3b's F-g); a fitted pad whose
 fields were made at another tempo is recomputed (Fit follows the tempo); and `cw_retire` marks done a segment with an
 end whose position is past the end of the pad's file (the browser's round trip, Gate 3 finding 9; never a launch
 waiting for its bar).
@@ -332,7 +334,9 @@ the row negated, lasted one Gate 2 session.)
 Stock's playhead message `0x4A` (H5, `0x080668FC`) shows the unslipped position; Beat Count, Quant, Sync and the wrap
 are unchanged; a Sync = Slice pad with markers ignores Slip; Slicer pads ignore it. *As built (P3):* the same holds
 for Region and Loop Len. The playhead ignores the region and the window, Slicer and Slice-with-markers pads ignore
-both, and a Sync that Loop Len has forced is not shown on the Sync row.
+both, and a Sync that Loop Len has forced is not shown on the Sync row. *37.3.1:* H5 is in: the message carries the
+frame heard (`clipwin_playhead` → bank 2's `cw_playhead`, the reader's `cw_map` on the slot's latch), its per mille
+`(float)pos × 1000 / file` as stock reckons it; Slicer and Slice-with-markers pads keep stock's.
 
 ### 2.9 `test_clipwin.py` — what to copy and what to assert
 
@@ -483,7 +487,7 @@ corrected accordingly.
   `(int)view+0x1A0`; optional exact count `FUN_080B0984(knob+0x270, n)` against the top-end dead travel. Bracket:
   write `wave+0x22C/+0x230/+0x239` and dirty `+0x32` directly; never `FUN_080C6EDC` (clears slices `+0x238`). The
   forward stores `0x91/0x92` and our rows with no code. Playhead H5 at `0x080668FC` (msg `0x4A`, per-mille divisor
-  from `0x08066B4A`), cosmetic.
+  from `0x08066B4A`), cosmetic. **Built in 37.3.1** (`clipwin_playhead_b`: r6 the pad, fp the slot).
   **As built** (`test_clipwin.py` section 12): TL = Loop Start `0x91`, TR = Loop End `0x92` (Thomas's layout: the loop
   points on top), BL = Slip, BR = Loop Len.
   - One hook binds all four: the bind block's last unbind (`0x080A582A`, BR, `r2` = view + `0xF10`) calls the stock

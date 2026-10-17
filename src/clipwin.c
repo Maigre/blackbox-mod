@@ -617,6 +617,34 @@ void clipwin_wave(uint8_t *wave, const void *slices)
     clip_view(wave - VIEW_WAVE, 0, was);
 }
 
+/* ---- the playhead ---- */
+
+/* H5. Replaces bl FUN_0804f504 @0x080668fc (clipwin_playhead_b: r6 = the pad, fp = the segment's slot): the render
+   posting the playhead (msg 0x4a: + 0x10 the position, + 0x14 its per mille of the file) after it read one of the
+   pad's segments. Stock posts the segment's own position: unslipped, counted from the region's start, never into Loop
+   Len's window, so on a region from 6 072 the line ran 6 072 frames behind the audio and wrapped before Loop End
+   (Gate 3b). The line shows the frame heard instead (cw_playhead), its per mille as stock reckons it. The render keeps
+   stock's position for itself (pad + 0x248), to post only a change; without bank 2 the message is stock's. */
+#define MSG_POS     0x10
+#define MSG_MILLE   0x14
+typedef void (*post_fn)(void *ui, void *msg);
+#define fw_post     ((post_fn)FN(0x0804f504))
+
+void clipwin_playhead(void *ui, uint8_t *msg, uint8_t *pad, unsigned k)
+{
+    int q;
+    struct cw_bank *b = pad_bank(pad, &q);
+    if (b) {
+        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
+        int32_t real = cw_playhead(b, (unsigned)q, pad, k, *(int32_t *)(msg + MSG_POS), len);
+        if (real >= 0) {
+            *(int32_t *)(msg + MSG_POS) = real;
+            *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
+        }
+    }
+    fw_post(ui, msg);
+}
+
 /* ---- the Waveform screen's corner labels ---- */
 
 /* The view's constructor (FUN_080a5b90) builds the four corner knobs once, for every pad mode, and greys their text:

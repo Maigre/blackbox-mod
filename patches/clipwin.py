@@ -30,6 +30,8 @@ PATCHES = [
     hook(0x08065690, 0x080636F0, "clipwin_len_end_b"),
     hook(0x08066FAC, 0x08064A94, "clipwin_wrap_b"),
     hook(0x08066E9E, 0x08064A94, "clipwin_wrap_free_b"),
+    # H5: the render's playhead message (0x4a), the frame heard instead of the segment's own position
+    hook(0x080668FC, 0x0804F504, "clipwin_playhead_b"),
     # the knob's value text: set value (every type) and the type-1 turn
     hook(0x080B0746, 0x080B0528, "clipwin_format"),
     hook(0x080B0E18, 0x080B0528, "clipwin_format"),
