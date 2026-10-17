@@ -65,3 +65,8 @@ one PR or a stack. 5. The Clip Window layers, one at a time. 6. The Looper after
 - The split must not change behaviour: the union of the PR branches, built, must be byte-identical to `maigre`'s
   release build (`prcheck.sh` checks this).
 - Upstream keeps moving (rc2 → rc4 in three days): cut the PR branches right before proposing them.
+- **The Looper does not fit beside the Clip Window as it stands**: it needs 673 B of bank 1 (`looper.o` 645 +
+  `looper_thunk.o` 28, features/looper.md "Costs") against 696 B free in the 37.3.1 release build and 8 B in its dev
+  build; and its SDRAM bank (master's block `+ 0x84100`) now falls inside the Clip Window's (`+ 0x83900`, 0x1000 since
+  Fit). Bank-1 room is the architecture question before P4 lands, and the MIDI plan meets the same wall (its option:
+  let bank-2 code call stock at its fixed 3.1.9 addresses, never the cave — needs Justin's view).
