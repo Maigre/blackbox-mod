@@ -80,8 +80,8 @@ static const char *const type_names[INS_TYPES] = {"Off", "Phaser", "Flanger", "G
 static const char *const type_names_none[INS_TYPES] = {"Off", "---", "---", "---"};   /* no bank 2 payload: cpu.c's b2_present */
 int b2_present(void);
 static const char *const in_names[IN_SOURCES] = {"Off", "In 1", "In 2", "In 1+2"};
-static const char *const ph_names[PH_MODELS] = {"Stone", "Ninety", "Vibe", "Deep", "Steps"};
-static const char *const fl_names[FL_MODELS] = {"Mistress", "ADA", "Tape", "Metal"};
+static const char *const ph_names[PH_MODELS] = {"Pebble", "Ninety", "Vibe", "Deep", "Steps"};
+static const char *const fl_names[FL_MODELS] = {"Electra", "Jet", "Tape", "Metal"};
 
 /* master.c calls these from its own registration and pad-defaults hooks. */
 void insert_register(void *table)
@@ -103,8 +103,8 @@ void insert_register(void *table)
 
 void insert_defaults(void *store)
 {
-    /* Off; Stone; Mistress; a slow sweep, most of the way deep, centred, a little feedback, some width, the classic sum */
-    static const uint16_t first[9] = {INS_OFF, PH_STONE, FL_MISTRESS, 330, 750, 500, 350, 250, 500};
+    /* Off; Pebble; Electra; a slow sweep, most of the way deep, centred, a little feedback, some width, the classic sum */
+    static const uint16_t first[9] = {INS_OFF, PH_PEBBLE, FL_ELECTRA, 330, 750, 500, 350, 250, 500};
     for (int i = 0; i < 9; i++)
         fw_store_add(store, P_INS + i, first[i]);
     /* The Gate as it first comes up: the settings read off pad 10 of the test unit once it was gating a drum pad

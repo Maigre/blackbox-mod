@@ -68,7 +68,7 @@ e.stub(0x08093EF6, lambda: added.append((e.arg(1), e.arg(2))))
 e.call("lfo_defaults", 0x24073000, 0xDC, 0)
 check("pad defaults: stock's last entry, then LFO 2 = Sine, 1 bar, Free; LFO 3 = Random, 1/4, Retrig",
       added[:9] == [(0xDC, 0), (0x1A9, 4), (0x1AA, 5), (0x1AB, 0), (0x1AC, 0), (0x1AD, 8), (0x1AE, 8), (0x1AF, 1), (0x1B0, 0)], added)
-check("...then the pad's insert: Off, Stone, Mistress, the six shared knobs, the Gate's five, and Input Off",
+check("...then the pad's insert: Off, Pebble, Electra, the six shared knobs, the Gate's five, and Input Off",
       added[9:] == [(0x1B6, 0), (0x1B7, 0), (0x1B8, 0), (0x1B9, 330), (0x1BA, 750), (0x1BB, 500), (0x1BC, 350), (0x1BD, 250), (0x1BE, 500),
                     (0x1C2, 800), (0x1C3, 0), (0x1C4, 0), (0x1C5, 200), (0x1C6, 0), (0x1C7, 0)], added[9:])
 check("a pad's settings store holds 96 entries (stock 64, of which 59 used; ours make 82): both places that size one",

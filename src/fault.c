@@ -130,6 +130,103 @@ static int frame_ok(uint32_t sp)
     return 0;
 }
 
+#ifdef FAULT_SHOW
+/*
+ * THE DIAGNOSTIC BUILD (FAULT_SHOW=1 ./build.sh, 2026-10-14). Testers' units boot-loop at the logo and the records
+ * above are lost to them: the unit resets at once, and USB never comes up between resets. So instead of the reset,
+ * the record is drawn on the screen, big, and the unit holds there for a photo. Nothing of stock's is called: the
+ * frame buffer is whatever the LCD controller is scanning out (each enabled layer's CFBAR / PFCR / CFBLR / CFBLNR),
+ * written directly and cleaned out of the data cache. The window watchdog keeps running under a fault handler, so
+ * the hold feeds it; stock never starts the independent watchdog (no IWDG address or key in the image).
+ * Rows, top down: a tag (FFFF = fault, DDDD = watchdog) followed by the chip's silicon revision from DBGMCU_IDCODE
+ * (2003 = rev V, 1003 = rev Y - the test unit is V, 2026-10-14), then the record's words 1..7, each led by its number.
+ */
+#define REV_ID (*(const volatile uint32_t *)0x5c001000u >> 16)
+#define LTDC_L(n, off) (*(volatile uint32_t *)(0x50001084u + 0x80u * ((n) - 1u) + (off)))
+#define DCCMVAC_A      (*(volatile uint32_t *)0xe000ef68u)
+#define SCALE 3
+
+static const uint8_t glyph[16][7] = {
+    {14, 17, 19, 21, 25, 17, 14}, {4, 12, 4, 4, 4, 4, 14},   {14, 17, 1, 2, 4, 8, 31},   {31, 2, 4, 2, 1, 17, 14},
+    {2, 6, 10, 18, 31, 2, 2},     {31, 16, 30, 1, 1, 17, 14}, {6, 8, 16, 30, 17, 17, 14}, {31, 1, 2, 4, 8, 8, 8},
+    {14, 17, 17, 14, 17, 17, 14}, {14, 17, 17, 15, 1, 2, 12}, {14, 17, 17, 31, 17, 17, 17}, {30, 17, 17, 30, 17, 17, 30},
+    {14, 17, 16, 16, 16, 17, 14}, {28, 18, 17, 17, 17, 18, 28}, {31, 16, 16, 30, 16, 16, 31}, {31, 16, 16, 30, 16, 16, 16},
+};
+
+struct fb {
+    uint32_t base, pitch, bpp, w, h, white, black;
+};
+
+static void put(const struct fb *f, uint32_t x, uint32_t y, int on)
+{
+    if (x >= f->w || y >= f->h)
+        return;
+    volatile uint8_t *p = (volatile uint8_t *)(f->base + y * f->pitch + x * f->bpp);
+    if (f->bpp == 2) {
+        *(volatile uint16_t *)p = (uint16_t)(on ? f->white : f->black);
+    } else if (f->bpp == 4) {
+        *(volatile uint32_t *)p = on ? f->white : f->black;
+    } else {
+        p[0] = p[1] = p[2] = on ? 0xffu : 0u;
+    }
+}
+
+static void hexdigit(const struct fb *f, uint32_t x, uint32_t y, unsigned d)
+{
+    for (uint32_t r = 0; r < 7u * SCALE; r++)
+        for (uint32_t c = 0; c < 5u * SCALE; c++)
+            if (glyph[d & 15u][r / SCALE] & (16u >> (c / SCALE)))
+                put(f, x + c, y + r, 1);
+}
+
+static void row(const struct fb *f, uint32_t y, unsigned label, uint32_t v)
+{
+    const uint32_t step = 6u * SCALE;
+    hexdigit(f, 4, y, label);
+    for (unsigned i = 0; i < 8; i++)
+        hexdigit(f, 4 + step * (i + 2u), y, (v >> (28 - 4 * i)) & 15u);
+}
+
+static void show(uint32_t tag, const volatile uint32_t *rec)
+{
+    for (unsigned n = 1; n <= 2; n++) {
+        if (!(LTDC_L(n, 0) & 1u))                        /* layer not enabled */
+            continue;
+        /* Pixel formats 0 ARGB8888, 1 RGB888, 2 RGB565, 3 ARGB1555, 4 ARGB4444. The Blackbox runs both layers in
+           ARGB1555 (read off the test unit, PFCR = 3): its "black" must carry the alpha bit, or the top layer is
+           transparent and the picture underneath shows through. */
+        static const uint32_t white[5] = {0xffffffffu, 0xffffffu, 0xffffu, 0xffffu, 0xffffu};
+        static const uint32_t black[5] = {0xff000000u, 0u, 0u, 0x8000u, 0xf000u};
+        uint32_t pf = LTDC_L(n, 0x10) & 7u;
+        if (pf > 4)
+            continue;                                    /* not a format this draws */
+        struct fb f = {LTDC_L(n, 0x28), (LTDC_L(n, 0x2c) >> 16) & 0x1fffu, pf == 0 ? 4u : pf == 1 ? 3u : 2u, 0,
+                       LTDC_L(n, 0x30) & 0x7ffu, white[pf], black[pf]};
+        if (f.base < 0x20000000u || !f.pitch || !f.h)
+            continue;                                    /* not a buffer */
+        f.w = f.pitch / f.bpp;
+        for (uint32_t y = 0; y < f.h; y++) {
+            *(volatile uint32_t *)0x50003000u = 0xffu;   /* the dog, every line: a fault can land late in its count */
+            for (uint32_t x = 0; x < f.w; x++)
+                put(&f, x, y, 0);
+        }
+        row(&f, 4, 0, tag);
+        for (unsigned i = 1; i <= 7; i++)
+            row(&f, 4 + (8u * SCALE) * i, i, rec[i]);
+        for (uint32_t a = f.base & ~31u; a < f.base + f.pitch * f.h; a += 32u)
+            DCCMVAC_A = a;
+    }
+    __asm__ volatile("dsb");
+}
+
+/* Hold here, picture on screen, for as long as the power stays on. */
+static void hold(void)
+{
+    for (;;)
+        *(volatile uint32_t *)0x50003000u = 0xffu;     /* WWDG_CR: WDGA + counter 0x7f, a refresh (window is 0x7f) */
+}
+#endif
+
 /* Called from the handler with the exception frame and EXC_RETURN. */
 void fault_record(uint32_t *frame, uint32_t exc_return)
 {
@@ -157,6 +254,11 @@ void fault_record(uint32_t *frame, uint32_t exc_return)
     }
     FAULT_REC[15] = SP_LOW[0];                 /* how close the delay dispatch had come to running out of stack */
     bkp_flush();                               /* out of the cache and into the SRAM, or the reset throws it away */
+#ifdef FAULT_SHOW
+    *(volatile uint32_t *)0x50003000u = 0xffu; /* WWDG refresh before the draw */
+    show(0xffff0000u | REV_ID, FAULT_REC);              /* rows: 1 PC, 2 LR, 3 xPSR, 4 CFSR, 5 HFSR, 6 MMFAR, 7 BFAR */
+    hold();
+#endif
     AIRCR = (0x5fau << 16) | (1u << 2);        /* SYSRESETREQ: reset as promptly as the stub's watchdog did */
     for (;;)
         ;
@@ -196,6 +298,11 @@ void wdg_record(uint32_t *frame, uint32_t exc_return)
     WDG_REC[0] = WDG_MAGIC;
     (void)exc_return;
     bkp_flush();                               /* ~5 ms to the reset is long, but not a promise */
+#ifdef FAULT_SHOW
+    *(volatile uint32_t *)0x50003000u = 0xffu; /* refresh first: the reset is one tick away */
+    show(0xdddd0000u | REV_ID, WDG_REC);                /* rows: 1 PC, 2 LR, 3 xPSR, 4 age A, 5 age B, 6 now, 7 CR | SR << 16 */
+    hold();
+#endif
     WWDG_SR = 0;                               /* EWIF: written zero, so the tick runs out once, not in a loop */
 }
 

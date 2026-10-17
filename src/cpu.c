@@ -32,11 +32,19 @@ typedef void (*label_fn)(uint8_t *label, const char *s);
  * patched that byte, so the 9 key typed the build letter instead (reported by a user on the public 3.1.n, which
  * typed "n"; 3.2.b typed "b"). Instead the four places that DISPLAY the version are repointed here (patches/cave.py).
  */
-#ifdef PUBLIC_BUILD
+#if defined(PUBLIC_BUILD) && defined(USB_DIAG)
+const char fw_version[] = "JOE USB";              /* the USB diagnostic build for testers (usbdev.c, USB_DIAG) */
+#elif defined(USB_DIAG)
+const char fw_version[] = "3.3.i";                /* 3.3.h + USB_DIAG, for proving the readout on the test unit */
+#elif defined(PUBLIC_BUILD) && defined(FAULT_SHOW)
+const char fw_version[] = "JOE DIAG";             /* the diagnostic build for testers (fault.c, FAULT_SHOW) */
+#elif defined(PUBLIC_BUILD)
 #include "release.h"
 const char fw_version[] = RELEASE_NAME;
+#elif defined(FAULT_SHOW)
+const char fw_version[] = "3.3.g";                /* 3.3.e + FAULT_SHOW (3.3.f drew nothing: ARGB1555), for proving the diagnostic on the test unit */
 #else
-const char fw_version[] = "3.3.e";
+const char fw_version[] = "3.3.h";                /* 3.3.e + usbdev state moved off comp.c's Limit lookahead */
 #endif
 /* 1 = a public build: named, and without the raw USB peek / poke (test_usbdev.py and test_cpu.py ask). */
 #ifdef PUBLIC_BUILD
@@ -139,9 +147,19 @@ static uint8_t b2_checked(void);
  * because this label is redrawn on every entry to Tools; the version text beside it is set once when the screen is
  * built (3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 13 bytes.
  */
+#ifdef USB_DIAG
+char *usbdev_diag_text(char *p);             /* usbdev.c: "U3r2c1 +0.12%" */
+#endif
+
 static void compose(char *buf)
 {
     char *p = buf;
+#ifdef USB_DIAG
+    if (M->magic == MAGIC && b2_checked() != B2_PAIRED)
+        *p++ = '!';              /* still the bank 2 mark, in front */
+    usbdev_diag_text(p);         /* the USB diagnostic build shows this on TOOLS instead of the load */
+    return;
+#endif
     if (M->magic == MAGIC && b2_checked() != B2_PAIRED)
         *p++ = '!';
     if (M->magic == MAGIC && M->status == STATUS_OK) {
@@ -264,7 +282,24 @@ __attribute__((used)) const volatile uint32_t b2_expect_sum = 0xffffffffu;
 #define FLASH_ECC   ((1u << 25) | (1u << 26))             /* SNECCERR | DBECCERR */
 #define DCIMVAC     (*(volatile uint32_t *)0xe000ef5cu)   /* data cache: forget the line holding this address */
 #define B2_SCANS    16
-#define B2_BYTE     ((uint8_t *)&M->b2chk)
+#define B2_BYTE     ((volatile uint8_t *)&M->b2chk)
+
+/*
+ * One step on b2chk: clear `clear`, set `set`, return what it held - with interrupts masked, so no other task can
+ * get in between the read and the write. NOT LDREXB / STREXB (the compiler's atomic builtins, used until rc4): on
+ * later units (serials from ~2001009700, rev V like the test unit) the exclusive load of this byte bus-faults -
+ * PRECISERR, BFAR 0x2405FFF3 - while a plain load of it one instruction earlier is fine. JOE DIAG caught it on two
+ * units (2026-10-16); why their exclusives take an error and the test unit's do not is not known.
+ */
+static uint8_t b2_step(uint8_t set, uint8_t clear)
+{
+    uint32_t primask;
+    __asm volatile("mrs %0, primask\n\tcpsid i" : "=r"(primask) : : "memory");
+    uint8_t old = *B2_BYTE;
+    *B2_BYTE = (uint8_t)((old & ~clear) | set);
+    __asm volatile("msr primask, %0" : : "r"(primask) : "memory");
+    return old;
+}
 
 /*
  * 1 = bank 2 is this image's payload and reads cleanly, 0 = it is not, -1 = another task is in here right now.
@@ -280,7 +315,7 @@ __attribute__((used)) const volatile uint32_t b2_expect_sum = 0xffffffffu;
  */
 static int b2_paired(void)
 {
-    if (__atomic_fetch_or(B2_BYTE, B2_SCANNING, __ATOMIC_SEQ_CST) & B2_SCANNING)
+    if (b2_step(B2_SCANNING, 0) & B2_SCANNING)
         return -1;
     int ok = 0;
     bkp_enable();
@@ -303,13 +338,13 @@ static int b2_paired(void)
         }
         bkp_put(B2_MARK, 0);
     }
-    __atomic_and_fetch(B2_BYTE, (uint8_t)~B2_SCANNING, __ATOMIC_SEQ_CST);
+    b2_step(0, B2_SCANNING);
     return ok;
 }
 
 /*
  * b2chk is written from three tasks - the audio task (b2_live), the screen task (cpu_name) and the disk task (the
- * card loader) - so every change to it is one atomic step, never a read followed by a write.
+ * card loader) - so every change to it is one b2_step (interrupts masked), never a bare read followed by a write.
  * Two tasks that both find it unchecked may both scan; they OR in the same answer. If a marginal flash made them
  * disagree the pair bits read 3, which is not 1, so the effects stay off: the safe direction.
  */
@@ -320,7 +355,7 @@ uint8_t b2_state(void)
 
 void b2_flag(uint8_t bits)
 {
-    __atomic_or_fetch(B2_BYTE, bits, __ATOMIC_SEQ_CST);
+    b2_step(bits, 0);
 }
 
 /* Has the meter's state been set up (the audio task has run), so that b2chk means something? */
@@ -386,7 +421,7 @@ int b2_rescan(void)
     bkp_put(B2_MARK, 0);         /* what an earlier boot's scan died on has just been erased */
     int ok = b2_paired() > 0;
     if (ok) {
-        __atomic_and_fetch(B2_BYTE, (uint8_t)~B2_PAIR, __ATOMIC_SEQ_CST);
+        b2_step(0, B2_PAIR);
         b2_flag(B2_PAIRED);
     }
     return ok;

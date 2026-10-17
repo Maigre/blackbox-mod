@@ -4,6 +4,7 @@ import struct
 import subprocess
 
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
+from unicorn import arm_const
 from unicorn.arm_const import UC_CPU_ARM_MAX
 from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0,
                                UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP)
@@ -65,6 +66,33 @@ class Emu:
         uc.reg_write(UC_ARM_REG_C1_C0_2, 0xF << 20)   # FPU on
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
         self.stubs, self.calls = _Stubs(uc), []
+        self._primask_ops(image)
+
+    def _primask_ops(self, image):
+        """The A-profile core here has no PRIMASK: `mrs rd, primask`, `cpsid i` and `msr primask, rn` (cpu.c's
+        b2_step, rc4) are invalid instructions to it. Each one in the image runs here against a stand-in register.
+        Keyed by address, so a match inside data or mid-instruction never fires."""
+        self.primask = 0
+        regs = [getattr(arm_const, f"UC_ARM_REG_R{n}") for n in range(13)]
+        img = open(image, "rb").read()
+        for off in range(0, len(img) - 3, 2):
+            a = BASE + off
+            h0, h1 = struct.unpack_from("<HH", img, off)
+            if h0 == 0xF3EF and h1 & 0xF0FF == 0x8010:                 # mrs rd, primask
+                def op(a=a, rd=regs[(h1 >> 8) & 0xF]):
+                    self.uc.reg_write(rd, self.primask)
+                    self.uc.reg_write(UC_ARM_REG_PC, (a + 4) | 1)
+            elif h0 & 0xFFF0 == 0xF380 and h1 == 0x8810:               # msr primask, rn
+                def op(a=a, rn=regs[h0 & 0xF]):
+                    self.primask = self.uc.reg_read(rn) & 1
+                    self.uc.reg_write(UC_ARM_REG_PC, (a + 4) | 1)
+            elif h0 == 0xB672:                                         # cpsid i
+                def op(a=a):
+                    self.primask = 1
+                    self.uc.reg_write(UC_ARM_REG_PC, (a + 2) | 1)
+            else:
+                continue
+            self.stubs[a] = op
 
     def meter_up(self):
         """cpu_wait at the audio task's first wake after a boot: the meter's state, with b2chk in it, starts clean.

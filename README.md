@@ -4,13 +4,8 @@ An unofficial feature mod for the **original 1010music Blackbox** (not the Black
 
 > **Not affiliated with, endorsed by, or supported by 1010music.** This repository does not contain 1010music's
 > firmware. You supply your own copy, downloaded from 1010music, and patch it yourself. Use at your own risk: this is
-> tested on one unit, it may misbehave on yours, and running modified firmware may affect your warranty. Don't ask
+> tested on a small number of units, it may misbehave on yours, and running modified firmware may affect your warranty. Don't ask
 > 1010music for support on a modded unit; flash stock first.
-
-**JOEBOX 1 is on hold (2026-10-14).** Some units get stuck restarting after installing it, so the patcher gives the
-previous release, 3.1.n, until that is fixed. If yours is stuck: put the stock 3.1.9 `BLACKBOX.bin` on the card and
-install it (hold BACK + INFO while powering on, let go when the install screen shows). The feature list below is
-JOEBOX 1's.
 
 **Get new builds by email:** sign up at <https://justinjoe.com/blackbox-mod> and I'll send a note when a new build is
 out (new FX, fixes). That's all the list is for.
@@ -18,6 +13,11 @@ out (new FX, fixes). That's all the list is for.
 ## What it adds (JOEBOX 1)
 
 Releases have names now. JOEBOX 1 is the one after 3.1.n, and TOOLS shows it as the version.
+
+**Updated 2026-10-17, same name.** The first JOEBOX 1 got some units stuck restarting at the logo. This build fixes
+that (two of those units have confirmed it boots now). It also fixes USB audio not showing up when the compressor is
+on Limit, and the insert models have their own names (Pebble, Electra, Jet). If you installed JOEBOX 1 before, patch
+again and put both files on the card the same way.
 
 New since 3.1.n:
 
@@ -76,6 +76,11 @@ From 3.1.n and earlier:
 - Chords need the pad out of Mono Poly Mode.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
+- USB on the power jack doesn't work on every unit. On some, that jack's USB data side is dead with any firmware,
+  stock included (1010music never used it for data). The Blackbox boots and plays fine, you just don't get USB audio
+  and MIDI. If your computer never sees the Blackbox over that jack, it's the unit, not the mod.
+- The machine Fidelity modes (SP1200, SP-12, MPC60, SP Raw, SP 45) can come out grittier on one hit than the next.
+  Fixed in the next build.
 
 ## Install
 
