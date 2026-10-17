@@ -21,7 +21,7 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 
 `37.<feature step>.<build>` on the Tools page; dev builds carry a `d` (`37.1.1d`) and add the USB debug peek/poke
 (src/usbdev.c), never in a release. `src/release.h` holds both names. Release notes, with each release's sha256:
-[`notes/releases/`](notes/releases/37.3.1.md).
+[`notes/releases/`](notes/releases/37.3.2.md).
 
 | version | adds | where |
 |---|---|---|
@@ -32,6 +32,7 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 | 37.2.1 | the **Slip knob v2**: a detent on 0 instead of a wall, a medium step between single ticks and 1/64 | branch `37loop/blackbox-t-021`, on 37.2.0 |
 | 37.3.0 | after Gate 3 part 1 on the unit: the Clip Window's maths moved to bank 2 (D-018: Slip and Region need `BBEXTRA.BIN` too); the **Gate 3 fixes** (short Waveform knob names, Region Auto without Loop Mode, no endless hold of a grown region, Loop Len taken once the knob rests, the Waveform's real file length, a pad the browser left stuck recovers); the **Slip knob v3** (one smooth curve, a longer detent after a slow approach); **Fit** and **Loop Fade** on Clip pads (D-026). Needs this build's `BBEXTRA.BIN` | branch `37loop/blackbox-t-021`, lands on `maigre` after Gate 3b |
 | 37.3.1 | at Gate 3b: the Waveform screen's **readable corner labels** (white with a 1 px black edge in every pad mode; stock's grey read 3.3:1 on the cyan); the **playhead** line on the frame heard (H5: Region, Slip, Loop Len, Fit); **Loop Len's settle** 0.3 s (7 polls, was 4). Needs this build's `BBEXTRA.BIN` | branch `halo`, on 37.3.0; merged into `37loop/blackbox-t-021` at the next occasion |
+| 37.3.2 | 37.3.1 on **JOEBOX 1 rc4** (upstream `19d29f1`, D-027): the restart-loop fix is upstream's own `b2_step` now (our PR #2 superseded); USB with the compressor on Limit (usbdev's state off the Limit lookahead); the insert models' new names (Pebble, Electra, Jet). Bank 2 unchanged: 37.3.1's `BBEXTRA.BIN` pairs with it. Release build only: the dev build is 32 B over in bank 1 (D-027) | branch `rc4-sync` (local), `halo` + upstream `main` |
 | — | **Looper FX** (P4) | branch `feat/looper` (local, kept apart until Gate 3) |
 
 ## Upstream pull requests (one feature each, from upstream `main`)
