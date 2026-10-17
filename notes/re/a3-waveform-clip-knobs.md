@@ -337,6 +337,37 @@ Hook candidates for a `+1.240` (beats.ticks, 960 ticks per beat) text on one id:
   from the bind/refresh hooks. It is fragile: every reset or rebind shows the stock `%ld` until our next write.
 - **C.** An entry patch of `FUN_080B0528`. It needs the displaced prologue re-run, and JOEBOX does not use that pattern.
 
+## 5. The corner labels: the knob's line, its colour, its draw (37.3.1)
+
+Static reads of the 3.1.9 image and the decompile, checked under Unicorn (`test_clipwin.py` §12b); the palette read
+from the unit at `0x24000000` on 2026-10-16 (37.3.0d), which matches the image's `.data` load image (`0x080F1D80`).
+
+- **A text label** (vtable `0x080F17A4`, 14 entries, `0x58` bytes): `+0x04` x, y, w, h (i32); `+0x31` the text (31
+  chars, `FUN_080C3B98` sets it and marks `+0x55` or `+0x56` dirty by `+0x52`); `+0x51` alignment (1 left, 2 centre,
+  3 right); `+0x52` which pass draws it (the draw context's byte 0 or byte 1); `+0x53` the colour, a palette index;
+  `+0x54` the size: `0x10` is the 6 × 8 font doubled (12 × 16 px a glyph), anything else the same font at 1 × (a
+  second path, `FUN_080C3BEC`). There is no other size and no bold. `[1]` `FUN_080C3D2C(label, ctx)` draws it whole,
+  `[2]` `FUN_080C3FC6(label, ctx, rect)` clipped to a dirty rectangle (`FUN_0808F0A0`: the fast path only when the box
+  lies wholly in it, else every pixel tested). The text draw `FUN_0808EE54` cuts the text to the box's width, never
+  its height; each glyph is `FUN_0808ED4C`, each lit font pixel four calls of `FUN_0808F524(layer, x, y, colour)`.
+  The draw context is two pass bytes and, at `+4`, the layer: `{u32 pixels, u16 w, u16 h, u8 format (5: 8-bit
+  indexed), u8 rotation (1: rows flipped, y counts up)}`.
+- **The font** (`.data` `0x240000D0` → `{0x080ECDC4, 6, 8}`): column 0 is lit in 279 places over the 96 glyphs,
+  column 5 in 3; row 7 (descenders) in 15. Doubled, a glyph fills `[x, x + 12) × [y, y + 16)` of a box 20 px high, so a
+  pixel of edge around it leaves the box on the left and below unless the box is inset.
+- **The palette** (ARGB): 2, 8 and 13 `#141414` (the background), 3 `#FCFCFC`, 5, 7, 10, 27, 29 and 31 `#09D7F5` (the
+  waveform's cyan), 9 `#666666`, 14 `#000000`, 15 `#FFFFFF`; 34 entries, 0 transparent.
+- **The knob** (vtable `0x080F0C88`) has three labels: its name `+0x44`, its value `+0x9C`, its line `+0xF4` (`"%s
+  %s"`, `FUN_080B0480`). Its set-rect `FUN_080AFEB2` (vtable `[8]`) lays them out by `+0x32`: 0 the name and the value
+  as two children; 1..4 the line alone, as its only child, at the top-left, bottom-left, top-right or bottom-right of
+  its rectangle (y up), 20 px high, left-aligned from x + 6 or right-aligned to the right edge. `FUN_080B02E6(knob, c)`
+  sets the colour of all three; `FUN_080B02F6(knob, b)` their `+0x52`.
+- **The Waveform view's four** (`FUN_080A5B90`, once): TL `+0x670` layout 1 in (0, 74, 157, 73), BL `+0x950` layout 2
+  in (0, 0, 157, 73), TR `+0xC30` layout 3 in (158, 74, 157, 73), BR `+0xF10` layout 4 in (158, 0, 157, 73); then
+  `FUN_080B02E6(knob, 9)` for each at `0x080A660A`, `0x080A6612`, `0x080A661A`, `0x080A6622` (the hook sites). The
+  lines' boxes: (6, 127, 151, 20), (6, 0, 151, 20), (158, 127, 151, 20), (158, 0, 151, 20). Nothing sets a label's
+  vtable after its constructor, so a vtable given there holds in every pad mode.
+
 ## Hook sites for P3 (Clip-mode Waveform knobs)
 
 None of these is patched by JOEBOX today (each address grepped in `patches/` and `src/`), except `0x080A6C6C`.

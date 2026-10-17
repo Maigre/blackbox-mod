@@ -1,7 +1,7 @@
 # Clip Window: Slip, Region, Loop Len, Fit, Loop Fade and the Clip-mode Waveform knobs
 
-Release **37.3.0** (dev build 37.3.0d), branch `37loop/blackbox-t-021`; the release notes are
-`notes/releases/37.3.0.md`. Its history:
+Release **37.3.1** (dev build 37.3.1d), branch `halo`, cut from `37loop/blackbox-t-021` at 37.3.0; the release
+notes are `notes/releases/37.3.1.md` (37.3.0's: `notes/releases/37.3.0.md`). Its history:
 
 - **37.2.0** (branch `37loop/blackbox-t-018`): Slip (release 37.1.1) and its stale-latch fix (`37loop/blackbox-t-004`),
   then Region, Loop Len and the Waveform knobs (P3's three commits, first built on `feat/region`, ported onto the
@@ -13,11 +13,16 @@ Release **37.3.0** (dev build 37.3.0d), branch `37loop/blackbox-t-021`; the rele
   froze), the knob's v3 (1, hub #t-021), and the pad the browser left stuck (9, 10); then Fit and Loop Fade (hub
   #t-022, findings 3, 4 and 6, D-026; the design and Thomas's answers: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`,
   outside the repo).
+- **37.3.1**, at Gate 3b: the Waveform screen's four corner labels white with a 1 px black edge, in every pad mode
+  (Thomas, on 37.3.0d: "the current light grey is almost unreadable over the blue waveform"; "simple common rules
+  applies everywhere"). Bank 1 only, since it is nothing but stock calls, which bank 2's leaf code may not make
+  (D-018: `clipwin.c` keeps every stock call): bank 2 is 37.3.0's byte for byte.
 
 Status on 2026-10-16:
 
-- Every part passes under Unicorn: `test_clipwin.py` 426 checks, `test_bank2.py` 43, `./check.sh` 31 suites,
+- Every part passes under Unicorn: `test_clipwin.py` 441 checks, `test_bank2.py` 43, `./check.sh` 31 suites,
   0 failed.
+- 37.3.1's corner labels pass under Unicorn (§12b) and have not been on the unit: §7's 3b-2 photo again on 37.3.1d.
 - Slip v1 was measured on the unit at Gate 2 (37.1.0d, `notes/bench/2026-10-15-gate2-slip.md`).
 - Gate 3 part 1 (37.2.0d, then 37.2.1d) ran on the unit: the first bank-2 install, Region by the knobs, Slip on a
   region, Loop Len 1/4, Off and 1/16, save / power-cycle / reload, the load and the pre-listen, all measured to the
@@ -270,6 +275,17 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   that eight digits still fit: "LpS 12345678" is 12 characters (a file of up to 99 999 999 frames, 34 minutes at
   48 kHz), where "LpStr 1234567" would already cross into its neighbour from 1 000 000 frames (21 s). "Slip -4.000"
   and "LpLen 4 bars" fit as well.
+- **The text, in every pad mode** (37.3.1). Stock greys the four corner knobs once, in the view's constructor
+  (`FUN_080A5B90`: colour 9, #666666, into each knob's three labels), and that grey reads 3.3:1 on the waveform's
+  cyan (#09D7F5) and 3.2:1 on the background (#141414). One colour cannot fix it: white alone reads 1.7:1 on the
+  cyan, black 1.1:1 on the background. So each knob's line is white (palette 15) with a 1 px black edge (14), 12:1 or
+  better on both, in the same font, size and names. It is stock's own label draw run nine times on a copy of the
+  label: eight times in black one pixel off in each direction, then once in white, all in the label's box inset by a
+  pixel (the doubled glyphs touch the box's left and bottom edges: a value that changes then leaves nothing outside
+  the box the screen repaints). The label keeps its grey, its box and its dirty flags; only its vtable is a copy of
+  stock's (`0x080F17A4`) with the whole draw and the clipped draw replaced (`clipwin_label`, §3.2). Sample, Granular,
+  Slicer, New Rec and New Multi get it too: the four knobs are the same ones in every mode. Without this build's bank
+  2 both draws are stock's, bit for bit.
 - **The white bracket.** It shows the loop Region plays, using the engine's own rule, as soon as you turn. A playing
   pad takes the new loop the next time its loop comes round, so while you turn, the bracket is ahead of what you hear.
   There is no bracket (and the loop points are not heard) on Region File, or when the points are the whole file.
@@ -361,6 +377,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
+| L | `0x080A660A`, `0x080A6612`, `0x080A661A`, `0x080A6622` (`FUN_080A5B90`, the Waveform view's constructor: TL, BL, TR, BR) | `bl 0x080B02E6` the knob's colour (9) | `clipwin_label(knob, colour)` | stock's colour, then the knob's line (`+0xF4`) given `label_vt`, stock's label vtable with `label_draw` / `label_clip`: nine passes of stock's draw (`FUN_080C3D2C`, `FUN_080C3FC6`), black around, white on top, in the box inset by a pixel, while `b2_live()`; stock's draw otherwise |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0, 0, 0` | `0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA` | the five rows in slots 5–9 (stock's own Loop Fade `0xFA` in slot 9) |
 | tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); the segments its file no longer reaches retired (`cw_retire`, with the source's `fw_src_len`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
 | H4 | none: `clipwin_tick` sends `cw_looplen`'s message | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
@@ -780,11 +797,16 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 - The dead travel at the top of a sample-position knob is stock's, kept: up to `step − 1` positions above the
   maximum all read the maximum. It has not been seen on hardware (question 16).
 - After Clip, New Rec and New Multi keep these four rows bound, as stock keeps Sample's after Sample.
+- The corner labels (37.3.1): a line drawn before the meter's first block (`b2_live()` says "not yet" then) is
+  stock's grey until it is drawn again; the screen is opened long after boot, so this is not expected to show. A
+  right-aligned line longer than its box (Sample mode's `LpEnd:` from 1 000 000 frames) starts left of its box on
+  stock already; its edge goes one pixel further. A line costs nine of stock's draws in the GUI task (§5: ×9.0 the
+  instructions), not in the audio's.
 
 **Space**
 
-- Bank 1 has 992 B free (`.cave` 56 744 of 57 736, the dev build; 1 120 in the release build) after Loop Fade
-  (+144 B, §3.5), 1 136 after Fit (+128), 1 264
+- Bank 1 has 704 B free (`.cave` 57 032 of 57 736, the dev build; 832 in the release build) after
+  37.3.1's corner labels (+288 B), 992 after Loop Fade (+144 B, §3.5), 1 136 after Fit (+128), 1 264
   after the Gate 3 fix batch;
   1 424 B after D-018
   moved the Clip Window's maths to bank 2 (−1 312 B;
@@ -830,6 +852,7 @@ frame it plays and the gain it plays at.
 | 11 Loop Len | the settle (finding 8: Off → 1/16 → 1/8 → 1/4 at speed 3 takes only 1/4, on the beat then playing, Sync not forced, and so does a value every 149 or 171 ms, speed 3's slow end and speed 2's fast half, at four poll phases; a slow step-through takes each value; Off at once; the 37.2.x runs written a settle earlier, so they take where they took); `k_looplen` L1–L4: origin 7 680, 1 200, 1 920, the launch held; live 1/4 → 1/8 → 1/2; 88 615 frames; over a region with Slip; the five do-nothing cases; Sync re-sent by the app; a stopped pad; a 44.1 kHz file; off/on in one step; stop and relaunch; a 5-beat clip; no bank 2 (its header wiped before the first poll): Loop Len set and Off, all three set with a live Slip change, Slip 0 / File / Off over a loop; a new file under a playing window (50 000 and 192 000 frames) | each segment starts on `(int)((float)w × fps)`; the forced Sync times every segment and gain exactly as stock sent that Sync itself; Off in phase; without bank 2 bit for bit as never set, as every clipwin hook taken out, and as the stock image, no `cw_*` entered; after the new file, the old segments read as stock, the next ones are made for its length and replay its frame 0 |
 | 11b Fit | site 3's fields for Auto over eight lengths (14.015, 3.74, 15.6, a 14.5 tie up, 0.3, a bar, 44.1 kHz, 2 000 beats), the list's eight lengths, the polymetric grid and steps (Quant 1 bar / 4 bars / 1/4 / 1/16 / None, Sync 1/16 … 1 bar, Slice, None), counted once per length and forgotten at a closed file (0 frames, the provider's 0), the do-nothing cases; the whole process on a 3.74-beat region and file, Beat Count 8 on a bar, a tempo change, Slip 480, Loop Len 1/4, 44.1 kHz stereo, Pitch +12, a one-shot; 34 polymetric cases (a file and a region of 3, 5, 6, 7, 14 beats at Quant 1 bar and Sync 1/16, 1/4, 1 bar; Quant None; 5 beats at Sync 1/2; `CW_FULL=1`: 60, Quant None at every Sync) against stock playing the same files at their Beat Count; launches 1/16 after the bar, off the Sync grid (a bar, 14 beats, the 3.74-beat region at Quant 1/16 under Sync 1/4; 2 bars at Quant 1/4 under Sync 1 bar), against Fit Off and the stock image; live changes (Off → Auto; 1 bar → 2 bars at Quant 4 bars and 1 bar); a fitted 14-beat region made 16 and 13 beats; the hold's Fit; Fit Off against no row; the writes | the rule's own numbers at site 3, in the M7's single precision; a fitted clip: every pass one clip after the one before (off the Sync grid: the one jump onto the beat at the first step, then passes on the grid, as Fit Off and stock), the audio carrying on at every joint (under half a frame; under a frame where stock starts a step on a whole frame), no zero-gain sample, no gain over 1, where stock passes off the clip, doubles a step or leaves silence; Slip's shift exact (0.004 frame); Fit Off bit for bit as no row; without bank 2 with Fit set, every hook stock's (§11's check) |
 | 11c Loop Fade | 5 % on the 3.74-beat region at rate 1, with Fit Auto, 44.1 kHz stereo and Slip 480; a region from 1 000 (F clamped to Loop Start); a mismatched 441 Hz sine at 0, 1 and 5 %, with Fit; a one-shot, Loop Off, a 2 000-frame region, Pitch +24, Fidelity SP1200; Loop Fade 0 against no row; Loop Len 1/4 taken in the region's last beat; 25 % with Slip 480 (the seam hint); the store and the registration (stock's row) | every sample of the faded run against stock's formula applied to the Loop Fade 0 run's frames (max error 0.005 frame at rate 1, 0.08 through the kernel); the hints where the copy starts and at rs; the sine's splice gone; the do-nothing cases, Loop Len's window among them, bit for bit Loop Fade 0 (prefetches included); a prefetch covering rs before the slipped crossing, as at 0 %; without bank 2 with Loop Fade set, every hook stock's (§11's check) |
+| 12b corner labels | the four sites; `label_vt` against stock's vtable; `clipwin_label` on the four knobs as the constructor leaves them (the knob's real layout, which makes the line its child); 24 lines (four corners, Clip's and Sample's names, 8 to 12 characters, on the background and on the cyan) through the knob's real draw into an 8-bit layer; the clipped draw (the box as the dirty rectangle, and a rectangle that cuts it); a value that changes (the box repainted between); no bank 2; every pad mode's setup and refresh on the screen; the cost; a preview (`out/halo-preview.png`) | white exactly where stock draws the glyphs in the box inset by a pixel, black exactly on the pixels around them, nothing else changed, all inside the box; the clipped draw the whole draw's pixels inside its rectangle; after a change, a fresh draw's frame; without bank 2 the stock image's frame bit for bit, grey; the vtable and the grey kept through Clip, Sample, Granular, Slicer and New Rec |
 | 12 Waveform | the length (a view holding another pad's 192 000 for a 336 359-frame pad: TR's range, the bracket, the waveform's clamp, the overview; the waveform's real tick following the playhead past 192 000), the bind order, the four rows, names and texts, the lines' width (the real redraw, the knob's set-rect on the constructor's rects, the text draw's measure: each line in its box, clear of its neighbour), the bracket, TL/TR turns, the forward, `SetCellParam`, zoom, other modes | the same six turns give the same posts, steps, ranges and pending positions as stock's Sample-mode Loop Start/End knobs; Sample, Granular, Slicer, Sample after Clip are the screen with the hooks out; without bank 2 the Slip knob's text and turns are the knob hooks' taken out, and no bracket |
 
 **Elsewhere.** `test_bank2.py` (43 checks) holds bank 2 to the leaf rule. Its scan now tells the second half of
@@ -999,6 +1022,9 @@ checks 19–26). Same unit, cabling, setup, pads and takes as §6: 120 BPM, Metr
 | 3b-17 | Loop Fade (§6 check 25; finding 6) | as §6 row 25: B, Region Loop [L, L + 89 760) with L ≥ 4 488, Fit Off; Loop Fade 0 → `fade0.wav`, 5 % → `fade5.wav` | as there; at 5 % F = 4 488 frames; `fit`: Loop Fade 5 % |
 | 3b-18 | the workflow, for real (§6 check 16) | §2 on a phone recording of a real song, no Trim, with Fit Auto and a few % of Loop Fade | sits in the groove; report by ear |
 
+On 37.3.1d, when it is installed (bank 2 unchanged: `BLACKBOX.bin` only, no rewrite, no restart): 3b-2's photo
+again, in Clip mode and in Sample mode; each corner reads white with a black edge on the cyan and on the background.
+
 Answer along the way, beside §6's three: whether the knob's v3 feels right; whether 3 and 6 beats stay in Fit's list;
 whether stock wraps pad 1's 14-beat take cleanly at Quant 1 bar (check 21: the emulation says it does not); whether
 Fit Auto's count outlives a preset load (check 21's second half: the review's F3). Report as
@@ -1006,7 +1032,8 @@ Fit Auto's count outlives a preset load (check 21's second half: the review's F3
 
 ## 8. Files
 
-- `src/clipwin.c`: bank 1, the hooks and their stock calls (the poll, the reader, the knob, the Waveform's binding).
+- `src/clipwin.c`: bank 1, the hooks and their stock calls (the poll, the reader, the knob, the Waveform's binding,
+  its corner labels).
 - `src/clipwin_b2.c`: bank 2, the maths and the policy of every hook (§3.5).
 - `src/clipwin.h`: the shared pad, knob and waveform fields, `cw_bank`, the `cw_*` prototypes, and the asserts that pin
   bank 2's offsets.

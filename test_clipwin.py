@@ -235,7 +235,9 @@ sites = {"H1 (segment start, FUN_08065550)": (0x0806578C, PREFETCH, "clipwin_seg
          "K (type-1 turn stepper)": (0x080B0DDE, 0x080B0B74, "clipwin_turn"),
          "W (the Waveform's Clip bind block, its last unbind: BR)": (0x080A582A, 0x080A7EE0, "clipwin_bind"),
          "W (FUN_080a53a2: the position knobs at every bind and zoom change)": (0x080A53B0, 0x080A52C4, "clipwin_zoom"),
-         "W (the Waveform refresh's Clip case: the slice markers)": (0x080A5B0E, 0x080C6E8C, "clipwin_wave")}
+         "W (the Waveform refresh's Clip case: the slice markers)": (0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
+         **{f"L (the Waveform view's constructor colouring its {n} knob)": (at, 0x080B02E6, "clipwin_label")
+            for n, at in (("TL", 0x080A660A), ("BL", 0x080A6612), ("TR", 0x080A661A), ("BR", 0x080A6622))}}
 for what, (at, was, now) in sites.items():
     check(f"{what} at {at:#010x}: stock 'bl {was:#010x}' is now 'bl {now}'",
           branch(at, stock) == ("bl", was) and branch(at) == ("bl", S[now]), (branch(at, stock), branch(at)))
@@ -4483,6 +4485,266 @@ for mode in (4, 5):
     check(f"{('New Rec', 'New Multi')[mode - 4]} after Clip: nothing rebound ({[hex(after[n]['id']) for n in KN12]}); a zoom change "
           f"there re-steps nothing (TL step {after['TL']['step']}) and draws no bracket ({after['wave']['on']})",
           before == after and after["TL"]["step"] == 256 and after["wave"]["on"] == 0, (before["TL"], after["TL"], after["wave"]))
+
+# ====================================================================================================== 12b. the corner labels
+# The Waveform screen's four corner knobs, in every pad mode (clipwin_label, at the end of the view's constructor
+# FUN_080a5b90, which greys them: colour 9, #666666): the knob's line white (palette 15) with a 1 px black edge (14),
+# stock's label draw nine times on a copy of the label, in its box inset by a pixel; without bank 2 stock's grey, bit
+# for bit. Real: the knob's layout (FUN_080afeb2, which makes the line its child), its draw (FUN_080b115e) and the
+# children walks (FUN_080aeaf8, FUN_080aeb1c), the label's text setter and its two draws (FUN_080c3d2c, FUN_080c3fc6),
+# the text, glyph and clipped-glyph draws and the pixel write (FUN_0808f524) into an 8-bit layer of 320 x 240, the font
+# and the palette from the image's .data (copied in, as the reset copies it).
+LBL_VT, KNOB_VT, LINE, LBL_BOX, LBL_COLOUR = 0x080F17A4, 0x080F0C88, 0xF4, 0x04, 0x53
+CORNERS = {"TL": (1, (0, 0x4A, 0x9D, 0x49)), "BL": (2, (0, 0, 0x9D, 0x49)), "TR": (3, (0x9E, 0x4A, 0x9D, 0x49)),
+           "BR": (4, (0x9E, 0, 0x9D, 0x49))}            # the view's (FUN_080a5b90): layout, the knob's rectangle
+LFB, LLAYER, LCTX, LRECT, LCLIP, LSTR, LKN = 0x24030000, 0x24058000, 0x24058100, 0x24058140, 0x24058180, 0x240581C0, 0x24050000
+SW, SH, BG, CYAN, GREY, BLACK, WHITE = 320, 240, 13, 5, 9, 14, 15
+DATA_LMA, DATA_LEN = 0x080F1D80, 0xF8                    # stock's .data load image: the palette at 0x24000000, the font
+
+
+class Corners:
+    """the four corner knobs as the view's constructor leaves them, on an emulator of `image` (stock: FUN_080b02e6 at the
+    four sites, as stock calls it); bank2=False: bank 2's header wiped first"""
+
+    def __init__(self, image=IMAGE, bank2=True):
+        m = self.m = Emu(image, "out/cave.elf")
+        maps(m)
+        self.b2_entered = []
+        if not bank2:
+            no_bank2(m, self.b2_entered)
+        m.uc.mem_write(0x24000000, stock[DATA_LMA - BASE:DATA_LMA - BASE + DATA_LEN])
+        m.uc.mem_write(LLAYER, struct.pack("<IHHBB", LFB, SW, SH, 5, 1))     # 8-bit, rows flipped
+        m.uc.mem_write(LCTX, struct.pack("<BBHI", 1, 1, 0, LLAYER))
+        self.at = {}
+        for i, (n, (layout, rect)) in enumerate(CORNERS.items()):
+            at = self.at[n] = LKN + 0x300 * i
+            m.uc.mem_write(at, bytes(0x300))
+            m.w32(at, KNOB_VT)
+            for lo in (0x44, 0x9C, LINE):                                    # as the constructor sets them
+                m.w32(at + lo, LBL_VT)
+                m.uc.mem_write(at + lo + 0x51, bytes([1, 1, 3, 0x10, 0, 0]))
+            m.uc.mem_write(at + 0x32, bytes([layout]))
+            m.uc.mem_write(LRECT, struct.pack("<4i", *rect))
+            m.call(0x080AFEB2, at, LRECT)
+            m.call(S["clipwin_label"] if image == IMAGE else 0x080B02E6, at, GREY)
+        self.paint(BG)
+
+    def paint(self, c, box=None):
+        if box is None:
+            self.m.uc.mem_write(LFB, bytes([c]) * (SW * SH))
+            return
+        x, y, w, h = box
+        for r in range(SH - y - h, SH - y):
+            self.m.uc.mem_write(LFB + r * SW + x, bytes([c]) * w)
+
+    def text(self, n, s):
+        self.m.uc.mem_write(LSTR, s.encode() + b"\0")
+        self.m.call(0x080C3B98, self.at[n] + LINE, LSTR)
+
+    def box(self, n):
+        return struct.unpack("<4i", bytes(self.m.uc.mem_read(self.at[n] + LINE + LBL_BOX, 16)))
+
+    def draw(self, n, clip=None):
+        if clip is None:
+            self.m.call(0x080B115E, self.at[n], LCTX, count=20_000_000)
+        else:
+            self.m.uc.mem_write(LCLIP, struct.pack("<4i", *clip))
+            self.m.call(0x080AEB1C, self.at[n], LCTX, LCLIP, count=20_000_000)
+
+    def fb(self):
+        return bytes(self.m.uc.mem_read(LFB, SW * SH))
+
+
+def pix(fb, c):
+    """the (x, y) of every pixel of colour c, y up as the widgets count it"""
+    return {(i % SW, SH - 1 - i // SW) for i, v in enumerate(fb) if v == c}
+
+
+def changed(a, b):
+    return {(i % SW, SH - 1 - i // SW) for i in range(len(a)) if a[i] != b[i]}
+
+
+def inside(ps, box):
+    x, y, w, h = box
+    return all(x <= px < x + w and y <= py < y + h for px, py in ps)
+
+
+def ring(ps):
+    return {(px + dx, py + dy) for px, py in ps for dx in (-1, 0, 1) for dy in (-1, 0, 1)} - ps
+
+
+lc = Corners()
+st_lc = Corners(STOCK)
+kn = lc.at["TL"]
+check("clipwin_label: each corner knob's line (+ 0xf4) has our vtable, its name and value labels stock's; all three keep "
+      "the constructor's grey (9); the line is the knob's only child (layouts 1..4)",
+      all(lc.m.r32(a + LINE) == S["label_vt"] and lc.m.r32(a + 0x44) == lc.m.r32(a + 0x9C) == LBL_VT
+          and [lc.m.r8(a + lo + LBL_COLOUR) for lo in (0x44, 0x9C, LINE)] == [GREY] * 3
+          and lc.m.r32(a + 0x1C) == lc.m.r32(a + 0x18) == a + LINE for a in lc.at.values()),
+      {n: (hex(lc.m.r32(a + LINE)), hex(lc.m.r32(a + 0x1C)), [lc.m.r8(a + lo + LBL_COLOUR) for lo in (0x44, 0x9C, LINE)])
+       for n, a in lc.at.items()})
+vt = struct.unpack_from("<16I", img, S["label_vt"] - BASE)
+st_vt = struct.unpack_from("<16I", stock, LBL_VT - BASE)
+check("  ...a copy of stock's label vtable (0x080f17a4: fourteen entries and the two words after) with [1] and [2], the "
+      "whole draw and the clipped draw, ours", vt[3:] == st_vt[3:] and vt[0] == st_vt[0] and
+      (vt[1], vt[2]) == (S["label_draw"] | 1, S["label_clip"] | 1) and (st_vt[1], st_vt[2]) == (0x080C3D2D, 0x080C3FC7),
+      ([hex(v) for v in vt], [hex(v) for v in st_vt]))
+lc.m.w32(kn + LINE, 0x080F0144)
+lc.m.call(S["clipwin_label"], kn, GREY)
+check("  ...and leaves a line whose vtable is not stock's label's alone", lc.m.r32(kn + LINE) == 0x080F0144)
+lc.m.w32(kn + LINE, S["label_vt"])
+
+# ---- bank 2 live: every corner, short and long lines, on the background and on the cyan: white exactly where stock draws
+# the glyphs in the box inset by a pixel, black exactly on the pixels around them, nothing else changed, all in the box
+LINES = {"TL": ["LpS 6000", "LpS 12345678", "LpStr: 50000"], "BL": ["Slip +0.060", "Slip -4.000", "Len: 96000"],
+         "TR": ["LpE 336359", "LpE 102000", "LpEnd: 99999"], "BR": ["LpLen 1/4", "LpLen 4 bars", "Str: 0"]}
+rows, ok_all = {}, True
+for n, texts in LINES.items():
+    for t in texts:
+        for bgc in (BG, CYAN):
+            lc.paint(bgc)
+            lc.text(n, t)
+            before = lc.fb()
+            lc.draw(n)
+            after = lc.fb()
+            box = lc.box(n)
+            st_lc.paint(0)                        # stock's glyphs at the inset box, in white: the reference
+            st_lc.text(n, t)
+            sa = st_lc.at[n] + LINE
+            st_lc.m.uc.mem_write(sa + LBL_BOX, struct.pack("<4i", box[0] + 1, box[1] + 1, box[2] - 2, box[3] - 2))
+            st_lc.m.uc.mem_write(sa + LBL_COLOUR, bytes([WHITE]))
+            st_lc.draw(n)
+            ref = pix(st_lc.fb(), WHITE)
+            st_lc.m.uc.mem_write(sa + LBL_BOX, struct.pack("<4i", *box))
+            st_lc.m.uc.mem_write(sa + LBL_COLOUR, bytes([GREY]))
+            w, k, ch = pix(after, WHITE), pix(after, BLACK), changed(before, after)
+            ok = ref and w == ref and k == ring(ref) and ch == w | k and inside(ch, box)
+            ok_all &= bool(ok)
+            rows[(n, t, bgc)] = (len(w), len(k), ok)
+check(f"bank 2 live, {len(rows)} lines (four corners, 8 to 12 characters, Clip's and Sample's names, on the background and on "
+      "the cyan): the glyphs white exactly where stock draws them in the box inset by a pixel, the pixels around them "
+      "black, nothing else changed, all inside the label's box", ok_all, {k: v for k, v in rows.items() if not v[2]})
+info("white / black pixels: " + ", ".join(f"{n} {t!r} {w}/{k}" for (n, t, b), (w, k, _) in rows.items() if b == BG))
+
+# ---- the clipped draw (the screen's repaint of a dirty rectangle): the same pixels when the rectangle holds the box, and
+# only those inside it when it cuts the box
+lc.paint(CYAN)
+lc.text("TR", "LpE 102000")
+base = lc.fb()
+lc.draw("TR")
+full = lc.fb()
+box = lc.box("TR")
+lc.paint(CYAN)
+lc.draw("TR", clip=box)
+same = lc.fb()
+lc.paint(CYAN)
+half = (box[0] + box[2] // 2, box[1], box[2] - box[2] // 2, box[3] - 7)
+lc.draw("TR", clip=half)
+cut = lc.fb()
+ch_cut = changed(base, cut)
+check(f"the clipped draw (FUN_080aeb1c through the line's [2]): with the box as the dirty rectangle, the frame of the whole "
+      f"draw ({len(changed(base, same))} pixels); with {half} only pixels inside it ({len(ch_cut)}), each as the whole draw "
+      "has it", same == full and ch_cut and inside(ch_cut, half)
+      and all(cut[(SH - 1 - y) * SW + x] == full[(SH - 1 - y) * SW + x] for x, y in ch_cut)
+      and ch_cut == {p for p in changed(base, full) if inside([p], half)}, (len(ch_cut), half))
+
+# ---- a value that changes: the screen repaints the label's box and draws it again; what was outside the box is gone
+for n, (t1, t2) in (("TR", ("LpE 102000", "LpE 96000")), ("TL", ("LpS 12345678", "LpS 0")), ("BL", ("Slip -4.000", "Slip 0"))):
+    lc.paint(CYAN)
+    lc.text(n, t1)
+    lc.draw(n)
+    lc.text(n, t2)
+    lc.paint(CYAN, lc.box(n))
+    lc.draw(n)
+    after = lc.fb()
+    lc.paint(CYAN)
+    lc.draw(n)
+    check(f"{n} {t1!r} then {t2!r}, the box repainted between: the frame of a fresh draw of {t2!r}", after == lc.fb())
+
+# ---- without bank 2: the four corners as stock draws them, bit for bit (the grey, the box), and bank 2 never entered
+nb_lc = Corners(bank2=False)
+frames = []
+for scr in (nb_lc, st_lc):
+    scr.paint(CYAN)
+    for n, texts in LINES.items():
+        scr.text(n, texts[0])
+        scr.draw(n)
+    frames.append(scr.fb())
+check(f"no bank 2: the four lines as on the stock image, bit for bit ({len(pix(frames[0], GREY))} grey pixels, none white or "
+      f"black), no bank-2 function entered", frames[0] == frames[1] and not pix(frames[0], WHITE) | pix(frames[0], BLACK)
+      and pix(frames[0], GREY) and not nb_lc.b2_entered, (len(changed(*frames)), nb_lc.b2_entered[:4]))
+
+# ---- every pad mode: the binds and refreshes of the Waveform screen (Clip, Sample, Granular, Slicer, Sample after Clip,
+# New Rec after Clip) never set a label's vtable again, and set no colour
+ms = Screen()
+for o in KN12.values():
+    for lo in (0x44, 0x9C, LINE):
+        ms.m.w32(VIEW + o + lo, LBL_VT)
+    ms.m.call(S["clipwin_label"], VIEW + o, GREY)
+seen = []
+for mode, was in ((1, 0), (0, 1), (3, 0), (2, 3), (1, 2), (0, 1), (4, 0)):
+    ms.open({**CLIP12, 0x8B: mode}, was=was)
+    ms.stored(_91=30000)
+    seen.append(all(ms.m.r32(VIEW + o + LINE) == S["label_vt"] and ms.m.r32(VIEW + o + 0x44) == ms.m.r32(VIEW + o + 0x9C) == LBL_VT
+                    and ms.m.r8(VIEW + o + LINE + LBL_COLOUR) == GREY for o in KN12.values()))
+check(f"every pad mode: Clip, Sample, Granular, Slicer and New Rec set up and refreshed on the screen, the four lines keep "
+      f"our vtable and their grey, the other labels stock's ({seen})", all(seen), seen)
+
+# ---- what it costs: the instructions of one corner's draw (the GUI task, not the audio's)
+def cost(scr, n, t):
+    scr.paint(CYAN)
+    scr.text(n, t)
+    count = [0]
+    h = scr.m.uc.hook_add(UC_HOOK_CODE, lambda *a: count.__setitem__(0, count[0] + 1))
+    scr.m.uc.ctl_flush_tb()                  # the draw's code is translated already: without this the hook never runs
+    scr.draw(n)
+    scr.m.uc.hook_del(h)
+    scr.m.uc.ctl_flush_tb()
+    return count[0]
+
+
+c_ours, c_stock = cost(lc, "TL", "LpS 12345678"), cost(st_lc, "TL", "LpS 12345678")
+check(f"one corner's draw, 12 characters: {c_ours} instructions against stock's {c_stock} (x{c_ours / c_stock:.1f}: nine "
+      "passes)", 8 * c_stock < c_ours < 10 * c_stock, (c_ours, c_stock))
+
+# ---- the preview: stock's four corners and ours, over a waveform of the screen's cyan on its background (out/halo-preview.png)
+def frame(scr):
+    scr.paint(BG)
+    buf = bytearray(scr.fb())
+    for x in range(SW):
+        a = int(118 * abs(math.sin(x / 9.0) * math.sin(x / 41.0)) + 4)
+        for y in range(max(0, 120 - a), min(SH, 120 + a)):
+            buf[(SH - 1 - y) * SW + x] = CYAN
+    scr.m.uc.mem_write(LFB, bytes(buf))
+    for n, t in (("TL", "LpS 6000"), ("BL", "Slip +0.060"), ("TR", "LpE 102000"), ("BR", "LpLen 1/4")):
+        scr.text(n, t)
+        scr.draw(n)
+    return scr.fb()
+
+
+def png(path, frames, scale=2):
+    import zlib
+    pal = struct.unpack_from("<34I", stock, DATA_LMA - BASE)
+    width = SW * len(frames) + 8 * (len(frames) - 1)
+    raw = bytearray()
+    for r in range(SH):
+        line = bytearray()
+        for i, f in enumerate(frames):
+            if i:
+                line += bytes([40, 40, 40]) * 8
+            for x in range(SW):
+                v = pal[f[r * SW + x]] if f[r * SW + x] < 34 else 0xFFFF00FF
+                line += bytes([(v >> 16) & 255, (v >> 8) & 255, v & 255])
+        line = b"".join(line[i:i + 3] * scale for i in range(0, len(line), 3))
+        raw += (b"\0" + line) * scale
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width * scale, SH * scale, 8, 2, 0, 0, 0))
+                           + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+
+
+png("out/halo-preview.png", [frame(st_lc), frame(lc)])
+info("out/halo-preview.png: stock's corner labels (left) and these (right), over the screen's cyan on its background")
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)
