@@ -247,7 +247,7 @@ int b2_ok(void);                 /* b2head.c: is flash bank 2 the payload this i
 
 /*
  * The same answer, cached, for the audio path - b2_ok() sums the whole payload and the engine asks every block.
- * The three effects whose DSP lives in bank 2 (Prism, Confetti, the per-pad insert) call this and BYPASS
+ * The effects whose DSP lives in bank 2 (Prism, Confetti, Munchi, the per-pad insert) call this and BYPASS
  * themselves when it is false, because the alternative is what 3.2.l did on 2026-10-10 when bank 2 was erased
  * underneath it: the engine called into 0xff, hard-faulted, and the unit boot-looped on a saved preset. An
  * advisory marker on the version label was NOT enough; a missing or mismatched bank 2 has to be survivable.

@@ -2,8 +2,9 @@
 # Compile src/*.c into the code cave (bank 1) and, for the files listed in BANK2_SRCS, into flash bank 2.
 # Outputs: out/cave.elf, out/cave.bin (bank 1, spliced into the image by patch.py) and out/bank2.bin (bank 2,
 # programmed to 0x08100000 - see BANK2.md).
-# Munchi Delay's engine is IN by default since 3.2.m - it lives in bank 2, where ~900 KB is free, so the ~7 KB it
-# costs no longer competes with anything. MUNCHI=0 ./build.sh leaves it out (its Type slot then reads "---").
+# Munchi Delay's engine is IN by default since 3.2.m, and IN BANK 2 (src/munchi_dsp.cpp), where ~900 KB is free, so
+# the ~6.5 KB it costs no longer competes with anything in the cave. MUNCHI=0 ./build.sh leaves it out (its Type slot
+# then reads "---").
 #
 # Two steps now, compile then link, because the linker script has to place objects BY NAME and gcc's one-shot
 # compile-and-link gives them random temporary names.
@@ -17,13 +18,18 @@ BANK2_SRCS="prism confetti insert_dsp rev4"
 # BANK 2 IS FOR LEAF DSP ONLY. A function the firmware reaches through a patched call site must stay in bank 1,
 # or a bad bank 2 faults before anything can check it - which is how 3.2.m's first cut would have boot-looped.
 # munchi.o holds munchi_process, munchi_register, munchi_list and fx_screen_msg, all hooks, so it stays in bank 1.
-# Splitting Munchi's engine out into its own translation unit would let the engine go up; not done yet.
-BANK2_OBJS=""
+# Munchi's engine is its own translation unit, munchi_dsp.o, and that one goes up. It is C++, hence a list of its own.
+[ "${MUNCHI:-1}" = 1 ] && BANK2_OBJS="out/munchi_dsp.o" || BANK2_OBJS=""
 
 # One id for both banks in a build, so bank 1 can tell a matching bank 2 from a stale one. It is a hash of the
 # bank 2 sources and the flags, NOT a timestamp: identical code has to give an identical id, or reflashing an
 # older image would need bank 2 reprogrammed even though the payload up there is already right.
-B2_ID=$(for b in $BANK2_SRCS; do cat "src/$b.c"; done | cat - src/b2head.c | shasum -a 256 | cut -c1-8 | awk '{printf "0x%s", $1}')
+# Munchi's engine is mostly TEMPO's headers, so all of src/munchi goes into the id with munchi_dsp.cpp: nothing in
+# bank 1 includes them. munchi_dsp.h, which both sides include, stays out, as rev4.h and insert.h do. A MUNCHI=0 build
+# has none of it up there, and gets the id (and the payload) of a build from before the engine moved.
+B2_SRC="$(for b in $BANK2_SRCS; do echo "src/$b.c"; done)"
+[ -n "$BANK2_OBJS" ] && B2_SRC="$B2_SRC src/munchi_dsp.cpp $(find src/munchi -type f \( -name '*.h' -o -path 'src/munchi/sys/*' \) | LC_ALL=C sort)"
+B2_ID=$(cat $B2_SRC | cat - src/b2head.c | shasum -a 256 | cut -c1-8 | awk '{printf "0x%s", $1}')
 
 CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-builtin -Wall -Wextra -Werror -DB2_ID=$B2_ID -DB2LOAD_WRITE=${B2LOAD_WRITE:-1}"
 
@@ -37,9 +43,12 @@ CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestandi
 # USB_DIAG=1: TOOLS shows the USB device's state and the HSI48 error instead of the load (usbdev.c)
 [ "${USB_DIAG:-0}" = 1 ] && CFLAGS="$CFLAGS -DUSB_DIAG=1"
 [ "${MUNCHI:-1}" = 1 ] || MUNCHI_FLAG=-DMUNCHI_OFF
-arm-none-eabi-g++ $MUNCHI_FLAG -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-exceptions \
+CXXFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-exceptions \
   -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -fno-math-errno -std=gnu++17 -Wall -Werror -Wno-unused-function \
-  -Wno-class-memaccess -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unused-parameter -isystem src/munchi/sys -c -o out/munchi.o src/munchi.cpp
+  -Wno-class-memaccess -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unused-parameter -isystem src/munchi/sys"
+arm-none-eabi-g++ $MUNCHI_FLAG $CXXFLAGS -c -o out/munchi.o src/munchi.cpp
+rm -f out/munchi_dsp.o
+[ -n "$BANK2_OBJS" ] && arm-none-eabi-g++ $CXXFLAGS -c -o out/munchi_dsp.o src/munchi_dsp.cpp
 
 OBJS=""
 for f in src/*.c; do
@@ -60,7 +69,7 @@ for o in $BANK2_OBJS; do B2_PAT="$B2_PAT $o(.text .text.* .rodata .rodata.*)"; d
 sed -e "s|@B2_OBJS@|$B2_PAT|" src/cave.ld.in > out/cave.ld
 
 arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -nostdlib \
-  -T out/cave.ld -Wl,-e,0 -Wl,-Map=out/cave.map -o out/cave.elf $OBJS out/munchi.o
+  -T out/cave.ld -Wl,-e,0 -Wl,-Map=out/cave.map -o out/cave.elf $OBJS out/munchi.o $BANK2_OBJS
 
 arm-none-eabi-objcopy -O binary -j .cave out/cave.elf out/cave.bin
 arm-none-eabi-objcopy -O binary -j .b2head -j .bank2 out/cave.elf out/bank2.raw
