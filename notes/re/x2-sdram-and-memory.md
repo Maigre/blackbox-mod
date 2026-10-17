@@ -323,7 +323,8 @@ C 1, B 1 (normal memory, write-back, no write-allocate), not shareable, XN.
   **Confirmed full**, except 12 unclaimed bytes at `0x2405FF54 … 0x2405FF5F`.
 - **Backup SRAM** (4 KB at `0x38800000`), from `src/` literals and struct sizes:
   - od bank `0x000–0x384` · fault trails `–0x3C8` · bank-2 words `–0x3D4`;
-  - comp `0x400` (Smash overlays it) · usbdev `0x650–0x680` · rotate `0x6F0` · seqfix `0x700–0x908` · USB-MIDI queue
+  - comp `0x400` (Smash overlays it) · usbdev `0x680–0x6B0` (`0x650–0x680` until JOEBOX 1 rc4; rc4's `USB_DIAG`
+    build adds its counters at `0x6B0–0x6B8`) · rotate `0x6F0` · seqfix `0x700–0x908` · USB-MIDI queue
     `–0x988` · motion `0x990–0x9BC`;
   - fx2 `0xA00–0xA5C` · FX2_OBJ `0xB00` · munchi `0xB10–0xB1C` · master UI `0xB1C` · VHS line `0xB20–0xF20` · gl
     `0xF20–0xF68` · Prism words `0xF70` · fault records `0xF78–0x1000`.
@@ -333,7 +334,8 @@ C 1, B 1 (normal memory, write-back, no write-allocate), not shareable, XN.
     - `la[71][1]` is the same word as `usbdev_state.setup[0..3]`.
     - That word is written on every compressor (re)initialisation (the clear loop over `LA_MAX` = 72) and every 72nd
       frame under Limit (lookahead 72).
-    - This is upstream's to fix (move usbdev, or end comp at `0x650`).
+    - This is upstream's to fix (move usbdev, or end comp at `0x650`). *Fixed upstream in JOEBOX 1 rc4 (`19d29f1`,
+      D-027): usbdev's state moved to `0x38800680`, and a `_Static_assert` in `comp.c` keeps comp below it.*
 - **Two more small spaces stock leaves alone after boot** (not needed for this plan):
   - **DTCM** `0x2000EA30 … 0x2001F800`, 69,072 B. All 31 fast-allocator sites ran during the boot. One of them, the
     GUI method `0x08093C66` (2 KB), could run again. Directly above the range, `0x2001F800 … 0x20020000` is the

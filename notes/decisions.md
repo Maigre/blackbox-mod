@@ -32,6 +32,23 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-027 (2026-10-17) — JOEBOX 1 rc4 supersedes our PR #2: the restart-loop fix is Justin's now** (hub #t-023).
+  Upstream `19d29f1` (JOEBOX 1 rc4, 2026-10-17) changes `b2chk` in `cpu.c` with `b2_step`: PRIMASK saved, interrupts
+  masked, one read and one write, PRIMASK restored, instead of the LDREXB / STREXB the atomics compiled to. That is
+  the fault D-013 found on Thomas's unit (and JOE DIAG then caught on two testers' units, serials from ~2001009700),
+  fixed his way. Merged into `rc4-sync` (cut from `halo`, 37.3.1) by D-019 (4): his `b2_step` and its comment replace
+  our `b2_change` (cpsid / cpsie) at all five call sites; his `emu.py` stands in for `mrs` / `msr primask` under
+  Unicorn; the Device-memory reading of the fault stays in D-013. j3threejay/blackbox-mod PR #2
+  (`fix/restart-loop-ldrex`) is superseded: Thomas closes it; the branch stays as it is. Kept of ours: `test_cpu.py`'s
+  no-exclusives check (PR #2's test, not in rc4), which his fix passes. The rest of rc4 as he made it: `usbdev.c`'s
+  state moved 0x38800650 → 0x38800680, since `comp.c`'s Limit lookahead overwrote the SETUP packet's first word (X2's
+  side finding; USB with the compressor on Limit), with our dev-only F-j bounds, F-i flush and parameter mailbox
+  re-applied on his file unchanged; the insert models renamed (Stone → Pebble, Mistress → Electra, ADA → Jet: names
+  only, presets keep their values); the `FAULT_SHOW` / `USB_DIAG` diagnostic builds (`build.sh` flags; TOOLS reads
+  his names for them, `JOE DIAG` / `JOE USB` or `3.3.g` / `3.3.i`, not 37.x). Bank 2 is unchanged: the payload is
+  37.3.1's byte for byte. Bank 1 pays +36 B (`usbdev.o` +32 from the moved state, `cpu.o` +4 for the PRIMASK save):
+  the release build fits, the dev build (8 B free on 37.3.1d) is 32 B over, so 37.3.2d waits for Thomas's choice of
+  where the room comes from (D-017: moved, not trimmed; the options are in the `rc4-sync` hand-off).
 - **D-026 (2026-10-16) — Fit's answers: Auto = the nearest whole beat, polymetric; 3 and 6 beats explicit; a whole
   file fitted is seamless; Loop Fade on row 9; the clip's own wrap grid; the bank 0x1000** (hub #t-022; the design and
   Thomas's answers 1-5: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`. The messages of `06eaeb7` and `86fd580` call
@@ -165,6 +182,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   candidate: MPU state left by a different bootloader. Upstream-worthy on its own: JOEBOX 1's hold is likely this — sent as
   j3threejay/blackbox-mod PR #2 (branch `fix/restart-loop-ldrex`, `01b5699`, with a no-exclusives check in test_cpu.py).
   Rule for every feature from now on: no atomics or exclusives on patch RAM or anything in 0x24050000..0x2407ffff.
+  *Superseded by D-027 for the fix itself: since JOEBOX 1 rc4 it is upstream's own `b2_step` (PRIMASK saved and
+  restored), and PR #2 is superseded (Thomas closes it); the rule stands.*
 - **D-012 (2026-10-15) — Release names are 37.x.y** (Thomas): `RELEASE_NAME` "37.<feature step>.<build>", dev builds
   the same with a `d` (`DEV_NAME`, USB peek / poke compiled in). 37.0.x = JOEBOX 1's code with none of the fork's
   features; 37.1.x will be Slip (P2). Replaces D-007's `MAIGRE 1`. Fork-only, never in a `feat/*` branch.

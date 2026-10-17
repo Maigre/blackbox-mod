@@ -1,6 +1,6 @@
 # blackbox-mod
 
-> **Fork 37.x** (Maigre/blackbox-mod): JOEBOX 1 + the restart-loop fix + Clip Window (Slip, Region, Loop Len, Fit)
+> **Fork 37.x** (Maigre/blackbox-mod): JOEBOX 1 (rc4) + Clip Window (Slip, Region, Loop Len, Fit, Loop Fade)
 > and, on its way, a KP3-style looper. What it adds, its versions and its upstream PRs: [`FORK.md`](FORK.md). The text
 > below is upstream's README, with each fork feature's bullet added where it lands.
 
