@@ -47,8 +47,19 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   only, presets keep their values); the `FAULT_SHOW` / `USB_DIAG` diagnostic builds (`build.sh` flags; TOOLS reads
   his names for them, `JOE DIAG` / `JOE USB` or `3.3.g` / `3.3.i`, not 37.x). Bank 2 is unchanged: the payload is
   37.3.1's byte for byte. Bank 1 pays +36 B (`usbdev.o` +32 from the moved state, `cpu.o` +4 for the PRIMASK save):
-  the release build fits, the dev build (8 B free on 37.3.1d) is 32 B over, so 37.3.2d waits for Thomas's choice of
-  where the room comes from (D-017: moved, not trimmed; the options are in the `rc4-sync` hand-off).
+  the release build fits (664 B free), the dev build (8 B free on 37.3.1d) came out 32 B over. **The dev build's room
+  comes from dev-only code** (Thomas, the same day; nothing moved to bank 2, nothing trimmed, the release build byte
+  for byte as before, `usbdev.o` included): the mailbox's five stock calls are direct `bl`s to absolute Thumb symbols
+  at their 3.1.9 addresses (`.thumb_set`; −24 B, `test_clipwin.py` §12c checks they are `bl`, not `blx`); the
+  mailbox reads its request through a plain pointer behind a compiler barrier once the volatile seq has been seen
+  (−12 B of zero-extends); the peek's range table holds each range's last-word offset, one subtract and compare a
+  range (−4 B); the peek stores each word it read with one 4-byte `__builtin_memcpy` instead of four byte stores
+  (−16 B). The dev build's `.cave` is 57 712 of 57 736 B (24 free). The other options weighed: the mailbox's checks
+  as a bank-2 leaf (32 B free, but a new payload: every unit rewrites bank 2 once), the label outline's vtable copy
+  in bank 2 (bank 2 would hold bank-1 addresses, the coupling 3.3.c removed), JOEBOX code to bank 2 (his). Found on
+  the way, upstream's: `B2LOAD_WRITE=0` (the read-only card loader) no longer compiled, its tries counter and restart
+  being unused outside `#if B2LOAD_WRITE` under `-Werror`; they now sit under that `#if` (`b40d531`, the default build
+  byte for byte the same; the read-only build's `test_b2load.py` passes): a candidate fix PR, `fix/b2load-readonly`.
 - **D-026 (2026-10-16) — Fit's answers: Auto = the nearest whole beat, polymetric; 3 and 6 beats explicit; a whole
   file fitted is seamless; Loop Fade on row 9; the clip's own wrap grid; the bank 0x1000** (hub #t-022; the design and
   Thomas's answers 1-5: `/srv/dev/firmware/re-scratch/fit/DESIGN.md`. The messages of `06eaeb7` and `86fd580` call
