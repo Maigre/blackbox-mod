@@ -527,17 +527,20 @@ void usbaud_tap1(const float *src, int frames, uint32_t *dst, int zero, int stri
    the bus fault restarted the unit). Aligned words only. A peek reads inside one of these ranges (half-open) and stops
    at its end: the LTDC's registers (the screen's layers, F-d; a read changes none of them), RCC_RSR (the reset cause
    fault.c records), flash, DTCM, AXI SRAM, SRAM1-3, SRAM4, backup SRAM, SDRAM. A poke writes from MEM_RAMS on: the
-   RAMs and SDRAM, never flash, never a peripheral. */
+   RAMs and SDRAM, never flash, never a peripheral. Each range is kept as its start and the offset of its last word. */
+#define RANGE(lo, hi) {lo, (hi) - (lo) - 4u}
 static const uint32_t MEM[][2] = {
-    {0x50001000u, 0x50001148u}, {0x580244d0u, 0x580244d4u}, {0x08000000u, 0x08200000u}, {0x20000000u, 0x20020000u},
-    {0x24000000u, 0x24080000u}, {0x30000000u, 0x30048000u}, {0x38000000u, 0x38010000u}, {0x38800000u, 0x38801000u},
-    {0xc0000000u, 0xc4000000u}};
+    RANGE(0x50001000u, 0x50001148u), RANGE(0x580244d0u, 0x580244d4u), RANGE(0x08000000u, 0x08200000u),
+    RANGE(0x20000000u, 0x20020000u), RANGE(0x24000000u, 0x24080000u), RANGE(0x30000000u, 0x30048000u),
+    RANGE(0x38000000u, 0x38010000u), RANGE(0x38800000u, 0x38801000u), RANGE(0xc0000000u, 0xc4000000u)};
 #define MEM_RAMS   3             /* from here on, what a poke may write */
 
 static int inside(uint32_t a, unsigned from)
 {
+    if (a & 3)
+        return 0;
     for (unsigned i = from; i < sizeof MEM / sizeof MEM[0]; i++)
-        if (!(a & 3) && a >= MEM[i][0] && a <= MEM[i][1] - 4)
+        if (a - MEM[i][0] <= MEM[i][1])          /* below the start, the difference wraps past every offset here */
             return 1;
     return 0;
 }
@@ -591,9 +594,8 @@ static void request(void)
     } else if (type == 0xc0 && req == 0x50) {                /* DEBUG peek: up to 64 bytes at wIndex:wValue, as words */
         uint32_t a = lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24;
         for (len = 0; len < want && len < 64 && inside(a + len, 0); len += 4) {   /* stops at its memory's end */
-            uint32_t w = *(const volatile uint32_t *)(a + len);
-            for (unsigned k = 0; k < 4; k++)
-                buf[len + k] = (uint8_t)(w >> (8 * k));
+            uint32_t w = *(const volatile uint32_t *)(a + len);   /* one word read, as the registers want */
+            __builtin_memcpy(buf + len, &w, 4);                   /* its bytes in order, low first: one store */
         }
         ok = len > 0;                                        /* nothing readable there: stalled */
     } else if (type == 0x40 && (req == 0x51 || req == 0x52)) {   /* DEBUG poke: 0x51 sets the address, 0x52 writes a word */
@@ -894,15 +896,24 @@ struct mbox {
     int32_t result, back;
 };
 
-typedef void (*scan_fn)(void *hw);
-typedef void (*app_msg_fn)(uint8_t *app, const void *msg);
-typedef int32_t (*param_fn)(unsigned id);
-typedef int32_t (*setting_get_fn)(const void *store, unsigned id);
-#define fw_knob_scan   ((scan_fn)0x08040725u)        /* FUN_08040724: the knobs' ADC scan */
-#define fw_app_msg     ((app_msg_fn)0x080a1719u)     /* FUN_080a1718: the app's message handler (case 0x6e) */
-#define fw_param_min   ((param_fn)0x0808e2d1u)       /* the parameter table: min and max of an id */
-#define fw_param_max   ((param_fn)0x0808e305u)
-#define fw_get         ((setting_get_fn)0x08093e9du) /* a store's value of an id */
+/* Stock's functions this calls, at their fixed 3.1.9 addresses, as Thumb symbols the linker resolves, so each call is
+   one bl rather than a literal and a blx (bank 1 room: 37.3.2d, D-027). */
+void mbox_knob_scan(void *hw);                           /* FUN_08040724: the knobs' ADC scan */
+void mbox_app_msg(uint8_t *app, const void *msg);        /* FUN_080a1718: the app's message handler (case 0x6e) */
+int32_t mbox_param_min(unsigned id);                     /* FUN_0808e2d0 / FUN_0808e304: the parameter table's min */
+int32_t mbox_param_max(unsigned id);                     /*   and max of an id */
+int32_t mbox_get(const void *store, unsigned id);        /* FUN_08093e9c: a store's value of an id */
+__asm__(".global mbox_knob_scan, mbox_app_msg, mbox_param_min, mbox_param_max, mbox_get\n"
+        ".thumb_set mbox_knob_scan, 0x08040724\n"
+        ".thumb_set mbox_app_msg, 0x080a1718\n"
+        ".thumb_set mbox_param_min, 0x0808e2d0\n"
+        ".thumb_set mbox_param_max, 0x0808e304\n"
+        ".thumb_set mbox_get, 0x08093e9c\n");
+#define fw_knob_scan   mbox_knob_scan
+#define fw_app_msg     mbox_app_msg
+#define fw_param_min   mbox_param_min
+#define fw_param_max   mbox_param_max
+#define fw_get         mbox_get
 
 /* Pad Mode, Loop Mode, Quant Size, Loop Start, Loop End, Launch Mode, Sync, Beat Count, Loop Fade, Region, Slip, Loop
    Len, Fit */
@@ -917,8 +928,11 @@ void usbdev_mailbox_scan(void *hw)
     uint32_t seq = x ? x->seq : 0;
     if (!x || x->magic != MBOX_MAGIC || seq == x->done)
         return;
-    unsigned op = x->op, row = x->row, col = x->col, id = x->id, known = 0;
-    int32_t v = x->value, r = 0;
+    /* the request, read once its seq says it is all there (no volatile re-reads: they cost a zero-extend each) */
+    __asm__ volatile("" : : : "memory");
+    const struct mbox *q = (const struct mbox *)x;
+    unsigned op = q->op, row = q->row, col = q->col, id = q->id, known = 0;
+    int32_t v = q->value, r = 0;
     for (unsigned i = 0; i < sizeof MBOX_IDS / sizeof MBOX_IDS[0]; i++)
         known |= MBOX_IDS[i] == id;
     if (op != 1 && op != 2)

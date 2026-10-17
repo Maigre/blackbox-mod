@@ -4836,6 +4836,14 @@ info("out/halo-preview.png: stock's corner labels (left) and these (right), over
 MB = BLOCK + 0x56800 + 0x2D100 + 0xF00
 check("the app pass's knob scan at 0x080a2cd6: stock 'bl 0x08040724' is now 'bl usbdev_mailbox_scan' (dev build)",
       branch(0x080A2CD6, stock) == ("bl", 0x08040724) and branch(0x080A2CD6) == ("bl", S["usbdev_mailbox_scan"]))
+# Its five stock calls are direct bl's to their 3.1.9 addresses (absolute Thumb symbols in usbdev.c, bank 1 room for
+# 37.3.2d): a blx there would switch to ARM state, which this core does not have.
+_mb = S["usbdev_mailbox_scan"] & ~1
+mb_calls = [(i.mnemonic, int(i.op_str.lstrip("#"), 16)) for i in cs.disasm(img[_mb - BASE:_mb - BASE + sizes["usbdev_mailbox_scan"]], _mb)
+            if i.mnemonic in ("bl", "blx")]
+check("...and the mailbox calls stock with bl only: the knob scan, the table's min and max, the app's handler, the store",
+      sorted(t for m, t in mb_calls if m == "bl" and t < 0x080F1E78) == [0x08040724, 0x0808E2D0, 0x0808E304, 0x08093E9C, 0x080A1718]
+      and all(m == "bl" for m, t in mb_calls), [(m, hex(t)) for m, t in mb_calls])
 
 
 def mb_screen():
