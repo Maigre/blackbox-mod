@@ -116,9 +116,10 @@ B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, 
 B_FLEN = 0x744                                       # fw_src_len at each pad's last recompute (the Waveform's length)
 B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0x7B4, 0x7D4, 0x814, 0x854   # Fit's
 B_FADE = 0x858                                       # Loop Fade as taken with the region
-B_SIZE = 0x878                                       # sizeof(struct cw_bank)
+B_FIN, B_WRAPPED = 0x878, 0x888                      # F-a: the slots that get their fade-in back, the wraps just made
+B_SIZE = 0x898                                       # sizeof(struct cw_bank)
 B_BYTES = 0x1000                                     # what master.c's block gives it (0x800 before Fit)
-CW_MAGIC = 0x43574E41
+CW_MAGIC = 0x43574E42
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -4717,15 +4718,15 @@ full = lc.fb()
 box = lc.box("TR")
 lc.paint(CYAN)
 lc.draw("TR", clip=box)
-same = lc.fb()
+same_fb = lc.fb()
 lc.paint(CYAN)
 half = (box[0] + box[2] // 2, box[1], box[2] - box[2] // 2, box[3] - 7)
 lc.draw("TR", clip=half)
 cut = lc.fb()
 ch_cut = changed(base, cut)
 check(f"the clipped draw (FUN_080aeb1c through the line's [2]): with the box as the dirty rectangle, the frame of the whole "
-      f"draw ({len(changed(base, same))} pixels); with {half} only pixels inside it ({len(ch_cut)}), each as the whole draw "
-      "has it", same == full and ch_cut and inside(ch_cut, half)
+      f"draw ({len(changed(base, same_fb))} pixels); with {half} only pixels inside it ({len(ch_cut)}), each as the whole draw "
+      "has it", same_fb == full and ch_cut and inside(ch_cut, half)
       and all(cut[(SH - 1 - y) * SW + x] == full[(SH - 1 - y) * SW + x] for x, y in ch_cut)
       and ch_cut == {p for p in changed(base, full) if inside([p], half)}, (len(ch_cut), half))
 
@@ -4909,6 +4910,141 @@ check(f"  ...GET reads the store back (Loop Len {g['back']}) and posts nothing; 
       f"a request without the magic (Slip still {gone['store']})",
       g["result"] == 0 and g["back"] == 3 and not g["posts"] and not again["posts"] and again["store"] == -645
       and not gone["posts"] and gone["store"] == -645, (g, again["posts"], gone["posts"], gone["store"]))
+
+
+# ====================================================================================================== 12d. F-a: a step 0 inside the audio
+# Gate 3b F-a, traced on the unit (37.3.2d, /data/dev/gate3b/auto/run-1/fa_slots.csv): pad 1, a whole file, Fit Auto,
+# Slip -645, Sync 1/16. Every ordinary step's segment starts with a fade-in of 256 and a countdown of 5 744; the step 0
+# of each pass with 0 and 6 000: at Attack 0 (param 0x3c -> pad + 0xBA1 = 1, stock's default; both pads on the unit)
+# stock starts every step 0 hard (0x08065790: after H1 it moves the fade-in into the countdown), right where the file
+# starts, after the last step's fade-out. Moved into the audio (Slip, a region from past frame 0, Loop Len's window) or
+# on a seamless wrap (a region or Fit, Loop On, not Trigger: the last step crossfades into it), that step 0 clicks out
+# of the notch, or sounds the audio twice under the crossfade (the bench's doubled 180 samples). Every run until here
+# had 0xBA1 = 0, the step-0 fade-in on, which is why none of them saw it. 37.3.3: cw_latch marks such a segment and its
+# first read (cw_slot) gives it back stock's fade-in, (0, c + 256) -> (256, c). Measured here on DC sources (each
+# segment's gain, sample by sample), against the same runs with the marks cleared before every read (37.3.2's
+# behaviour) and with 0xBA1 = 0.
+
+
+def attack0(r):
+    """Attack 0 through stock's own class-B param-set (0x39 {cell, 0x3c, 0}): pad + 0xBA1 = 1"""
+    msg = r.alloc(0x18)
+    r.uc.mem_write(msg, struct.pack("<BxxxIIII", 0x39, 0, r.cell(), 0x3C, 0))
+    r.m.call(PSET, r.pad, r.engine, msg, r.ctx)
+
+
+def fa_run(attack=0, off=False, **kw):
+    """a DC run of scenario(**kw) at Attack 0 (attack=None: the rig's 0xBA1 = 0); off: bank 2's F-a marks cleared
+    before each segment read, as 37.3.2 had none"""
+    def setup(r):
+        if attack == 0:
+            attack0(r)
+        if off and r.patched:
+            r.uc.hook_add(UC_HOOK_CODE, lambda *a: r.uc.mem_write(BANK + B_FIN + r.q, b"\0"), begin=SITE_READ, end=SITE_READ)
+    r = scenario(dc=True, setup=setup, **kw)
+    r.hard0 = r.m.r8(r.pad + 0xBA1)
+    return r
+
+
+def fa_segs(r):
+    """per segment that sounded: its first sample (where it is first read), the gain of its first sound, its last
+    sounding sample, step, launch; and the summed gain (base, gains)"""
+    a = [x for x in r.mix if x[2] == 0 and x[1] is not None]
+    first = {}
+    for x in r.reads:
+        first.setdefault(x[SID], x[AT])
+    made = {m_["sid"]: m_ for m_ in r.made}
+    out = {}
+    for t0, sid, _, v in a:
+        nz = np.nonzero(np.abs(v) > 1e-7)[0]
+        if not len(nz):
+            continue
+        d = out.setdefault(sid, dict(at=first.get(sid), g0=None, end=0, step=made[sid]["step"], launch=made[sid]["launch"],
+                                     fade=[]))
+        if d["g0"] is None:
+            d["g0"] = float(v[nz[0]])
+        d["end"] = max(d["end"], t0 + int(nz[-1]))
+        if len(d["fade"]) < FADE:
+            d["fade"] += [float(x) for x in v[:FADE - len(d["fade"])]] if t0 >= d["at"] else []
+    s = np.concatenate([x[0] + np.arange(len(x[3])) for x in a])
+    g = np.concatenate([x[3] for x in a]).astype(np.float64)
+    base = int(s.min())
+    return out, base, np.bincount(s - base, weights=g)
+
+
+FADE = 256
+fa_cases = [("Fit Auto, a 3.74-beat file (89 760), Slip -645, Sync 1/16", dict(frames=89760, beats=0, slip=-645, sync=5,
+                                                                             vals={P_FIT: 1}), True),
+            ("Fit Auto, Slip +60, Sync 1/4", dict(frames=89760, beats=0, slip=60, sync=3, vals={P_FIT: 1}), True),
+            ("Fit Off, the matched file (96 000), Slip -645, Sync 1/16", dict(frames=96000, slip=-645, sync=5), False),
+            ("Fit Off, Slip +60, Sync 1/4", dict(frames=96000, slip=60, sync=3), False),
+            ("a Region from 6 072 (Loop, [6 072, 102 072) of 192 000), Slip 0, Sync 1/4",
+             dict(frames=192000, beats=4, points=(6072, 102072, 1), region=LOOP, cell=0x102, sync=3), True)]
+for name, kw, seamless_ in fa_cases:
+    kw = dict(blocks=1700, **kw)
+    off, on, ref = fa_run(off=True, **kw), fa_run(**kw), fa_run(attack=None, **kw)
+    so, bo, go = fa_segs(off)
+    sn, bn, gn = fa_segs(on)
+    sr, br, gr = fa_segs(ref)
+    wo = [d for d in so.values() if d["step"] == 0 and not d["launch"]]
+    wn = [d for d in sn.values() if d["step"] == 0 and not d["launch"]]
+    since = min(d["at"] for d in wn) - 1 if wn else 0
+    ordinary = [d for d in sn.values() if d["step"] and not d["launch"] and d["at"] > since and len(d["fade"]) == FADE]
+    peak = lambda b, g: float(g[since - b:].max()) if wn else 9.0
+    info(f"F-a, {name}: Attack 0 = pad + 0xBA1 {on.hard0} (0xBA1 = 0 run: {ref.hard0}); passes at {[d['at'] for d in wn]}")
+    check(f"F-a, {name}: as 37.3.2 had it (the marks cleared), every pass's step 0 starts at full gain "
+          f"({sorted({round(d['g0'], 3) for d in wo})})" + (", and the summed gain at the wrap reaches "
+                                                            f"{peak(bo, go):.2f}: the audio twice under the crossfade" if seamless_ else ""),
+          on.hard0 == 1 and ref.hard0 == 0 and len(wo) >= 2 and all(d["g0"] > 0.999 for d in wo)
+          and (not seamless_ or peak(bo, go) > 1.5), [(d["at"], d["g0"]) for d in wo])
+    check(f"  ...37.3.3: each one fades in as an ordinary step does (first sound {max(d['g0'] for d in wn):.4f}; its "
+          f"first 256 gains an ordinary step's, within 1e-6), and the summed gain stays at most 1 ({peak(bn, gn):.4f})",
+          len(wn) >= 2 and ordinary and all(d["g0"] < 0.02 and np.allclose(d["fade"], ordinary[0]["fade"], rtol=0, atol=1e-6) for d in wn)
+          and peak(bn, gn) <= 1.0 + 1e-6, [(d["at"], d["g0"]) for d in wn])
+    sched = lambda r: [(m_["block"], m_["k"], m_["step"], m_["start"], m_["launch"]) for m_ in r.made]
+    span = lambda s_: sorted((d["at"], d["end"], d["step"]) for d in s_.values())
+    check(f"  ...the timing as before, sample for sample: every segment made in the same block, slot, step and start, "
+          f"first read on the same sample and silent from the same sample on ({len(sn)} segments)",
+          sched(on) == sched(off) and span(sn) == span(so), (span(sn)[:6], span(so)[:6]))
+    lo = max(since, bn, br)
+    n_ = min(len(gn) - (lo - bn), len(gr) - (lo - br))
+    check(f"  ...and from the first wrap on ({n_} samples), the summed gain is the 0xBA1 = 0 run's bit for bit (stock's "
+          "step-0 fade-in)", wn and n_ > 96000 and np.array_equal(gn[lo - bn:lo - bn + n_], gr[lo - br:lo - br + n_]),
+          float(np.abs(gn[lo - bn:lo - bn + n_] - gr[lo - br:lo - br + n_]).max()) if wn and n_ > 0 else None)
+
+# the launch: inside the audio (Slip) it fades in too; at the file's own start it stays hard, as stock has it, even
+# where the wraps after it are seamless (Fit Auto at Slip 0) and get their fade-in
+kw = dict(frames=96000, slip=-645, sync=5, blocks=900)
+lon, loff = fa_segs(fa_run(**kw))[0], fa_segs(fa_run(off=True, **kw))[0]
+la_on = [d for d in lon.values() if d["launch"]]
+la_off = [d for d in loff.values() if d["launch"]]
+check(f"F-a, the launch at Slip -645 (Attack 0): stock's hard start ({[d['g0'] for d in la_off]}) fades in from the "
+      f"first sample with 37.3.3 ({[round(d['g0'], 4) for d in la_on]}), on the same sample",
+      la_on and la_off and la_off[0]["g0"] > 0.999 and la_on[0]["g0"] < 0.02 and la_on[0]["at"] == la_off[0]["at"] == 288000
+      and la_on[0]["end"] == la_off[0]["end"], (la_on, la_off))
+kw = dict(frames=89760, beats=0, slip=0, sync=3, vals={P_FIT: 1}, blocks=1700)
+fs = fa_segs(fa_run(**kw))[0]
+fl_ = [d for d in fs.values() if d["launch"]]
+fw = [d for d in fs.values() if d["step"] == 0 and not d["launch"]]
+check(f"  ...Fit Auto at Slip 0 (a seamless wrap, step 0 on the file's frame 0): the launch still starts at full gain "
+      f"({[d['g0'] for d in fl_]}), each wrap's step 0 fades in ({[round(d['g0'], 4) for d in fw]})",
+      fl_ and fl_[0]["g0"] > 0.999 and len(fw) >= 2 and all(d["g0"] < 0.02 for d in fw), (fl_, fw))
+
+# unchanged: an Attack (0xBA1 = 0), a pad the hooks leave alone, no bank 2
+kw = dict(frames=89760, beats=0, slip=-645, sync=5, vals={P_FIT: 1}, blocks=1700)
+ok, d = same(fa_run(attack=None, **kw), fa_run(attack=None, off=True, **kw))
+check("F-a: with an Attack (0xBA1 = 0: stock fades every step 0 in itself) nothing is marked: Fit Auto, Slip -645, each "
+      "read, prefetch, mixed sample and message identical with the marks cleared", ok, d)
+for name, kw in (("Slip 0, the whole file, Fit Off (no latch)", dict(frames=96000, slip=0, sync=5, blocks=1700)),
+                 ("Slip -645 without this build's bank 2", dict(frames=96000, slip=-645, sync=5, blocks=1700, bank2=False))):
+    a = scenario(setup=attack0, **kw)
+    b = scenario(setup=attack0, bypass=True, **{k: v for k, v in kw.items() if k != "bank2"})
+    ok, d = same(a, b)
+    hard = [m_ for m_ in a.made if m_["step"] == 0]
+    check(f"F-a, Attack 0, {name}: identical to the hooks taken out (stock: each step 0 hard), every read, prefetch, mixed "
+          f"sample and message ({len(hard)} step-0 segments)" + (f"; no cw_* entered ({len(a.b2_entered)})" if "bank 2" in name
+                                                                    else ""),
+          ok and len(hard) >= 2 and ("bank 2" not in name or not a.b2_entered), d)
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

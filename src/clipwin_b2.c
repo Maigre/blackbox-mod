@@ -228,6 +228,7 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
    passes are one clip apart and a polymetric one (14 beats on Quant 1 bar) is never held for being off the bar. */
 int cw_hold(struct cw_bank *b, unsigned q, const uint8_t *pad, const uint32_t *t, const int32_t *was)
 {
+    b->wrapped[q] = 1;               /* the next segment H1 makes for this pad is the new pass's step 0 (cw_latch) */
     uint32_t grid = *(const uint32_t *)(pad + PAD_WRAP_GRID), g = (uint32_t)was[CW_WAS_GRID];
     struct cw_region *r = &b->region[q];
     uint8_t fit_was = b->pfit[q];    /* the Fit this pass had (adopt kept it): asked once, at this wrap */
@@ -366,6 +367,9 @@ int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_
     int32_t start = (int32_t)*(const int64_t *)(seg + SEG_POS);
     if (pos < 0)
         pos = start > 8 ? start - 8 : 0;
+    unsigned wrap = b->wrapped[q];   /* made right after the pad's wrap recompute: a pass's step 0, not a launch */
+    b->wrapped[q] = 0;
+    b->fin[q] &= (uint8_t)~(1u << k);
     b->pad[q] = pad;
     b->valid[q] &= (uint8_t)~(1u << k);
     b->hinted[q] &= (uint8_t)~(1u << k);
@@ -373,6 +377,7 @@ int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_
     int32_t slip = b->slip[q], rs = 0;
     /* the region this pass plays (H3 gave the recompute its length), or the whole file */
     int32_t vlen = region_of(b, q, pad, len, &rs);
+    int region = vlen != 0;
     /* ticks per step: an i64 whose value stays far below 2^31 (a whole clip is at most 512 beats x 960) */
     int32_t tps = *(const int32_t *)(pad + PAD_TPS), tps_hi = *(const int32_t *)(pad + PAD_TPS + 4);
     uint32_t steps = *(const uint32_t *)(pad + PAD_STEPS);
@@ -410,13 +415,27 @@ int32_t cw_latch(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, int32_
     l->delta = f;
     l->len = len;                    /* the FILE's length, not the region's: what H2 checks a load against */
     b->valid[q] |= (uint8_t)(1u << k);
-    int32_t real = rs + fold2(fold2(start, vlen) + f, vlen) - 8;
+    int32_t first = rs + fold2(fold2(start, vlen) + f, vlen);
+    /* Gate 3b F-a: stock starts a segment hard (no fade-in: 0x08065790 moves it into the countdown after this hook)
+       when it is a launch's, and at Attack 0 (pad + 0xba1, stock's default) every step 0: right where the file
+       starts, after the last step's fade-out or from silence. Here the segment can start inside the audio: its first
+       frame is not stock's (Slip, a region from past frame 0, Loop Len's window), or it is the step 0 of a pass the
+       last step crossfades into (a seamless wrap: a region or Fit, Loop On, not Trigger, cw_len; stock's own step 0
+       would come after its notch). Stock's hard start then clicks (from the notch) or sounds the audio twice for 256
+       samples (under the crossfade): its first read (cw_slot) gives it back the fade-in stock gives every other step.
+       A launch at the file's own start stays hard, as stock has it. Only at Attack 0: with an Attack the voice's own
+       envelope fades a launch in, and stock fades every step 0 in itself. */
+    if (pad[PAD_HARD0] && (first != start || (wrap && !*(const uint32_t *)(seg + SEG_STEP) && (region || b->fon[q]) &&
+                                              pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)))
+        b->fin[q] |= (uint8_t)(1u << k);
+    int32_t real = first - 8;
     return real < 0 ? 0 : real;
 }
 
 /* H1' (clipwin_slice_start): a slice-marker segment takes slot k: whatever was latched there no longer applies */
 void cw_slice(struct cw_bank *b, unsigned q, unsigned k)
 {
+    b->wrapped[q] = 0;
     if (k < 4) {
         b->valid[q] &= (uint8_t)~(1u << k);
         b->h1[q] &= (uint8_t)~(1u << k);
@@ -443,6 +462,7 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k)
    further into the file), counter-clockwise drags it behind. That is the content's shift as this file keeps it. */
 int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg)
 {
+    b->wrapped[q] = 0;               /* a wrap with no segment after it (the pad stopping) leaves nothing for a launch */
     slip = slip < -SLIP_MAX ? -SLIP_MAX : slip > SLIP_MAX ? SLIP_MAX : slip;
     if (ll > LOOPLEN_MAX)
         ll = 0;
@@ -516,12 +536,26 @@ unsigned cw_drop(const struct cw_bank *b, unsigned q, uint8_t *pad)
 }
 
 /* H2 (clipwin_read): the latch of the segment whose reader fraction is at frac (pad + 0x30 + k x 0x70 + 0x1c), or 0
-   when it is not one of the four slots or no latch holds there */
-const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_t *pad, const float *frac)
+   when it is not one of the four slots or no latch holds there. At a segment's first read, one cw_latch marked as
+   starting inside the audio (F-a) gets back the fade-in stock took from it: (0, c + 256) -> (256, c), stock's move
+   undone, so its fade-out comes on the same sample. The reader calls this before the fade stage (FUN_08066164 at
+   0x08066632), on the block the segment starts in; a step with an end re-derives its countdown from the fade-in left
+   on every later block (0x08066586). A countdown that would be left at 0 or -1 (the stage's "hold") stays hard. */
+const struct cw_latch *cw_slot(struct cw_bank *b, unsigned q, const uint8_t *pad, float *frac)
 {
     uint32_t off = (uint32_t)((const uint8_t *)frac - pad) - (SEG0 + SEG_FRAC);
     unsigned k = off / SEG_SIZE;
-    return off % SEG_SIZE || k > 3 || !(b->valid[q] & (1u << k)) ? 0 : &b->latch[q][k];
+    if (off % SEG_SIZE || k > 3 || !(b->valid[q] & (1u << k)))
+        return 0;
+    if (b->fin[q] & (1u << k)) {
+        b->fin[q] &= (uint8_t)~(1u << k);
+        int32_t *fc = (int32_t *)((uint8_t *)frac + (SEG_FADE_IN - SEG_FRAC));   /* the fade-in left, the countdown */
+        if (!fc[0] && fc[1] > FADE_IN) {
+            fc[0] = FADE_IN;
+            fc[1] -= FADE_IN;
+        }
+    }
+    return &b->latch[q][k];
 }
 
 /* ...and with that latch l holding for the file the pad has: at[0] = where segment position pos really reads (rs +

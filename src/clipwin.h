@@ -23,6 +23,7 @@
 #define PAD_LOOP    0x1f4            /* u8 Loop Mode (0x8d) on */
 #define PAD_SYNCED  0x1f5            /* u8 1: Quant and Sync are both not None (stock's, from the two) */
 #define PAD_LAUNCH  0x1f8            /* u8 Launch Mode + 1: 1 Trigger, 2 Gate, 3 Toggle */
+#define PAD_HARD0   0xba1            /* u8 1 = Attack (0x3c) is 0: stock starts every step 0 without a fade-in */
 #define PAD_FPS     0x1fc            /* f32 source frames per step */
 #define PAD_STEP_OUT 0x204           /* f32 output samples per step: a segment's countdown + 256 (FUN_08065550) */
 #define PAD_TPS     0x208            /* i64 ticks per step */
@@ -46,6 +47,8 @@
 #define SEG_END     0x10             /* i64 the frame it stops on (the last step: its file's length - 1), 0 none */
 #define SEG_FRAC    0x1c
 #define SEG_DELAY   0x20
+#define SEG_FADE_IN 0x24             /* i32 fade-in samples left (256 when made), then +0x28 the countdown to the fade-out */
+#define FADE_IN     256              /* stock's step crossfade, in and out (0x080656ba, 0x08065700) */
 #define SEG_STEP    0x34
 #define SEG_FIRST   0x3c
 #define SRC_BAD     0x10000000       /* fw_src_len's "the provider reported 0 frames" */
@@ -107,8 +110,12 @@ struct cw_bank {
     float bpm[16];                   /* the tempo a fitted pad's step fields were made at */
     const uint8_t *engine;           /* the engine (the clock) as the poll last had it: cw_fit's tempo */
     uint16_t fade[16];               /* Loop Fade as taken with the region: 0 .. LOOP_FADE_MAX */
+    uint8_t fin[16];                 /* bit k: slot k's segment starts inside the audio: its first read gives back the
+                                        fade-in stock takes from a hard start (cw_latch, cw_slot; Gate 3b F-a) */
+    uint8_t wrapped[16];             /* 1: pad q's wrap has just been recomputed (cw_hold): its next segment is that
+                                        pass's step 0, not a launch */
 };
-#define CW_MAGIC  0x43574e41u        /* "CWNA": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e42u        /* "CWNB": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's EXTRA_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's EXTRA_BYTES gives the bank CW_BYTES");
@@ -118,7 +125,8 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
                offsetof(struct cw_bank, fit) == 0x784 && offsetof(struct cw_bank, fon) == 0x7a4 &&
                offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
-               offsetof(struct cw_bank, bpm) == 0x814 && sizeof(struct cw_bank) == 0x878,
+               offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
+               offsetof(struct cw_bank, wrapped) == 0x888 && sizeof(struct cw_bank) == 0x898,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*
@@ -148,7 +156,7 @@ void cw_slice(struct cw_bank *b, unsigned q, unsigned k);
 /* H2: the latch of the segment whose fraction is at frac (0: none, read as stock); at[0] = its real position for pos,
    at[1] = Loop Fade's frames before the region's end (0 none); 1 = hint now: rs, and rs - fade (the read takes fade);
    Loop Fade's crossfade over a read's window */
-const struct cw_latch *cw_slot(const struct cw_bank *b, unsigned q, const uint8_t *pad, const float *frac);
+const struct cw_latch *cw_slot(struct cw_bank *b, unsigned q, const uint8_t *pad, float *frac);
 void cw_map(const struct cw_bank *b, unsigned q, const uint8_t *pad, const struct cw_latch *l, int32_t pos,
             int32_t *at);
 int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t real, int32_t fade);
@@ -184,10 +192,12 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                offsetof(struct cw_bank, engine) == 0x854 && offsetof(struct cw_bank, fade) == 0x858,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
+               SEG_FADE_IN == 0x24 && FADE_IN == 256 &&
                SEG_STEP == 0x34 && SEG_FIRST == 0x3c && SEG_END == 0x10 && PAD_FPS == 0x1fc && PAD_TPS == 0x208 &&
                PAD_STEPS == 0x210 && PAD_RATE == 0x1f0 && PAD_QUANT == 0x218 && ENGINE_BPM == 0x18 &&
                PAD_SYNC == 0x220 && PAD_CLASS == 0x04 && PAD_SIBLING == 0x08 && PAD_ID == 0x18 && PAD_ON == 0x29 &&
                PAD_LOOP == 0x1f4 && PAD_SYNCED == 0x1f5 && PAD_LAUNCH == 0x1f8 && PAD_STEP_OUT == 0x204 &&
+               PAD_HARD0 == 0xba1 &&
                PAD_WRAP_GRID == 0x230 && PAD_SLICES == 0x250 && PAD_SLICER == 0x254 && LAYER0 == 0x260 &&
                LAYER_SIZE == 0x410 &&
                H_CLASS == 0x48 && H_LOOP_START == 0xfc && H_LOOP_END == 0x100 &&

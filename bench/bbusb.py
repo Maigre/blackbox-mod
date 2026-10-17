@@ -131,7 +131,7 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E41            # "CWNA": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E42            # "CWNB": src/clipwin.h's cw_bank layout this tool reads
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
@@ -245,7 +245,7 @@ def main(argv):
         if magic != CW_MAGIC:
             # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
             # bank set up this boot, every field below is a previous boot's, not live
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNA, Loop Fade on): "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): "
                      + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
                         "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -264,7 +264,7 @@ def main(argv):
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNA, Loop Fade on): another layout, no "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): another layout, no "
                      "knob fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         counts, speed, zero_at, zero_dir, zero_slow, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
@@ -292,7 +292,7 @@ def main(argv):
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNA, Loop Fade on): another layout, no "
+            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): another layout, no "
                      "Fit fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         names = ["Off", "Auto", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
         fit, fon = peek(bank + 0x784, 16), peek(bank + 0x7A4, 16)
