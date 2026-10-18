@@ -60,10 +60,10 @@ controllers). Known issues per feature: [`notes/features/clip-window.md`](notes/
 ### Install
 
 1. Download stock firmware **3.1.9** from <https://1010music.com/downloads> (its `BLACKBOX.bin`).
-2. Patch your copy with the release's patch file (`blackbox-mod-37.4.0.json`, attached to the fork's
-   [releases](https://github.com/Maigre/blackbox-mod/releases)): `python3 apply.py BLACKBOX.bin
-   blackbox-mod-37.4.0.json`. It checks your file is the stock 3.1.9 and writes **two files**: `BLACKBOX.bin` and
-   `BBEXTRA.BIN`. Patched firmware is never distributed here.
+2. Get this repository (Code > Download ZIP, or `git clone`), and patch your copy with the release's patch file,
+   in `docs/`: `python3 apply.py path/to/BLACKBOX.bin docs/blackbox-mod-37.4.0.json`. Name the file: `docs/` also
+   holds JOEBOX's own patch. `apply.py` needs only Python 3; it checks that your file is the stock 3.1.9 and writes
+   **two files**, `BLACKBOX.bin` and `BBEXTRA.BIN`. Patched firmware is never distributed here.
 3. Copy **both** to the root of the Blackbox's SD card.
 4. Power on holding **BACK + INFO**. When a release changes the second file, the first boot installs it and
    **restarts once** by itself: leave the power on until it is back.
