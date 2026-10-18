@@ -5,11 +5,15 @@ output mix (FUN_08061844). Stubbed: the stock delay process, its line clear, the
 param registrars and store add.
 NOT checked: how it sounds, the settings page redrawing when Type changes, CPU on the real chip (counted here as
 instructions), and anything else in the firmware touching the delay's lines while Munchi owns them.
+The engine is in flash bank 2 (src/munchi_dsp.cpp), loaded here beside the image the way the unit has it; what it plays
+is held to the bit by a fixed run (the fingerprint below), and without bank 2 Munchi has to be the stock delay.
 """
+import hashlib
 import math
 import struct
 import sys
 
+from unicorn import UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_SP
 
 from emu import STACK, Emu
@@ -149,7 +153,8 @@ def page(type_, ids=ids, type_id=0x197):
 check("Type Delay page: Type + the stock 7 + Delay knob variant (8 slots), no Munchi controls",
       page(0) == [0x197, 0x32, 0x33, 0x38, 0x0E, 0xCA, 0x34, 0xC9, 0x35], [hex(i) for i in page(0)])
 check("Type Munchi page: the 8 slots = Type, Feedback, Wand, Random, Freeze, Clock, Width, Duck" if ENGINE else
-      "engine left out: the second Type is Motion: the stock delay's controls plus Motion, Rate, Depth", page(1) == MUNCHI_PAGE, [hex(i) for i in page(1)])
+      "engine left out: the second Type (\"---\") lists Type and Feedback only", page(1) == (MUNCHI_PAGE if ENGINE else [0x197, 0x38]),
+      [hex(i) for i in page(1)])
 e.uc.mem_write(0x30006100, b"\x4b\x20\x70\x47")          # a reverb cell (fresh address: Unicorn caches code)
 e.w32(VT2, 0x30006101)
 rids = [0x198, 0x37, 0x3B, 0x3A, 0x1D7, 0x1D8, 0x1D9, 0x1DA]
@@ -167,13 +172,49 @@ check("Type Delay: the stock delay runs, its lines untouched", calls == ["stock"
 if not ENGINE:
     store(type=1, random=0)
     block([(0.0, 0.0)] * N)
-    check("engine left out: the second Type (Motion) still runs the stock delay, its lines untouched", calls == ["stock"], calls)
+    check("engine left out: the second Type (\"---\") runs the stock delay, its lines untouched", calls == ["stock"], calls)
+    block([(0.0, 0.0)] * N)
+    check("  ... and goes on doing so (rc4 cleared the three lines under stock on every block)", calls == ["stock"], calls)
     store(type=0)
     block([(0.0, 0.0)] * N)
     check("  and going back to Delay clears nothing", calls == ["stock"], calls)
     print("     Munchi's engine is not in this build (MUNCHI_OFF): its own tests are skipped. MUNCHI=1 ./build.sh puts it back.")
     print(f"\n{fails} failure(s)")
     sys.exit(1 if fails else 0)
+
+# --- no bank 2, or not this image's: the engine is up there, so Munchi reads "---" and IS the stock delay (as Confetti)
+B2, MODE = 0x08100000, 0x38800B14
+b2_head = bytes(e.uc.mem_read(B2, 16))
+e.uc.mem_write(B2, bytes(16))                          # the header gone: no payload
+e.meter_up()                                           # a boot without it (b2_live keeps its verdict for the boot)
+reg.clear()
+e.call("munchi_register", 0x24001000, 0x197, 0, 0)
+check("no bank 2: the Type list reads Delay / --- / Motion / Relapse / --- (Munchi and Confetti are up there)",
+      reg[0] == ("list", 0x197, "Type:", ["Delay", "---", "Motion", "Relapse", "---"]), reg[:1])
+entered = [0]
+hooks = [e.uc.hook_add(UC_HOOK_CODE, lambda *_: entered.__setitem__(0, entered[0] + 1), begin=e.sym[f] & ~1, end=e.sym[f] & ~1)
+         for f in ("munchi_ready", "munchi_block")]
+store(type=1, random=0)
+seen = []
+for _ in range(3):
+    out = block([(0.5, 0.5)] * N)
+    seen.append(list(calls))
+check("no bank 2, Type Munchi: the stock delay runs every block, its lines untouched", seen == [["stock"]] * 3, seen)
+check("  ... and nothing of the engine is entered", entered[0] == 0, entered[0])
+check("  ... and the slot adds nothing of its own (the bus is what stock left)", max(abs(v) for v in out[0] + out[1]) == 0)
+e.w32(MODE, (0x4D32 << 16) | 1)                         # Munchi ran last: a new image, its BBEXTRA.BIN not written yet
+seen = []
+for _ in range(3):
+    block([(0.5, 0.5)] * N)
+    seen.append(list(calls))
+check("no bank 2 after Munchi ran: the three lines are cleared ONCE, then stock alone",
+      seen == [[("clear", 0x30), ("clear", 0x4C), ("clear", 0x68), "stock"], ["stock"], ["stock"]], seen)
+for h in hooks:
+    e.uc.hook_del(h)
+e.uc.mem_write(B2, b2_head)
+e.meter_up()
+store(type=0)
+block([(0.0, 0.0)] * N)
 
 # --- Munchi: an impulse comes back after the note length
 store(type=1, random=0)
@@ -267,6 +308,60 @@ e_off, e_heavy = ducked(1), ducked(3)
 check(f"Duck Heavy pulls the repeats down under a busy send (energy {e_heavy:.1f} vs {e_off:.1f} with Off)", e_heavy < 0.6 * e_off, (e_heavy, e_off))
 store(duck=0)
 
+# --- THE FINGERPRINT: what Munchi plays, to the bit. A fixed run over every control, from a clean start; the digest is
+# over every sample Munchi put on the bus and, at the end, the three lines and its words in backup SRAM. It is the same
+# for the engine in the cave (rc4) and in bank 2, and for JOEBOX 1 rc4's release image as published, built on another
+# machine: so it does not depend on whose compiler, and any change to the sound, or to where the state sits in the
+# lines, shows here. A change to the sound that is meant updates FINGERPRINT.
+FINGERPRINT = ("5d146c1047a43b26", "e7dff53b990107b1")
+clicks = lambda t: (1.0, 0.7) if t % 24000 == 0 else (0.0, 0.0)
+bursts = lambda t: steady(t) if t % 48000 < 4800 else (0.0, 0.0)
+tone = lambda t: ((((t * 37) % 400) - 200) / 400.0, (((t * 53) % 300) - 150) / 300.0)
+silence = lambda t: (0.0, 0.0)
+FP_SCRIPT = [                                          # settings, BPM, the send, seconds; Type 1 = Munchi
+    (dict(type=0, fb=400, wand=250, random=0, freeze=0, clock=0, width=0, duck=0), 120.0, clicks, 0.05),
+    (dict(type=1), 120.0, clicks, 1.1),                                        # Wand 25 %: quarter-note repeats
+    (dict(wand=100, random=500, fb=600), 120.0, bursts, 1.0),                  # glitch side, random events
+    (dict(wand=800, random=300, fb=500), 120.0, bursts, 1.0),                  # reverb side
+    (dict(wand=250, random=0, fb=300, freeze=1), 120.0, steady, 0.3),          # Freeze on ...
+    (dict(), 120.0, silence, 0.5),                                             # ... held with the send silent ...
+    (dict(freeze=0), 120.0, bursts, 0.3),                                      # ... and off
+    (dict(clock=2), 120.0, clicks, 0.5),
+    (dict(clock=1), 120.0, clicks, 0.5),
+    (dict(clock=0, width=1), 120.0, tone, 0.3),
+    (dict(width=3), 120.0, clicks, 0.5),
+    (dict(width=0, duck=3, fb=300), 120.0, steady, 0.4),
+    (dict(duck=0, fb=900), 120.0, bursts, 0.4),                                # Duck Auto, high feedback
+    (dict(fb=400), 90.0, clicks, 0.6),                                         # tempo changes
+    (dict(wand=430), 40.0, clicks, 0.6),                                       # a bar at 40 BPM: clamped
+    (dict(type=0), 120.0, clicks, 0.1),                                        # type switches: Delay ...
+    (dict(type=1, wand=300, random=400), 120.0, bursts, 0.6),                  # ... Munchi afresh ...
+    (dict(type=3), 120.0, clicks, 0.2),                                        # ... Relapse ...
+    (dict(type=1, wand=700, random=100), 120.0, steady, 0.6),                  # ... Munchi over Relapse's lines
+]
+rng = e.r32(0x38800B10)
+e.w32(0x38800B10, 0)                                   # Munchi's random generator, unseeded: start() seeds it
+fp_out, t, fp_blocks = hashlib.sha256(), 0, 0
+for kv, tempo, src, seconds in FP_SCRIPT:
+    store(**kv)
+    bpm(tempo)
+    for _ in range(int(seconds * fs / N)):
+        l, r = block([src(t + i) for i in range(N)])
+        t += N
+        if params["type"] == 1:
+            fp_out.update(struct.pack(f"<{N}f", *l) + struct.pack(f"<{N}f", *r))
+            fp_blocks += 1
+fp_mem = hashlib.sha256()
+for a, n in ((LIVE, 192256 * 4), (STATE, 96256 * 4), (FRZ, 192256 * 4), (0x38800B10, 12)):
+    fp_mem.update(bytes(e.uc.mem_read(a, n)))
+got = (fp_out.hexdigest()[:16], fp_mem.hexdigest()[:16])
+check(f"the fingerprint: {fp_blocks} blocks of Munchi over every control, bit for bit what it has always played", got[0] == FINGERPRINT[0],
+      got[0])
+check("  ... and its state in the lines and backup SRAM, byte for byte where it has always been", got[1] == FINGERPRINT[1], got[1])
+e.w32(0x38800B10, rng)                                 # the rest of this file as it ran before the fingerprint
+bpm(120.0)
+store(type=1, wand=250, random=0, fb=300, freeze=0, clock=0, width=0, duck=0)   # as the Duck checks left them
+
 # --- the page rebuilds when Type changes
 SCREEN, MSG = 0x30008000, 0x30009000
 seen_msgs = []
@@ -312,7 +407,6 @@ block([(0.0, 0.0)] * N)
 check("... only once", calls == ["stock"], calls)
 
 # --- cost
-from unicorn import UC_HOOK_CODE
 store(type=1, wand=250, random=300, fb=400, freeze=0)
 run(0.2, noise)
 cnt = [0]

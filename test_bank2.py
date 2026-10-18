@@ -143,6 +143,38 @@ check("the old pinned jump is gone from the cave", "rev4_step_impl" not in funcs
 lits = [struct.unpack_from("<I", deployed, o)[0] for o in range(16, len(deployed) - 3, 4)]
 check("bank 2 holds no data pointers into the cave", not [v for v in lits if CAVE_LO <= (v & ~1) < CAVE_HI])
 
+# --- 2b. AND THE OTHER WAY ROUND: the firmware only ever reaches the cave. A patched call site or vtable entry that
+# pointed into bank 2 would run whatever is up there before anything had checked it - a missing or stale payload
+# faults on the spot, which is why every hook stays in bank 1 and calls up only once b2_live() says so.
+sys.path.insert(0, "patches")
+import importlib                                                    # noqa: E402
+
+entries = {}
+for name in os.path.basename(os.path.dirname(IMAGE)).split("+"):
+    for at, _, new in importlib.import_module(name).PATCHES:
+        if len(new) != 4:
+            continue
+        h1, h2 = struct.unpack("<HH", new)
+        if (h1 & 0xF800) == 0xF000 and (h2 & 0xD000) in (0xD000, 0x9000):  # bl / b.w
+            tgt = int(next(md.disasm(new, at, 1)).op_str.lstrip("#"), 16)
+        else:
+            tgt = struct.unpack("<I", new)[0]                       # a word: a function pointer if it is Thumb code
+            if not (tgt & 1 and 0x08000000 <= tgt < 0x08200000):
+                continue
+        entries[at] = tgt & ~1
+check(f"no patched call site or vtable entry lands in bank 2 ({len(entries)} of them, all in the firmware or the cave)",
+      entries and not [a for a, t in entries.items() if B2 <= t < B2 + 0xE0000],
+      {hex(a): funcs.get(t, hex(t)) for a, t in entries.items() if B2 <= t < B2 + 0xE0000})
+if "munchi_block" in funcs_all:                                     # MUNCHI=0 leaves the engine out
+    engine = [n for n, a in funcs_all.items() if "granularDelay" in n or "Reverb" in n or "SimpleCompressor" in n
+              or n in ("munchi_ready", "munchi_block")]
+    check(f"Munchi's engine is in bank 2: munchi_ready, munchi_block and TEMPO's classes ({len(engine)} functions)",
+          all(B2 <= funcs_all[n] < B2 + len(deployed) for n in engine), [n for n in engine if not B2 <= funcs_all[n] < B2 + len(deployed)])
+    hooks = ("munchi_register", "munchi_defaults_first", "munchi_defaults_last", "munchi_process", "munchi_list", "fx_screen_msg")
+    check("...and its glue in the cave: every hook, and the memset the cave's code calls",
+          all(CAVE_LO <= funcs_all[n] < CAVE_HI for n in hooks + ("memset",)),
+          {n: hex(funcs_all[n]) for n in hooks + ("memset",) if not CAVE_LO <= funcs_all[n] < CAVE_HI})
+
 # --- 3. the crash itself: Confetti's first block, on the real pair
 e = Emu(IMAGE, "out/cave.elf")
 for base, size in ((0x38800000, 0x1000), (0x58024000, 0x1000), (0x50003000, 0x1000), (0xC0000000, 0x800000), (0x30000000, 0x10000)):
@@ -238,6 +270,22 @@ for _ in range(5):
 check(f"bank 2 off + Confetti selected: the lines are cleared ONCE, then left alone {[c for c, _ in per_block]}",
       [c for c, _ in per_block] == [3, 0, 0, 0, 0], per_block)
 check("...and the stock delay runs every block in its place", all(st == 1 for _, st in per_block), per_block)
+# Munchi's engine is up there too since it moved out of the cave: the same rule, the same once
+if "munchi_block" in funcs_all:
+    e2.uc.mem_write(ARR, struct.pack("<HHI", 0x197, 0, 1))             # Type Munchi
+    e2.uc.mem_write(APPFX + 10, struct.pack("<H", 1))
+    e2.w32(0x38800B14, (0x4D32 << 16) | 1)                             # ... and Munchi ran last, with bank 2 still good
+    entered = []
+    for f in ("munchi_ready", "munchi_block"):
+        e2.uc.hook_add(UC_HOOK_CODE, lambda *_, f=f: entered.append(f), begin=e2.sym[f] & ~1, end=e2.sym[f] & ~1)
+    per_block = []
+    for _ in range(5):
+        events.clear()
+        e2.call("munchi_process", OBJ, BUFS, count=200_000_000)
+        per_block.append((events.count("clear"), events.count("stock")))
+    check(f"bank 2 off + Munchi selected: the lines are cleared ONCE, the stock delay every block {per_block}",
+          per_block == [(3, 1)] + [(0, 1)] * 4, per_block)
+    check("...and nothing of Munchi's engine is entered", not entered, entered[:4])
 
 # --- 5. THE FLASH HAS TO READ CLEANLY TOO (3.2.t). The payload on the test unit was byte-perfect and still misread one
 # word read in 700: the chip corrects a single flipped bit silently and bus-faults on two. b2_paired now clears the
