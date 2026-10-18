@@ -32,6 +32,19 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-029 (2026-10-18) — Munchi's engine in bank 2 on our line (37.4.0): bank-1 room for the Looper and MIDI; the
+  upstream PR `feat/munchi-bank2` pending Justin** (Thomas: "merge `feat/munchi-bank2` into our line for 37.4"; hub
+  #t-014). Bank 1 was the hard budget: 37.3.3 left 656 B free in the release build and 16 in the dev build, while the
+  Looper needs 673 B (`notes/pr-map.md` Risks) and the MIDI plan more. `feat/munchi-bank2` (`c3ccbb5`, one commit on
+  upstream `main` `66329ad`) moves Munchi's engine to bank 2 (`src/munchi_dsp.cpp`, a leaf with no undefined symbol)
+  and leaves every hook and stock call in bank 1 (`src/munchi.cpp`, 10 371 → 3 939 B), with the output bit for bit
+  rc4's (a fingerprint in `test_munchi.py`; `test_bank2.py` extended; `MUNCHI_OFF` fixed on the way). Merged into
+  `rc4-sync` by D-019 as if accepted: the branch's code as it is; the two conflicts were README's "The second file"
+  (its Munchi wording joined to our Clip-pad wording) and `build.sh`'s id comment (its `B2_SRC` code, both comments).
+  Bank 1 back: the dev build's `.cave` 6 454 B free (16 before), the release build's 7 094 (656 before). Consequences: Munchi now needs
+  this build's `BBEXTRA.BIN` (without it the delay Type reads `---` and the slot plays the stock delay, as Confetti
+  does), and every unit rewrites bank 2 once. It is upstream PR material (`notes/upstream-first-contact.md` item 6,
+  Justin's trade-off to judge); if he takes it, D-019 (4) applies, and if he declines it stays a fork-only layer.
 - **D-028 (2026-10-17) — F-a: a step 0 that starts inside the audio gets stock's fade-in, automatically** (Thomas:
   "an automatic crossfade"; hub #t-023, 37.3.3). Root cause, on the unit: Attack 0 (`pad + 0xBA1` = 1, stock's
   default, both pads) makes stock start every step 0 and every launch hard; slipped, on a region past frame 0, in
