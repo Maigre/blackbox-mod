@@ -10,6 +10,8 @@ import sys
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
+
 BASE = 0x08040000
 IMG = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin", "rb").read()
 SYM = {l.split()[2]: int(l.split()[0], 16) for l in subprocess.run(

@@ -138,7 +138,9 @@ development. That one can write anywhere in the machine, so it is not in a relea
 How it works: the stock image is left as it is. New code (`src/`) is compiled and appended after it, and a handful of
 call sites and table entries (`patches/`) are redirected to the new code.
 
-`./check.sh` builds, patches and runs every suite (`test_*.py`) under Unicorn (`pip install unicorn capstone numpy`).
+`./check.sh` builds, patches and runs every suite (`tests/test_*.py`) under Unicorn
+(`pip install unicorn capstone numpy`). After a build, one suite runs on its own, from any directory:
+`python3 tests/test_solo.py`.
 Several of them hold the firmware's DSP against a build of the same C for the computer (`host/build.sh`, written
 for macOS). They test the new functions, not a full boot. The first power-on of any build is the real test.
 

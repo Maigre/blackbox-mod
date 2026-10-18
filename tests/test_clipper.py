@@ -13,6 +13,7 @@ import sys
 import numpy as np
 from unicorn.arm_const import UC_ARM_REG_SP
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
 sys.path.insert(0, "host")
 import render_clip as host
 from emu import Emu

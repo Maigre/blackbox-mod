@@ -15,6 +15,7 @@ import sys
 from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
 from emu import BASE, DEPLOYED_BANK2, Emu
 
 IMAGE = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin"

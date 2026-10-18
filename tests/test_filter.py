@@ -12,6 +12,7 @@ import sys
 
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R4, UC_ARM_REG_R6, UC_ARM_REG_S0, UC_ARM_REG_S1, UC_ARM_REG_SP
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
 from emu import STACK, Emu
 
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin", "out/cave.elf")

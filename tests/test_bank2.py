@@ -22,6 +22,7 @@ import sys
 from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
 from unicorn import UC_HOOK_CODE
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
 from emu import DEPLOYED_BANK2, Emu
 
 IMAGE = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin"

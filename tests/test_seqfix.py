@@ -8,6 +8,7 @@ NOT checked: the engine's real time units and loop start on hardware, and that t
 import struct
 import sys
 
+import _root  # the repo root as the cwd and on sys.path (tests/_root.py)
 from emu import Emu
 
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin", "out/cave.elf")
