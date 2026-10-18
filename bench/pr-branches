@@ -1,0 +1,7 @@
+# The open PR branches bench/sync-upstream.sh keeps up to date with JOEBOX (one per line; see notes/pr-map.md)
+fix/b2load-readonly
+fix/preview-cell
+fix/usbdev-debug
+fix/waveform-labels
+feat/linux-dev
+feat/munchi-bank2

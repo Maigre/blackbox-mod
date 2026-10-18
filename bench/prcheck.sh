@@ -1,5 +1,5 @@
 #!/bin/bash
-# prcheck.sh - fork-only (never in a PR, never committed): build and check PR-shaped branches of blackbox-mod, each in
+# prcheck.sh - fork-only (bench/, never in a PR): build and check PR-shaped branches of blackbox-mod, each in
 # a throwaway worktree against the stock 3.1.9 image, and report per branch: the suites passed / failed, .cave used /
 # free (dev and RELEASE=1), and the dev and release images' sha256 (BLACKBOX.bin and BBEXTRA.BIN).
 #

@@ -40,18 +40,24 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 ## Upstream pull requests (one feature each, from upstream `main`)
 
 The branch model is D-019: `main` mirrors upstream; each feature's PR branch below is that feature's source of truth;
-`maigre` is upstream + every feature as if accepted + the fork's own layer (`notes/`, `bench/`, this file, the 37.x
-names), moved only by merges. When a PR is accepted, upstream's `main` is merged in and wins every conflict
+`maigre` (the fork's default branch on GitHub since 18/10) is upstream + every feature as if accepted + the fork's
+own layer (`notes/`, `bench/`, `README.md`, this file, the 37.x names), moved only by merges. When a PR is accepted, upstream's `main` is merged in and wins every conflict
 (`notes/dev-setup.md`).
 
 | branch | what | state |
 |---|---|---|
-| `fix/restart-loop-ldrex` | the restart-loop fix + a no-exclusives check in test_cpu.py | superseded by JOEBOX 1 rc4 (`19d29f1`: his own fix, `b2_step` under PRIMASK; D-027); j3threejay/blackbox-mod#2 to be closed by Thomas |
-| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment; `check.sh` exit status | ready (PR text prepared, Thomas opens it) |
-| `feat/slip` | Slip on Clip pads (src/clipwin.c, test_clipwin.py) + the stale-latch fix: 2 commits | ready (PR text prepared, Thomas opens it) |
-| `fix/preview-cell` | JOEBOX's insert and LFO retrigger took the browser's pre-listen voice (cell 0x401) for pad 2 | ready (Thomas opens it) |
-| `fix/b2load-readonly` | `B2LOAD_WRITE=0` (the read-only card loader) compiles again: its tries counter and restart under the writer's `#if`; the default build byte for byte the same (D-027) | candidate: not cut yet (the fix is `b40d531` on `rc4-sync`) |
-| `feat/munchi-bank2` | Munchi's engine (src/munchi_dsp.cpp) in bank 2, its hooks and stock calls in bank 1: 6.4 KB of the cave back, the output bit for bit, a fingerprint in test_munchi.py; MUNCHI_OFF fixed | ready (`c3ccbb5` on origin; merged into `rc4-sync` for 37.4.0, D-029; Thomas opens it) |
+| `fix/restart-loop-ldrex` | the restart-loop fix + a no-exclusives check in test_cpu.py | **closed** 17/10: superseded by JOEBOX 1 rc4's own fix (`19d29f1`, `b2_step` under PRIMASK; D-027), with a note handing over the MPU observation (j3threejay/blackbox-mod#2) |
+| `fix/b2load-readonly` | `B2LOAD_WRITE=0` (the read-only card loader) compiles again; the default build byte for byte the same | on origin (`d046828`); offered in the first-contact issue (18/10) |
+| `fix/preview-cell` | the browser's pre-listen voice (cell 0x401) is no pad: pad 2's input, insert and LFO retrigger stay off it | on origin (`f3e6f91`, rc4 merged in); offered 18/10 |
+| `fix/usbdev-debug` | dev builds: DEBUG peek / poke bounded to whole regions; EP0 IN flushed at every SETUP; the release image unchanged | on origin (`9692f7f`); offered 18/10 |
+| `fix/waveform-labels` | the Waveform screen's corner labels white with a 1 px black edge, every pad mode; its own module, riding on the `slice` set | on origin (`eefe93b`); offered 18/10 |
+| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment | on origin (`fff2d37`, rc4 merged in); offered 18/10 |
+| `feat/munchi-bank2` | Munchi's engine in bank 2, its hooks and stock calls in bank 1: 6.4 KB of the cave back, the output bit for bit; MUNCHI_OFF fixed | on origin (`c3ccbb5`); offered 18/10; merged here for 37.4.0 (D-029) |
+| `feat/repo-layout` | the suites in `tests/`, the RE helpers in `tools/`; images byte-identical | local (`452f4f8`): offered to Justin first, adopted here only if he takes it |
+| `feat/clip-*` | the Clip Window as five layers (slip, region, looplen, fit, loopfade) | to cut after Justin's answer on one PR or a stack (notes/pr-map.md); `feat/slip` (37.1 layout) is superseded by it |
+
+First contact: an issue on j3threejay/blackbox-mod (18/10), text in `notes/upstream-first-contact.md`. JOEBOX's updates
+reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when his `main` moves).
 
 ## Build, install, bench
 
