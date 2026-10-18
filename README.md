@@ -144,7 +144,8 @@ call sites and table entries (`patches/`) are redirected to the new code.
 Several of them hold the firmware's DSP against a build of the same C for the computer (`host/build.sh`, written
 for macOS). They test the new functions, not a full boot. The first power-on of any build is the real test.
 
-`ghidra/`, `disasm.py`, `findbl.py`, `findref.py` are the helpers used to find things in your own copy of the image.
+`ghidra/` and `tools/` (`disasm.py`, `findbl.py`, `findref.py`) are the helpers used to find things in your own copy
+of the image.
 
 ## What is and isn't in this repository
 

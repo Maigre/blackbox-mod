@@ -1,7 +1,7 @@
 """findref.py <pool_addr> ...  — Thumb `ldr rX,[pc,#imm]` instructions that load the given literal-pool word."""
 import sys
 BASE = 0x08040000
-fw = open(__file__.rsplit("/", 1)[0] + "/firmware/BLACKBOX-3.1.9.bin", "rb").read()
+fw = open(__file__.rsplit("/", 1)[0] + "/../firmware/BLACKBOX-3.1.9.bin", "rb").read()
 for t in sys.argv[1:]:
     t = int(t, 16)
     for a in range(max(BASE, t - 4096), t, 2):

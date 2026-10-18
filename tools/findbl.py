@@ -2,7 +2,7 @@
 import sys
 
 BASE = 0x08040000
-fw = open(__file__.rsplit("/", 1)[0] + "/firmware/BLACKBOX-3.1.9.bin", "rb").read()
+fw = open(__file__.rsplit("/", 1)[0] + "/../firmware/BLACKBOX-3.1.9.bin", "rb").read()
 
 
 def decode_bl(addr):
