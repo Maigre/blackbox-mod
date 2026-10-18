@@ -1,6 +1,9 @@
 #!/bin/sh
 # Build the cave, patch the image with every set, run every test suite; prints only failures and the image's sha.
 cd "$(dirname "$0")"
+for t in test_*.py; do                   # a suite left at the root would never run: the loop below reads tests/ only
+  [ -e "$t" ] && { echo "$t is at the repo root: git mv it into tests/ (and add 'import _root' above its emu import)"; exit 1; }
+done
 ./build.sh || exit 1
 python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi master fault cave | tail -1
 PY=.venv/bin/python
