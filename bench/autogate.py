@@ -128,9 +128,11 @@ def periodic(path, lag, n=200000):
     return float(np.abs(x[c:c + n] - x[c + lag:c + lag + n]).max())
 
 
-def recurring_steps(path, period, top=3):
+def recurring_steps(path, period, top=3, skip=0):
+    """the largest steps found at the same place in every period after the first `skip` (the minimum over periods:
+    one period without the step, such as a first bar still playing the previous setting, hides it)"""
     s, c = wav(path); d = np.abs(np.diff(s[:, 0])); n = (len(d) - c) // period
-    rows = np.stack([d[c + k * period:c + (k + 1) * period] for k in range(n)])
+    rows = np.stack([d[c + k * period:c + (k + 1) * period] for k in range(skip, n)])
     rec = rows.min(axis=0); idx = np.argsort(rec)[-top:][::-1]
     return [(int(i), float(rec[i])) for i in idx], float(np.median(d))
 
@@ -212,7 +214,8 @@ def c_fit(o):
 def c_fade(o):
     setrow(B, "fit", "Off"); setrow(B, "fade", 0); time.sleep(4.5); record(f"{o}/fade0.wav", 12)
     setrow(B, "fade", 50); time.sleep(4.5); record(f"{o}/fade5.wav", 12)
-    s0, m0 = recurring_steps(f"{o}/fade0.wav", BAR); s5, m5 = recurring_steps(f"{o}/fade5.wav", BAR)
+    # skip=1: Fit 6 beats -> Off can land after the 4.5 s wait (run-8: the first bar had no seam, and hid it)
+    s0, m0 = recurring_steps(f"{o}/fade0.wav", BAR, skip=1); s5, m5 = recurring_steps(f"{o}/fade5.wav", BAR, skip=1)
     setrow(B, "fade", 0)
     return f"recurring steps 0 %: {s0} (median {m0:.4f}); 5 %: {s5} (median {m5:.4f}) — the seam's should be gone"
 
