@@ -715,8 +715,18 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
   here: before the fix the pad kept mapping its latches over the old length until its next segment, silent past a
   shorter file's end or with the old shift (`37loop/blackbox-t-004` `9ac8c24`, ported into each P3 step). The
   streaming misses and stock's own gaps after a file change are stock's and stay.
+- **Slip is ignored on a fitted pad** (Gate 3b part 2, F-l, 2026-10-19, 37.4.0d): with Fit on, a Clip pad plays
+  as at Slip 0 whatever its Slip; Fit Off, the same pad and file slip as set (Thomas, by ear; pad 1's file on pad 15).
+  Measured: pad 1 at Fit on, Sync 1/16, Slip 0 and −0.645 give bit-identical audio, while its latch holds the right
+  shift (320 216 = 336 359 − 16 143; valid on all four slots) — so the read does not take the latch. B (Fit Off)
+  slips at Sync 1/4 and 1/16 to within 15 samples. Slip under Fit Auto was exact on 37.3.0d (3b-19: 16 126), so it
+  broke in 37.3.1 .. 37.3.3 (H5's hook, the dev mailbox, the rc4 merge, F-a's fix); `test_clipwin.py` 12d passes the
+  same case under emulation, so the unit takes a path the suite does not model. Next: bisect on the unit.
 - **The click on pad 1 at Slip −0.645** (F-a, Gate 3b 3b-19, `slip_fit.wav` against `poly_fit.wav`): **fixed in
-  37.3.3.** It is not the fold (the take's ends meet; the fold, 16 126 samples into each pass, is clean) but the
+  37.3.3 under emulation; NOT proven on the unit.** The unit runs that took it as fixed (37.3.3d run-7, 37.4.0d
+  run-8: the largest recurring step 0.0217, the Slip-0 baseline 0.022) measured pad 1 at Fit Auto, where Slip does
+  nothing (F-l above): a pad that was not slipping. By ear, B slipped alone (Fit Off) has no audible click (Thomas,
+  19/10), the fix's non-fitted case. Re-measure on pad 1 once F-l is fixed. It is not the fold (the take's ends meet; the fold, 16 126 samples into each pass, is clean) but the
   slipped pass's wrap (step 55 → step 0, on the beat), where for about 180 samples the output was the content twice
   over (0.193 where the delayed unslipped take has 0.099). Traced on the unit (37.3.2d, `auto/run-1/fa_slots.csv`):
   every ordinary step's segment starts with fade-in 256 / countdown 5 744, each pass's step 0 with 0 / 6 000, because
