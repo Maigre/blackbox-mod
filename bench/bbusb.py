@@ -136,11 +136,12 @@ GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
 def cw_bank():
-    """the Clip Window bank in SDRAM (src/clipwin.h): master.c's block (its pointer in backup SRAM) + 0x83900"""
+    """the Clip Window bank in SDRAM (src/clipwin.h): master.c's block (its pointer in backup SRAM) + 0xB100, or
+    + 0x83900 on a build from before the core-first block (37.4.0 and older, Prism's part first): the bank's magic says"""
     mem = word(0x38800F70)
     if not 0xC0000000 <= mem < 0xC4000000:
-        sys.exit(f"no SDRAM block (Prism pointer {mem:#x})")
-    return mem + 0x83900
+        sys.exit(f"no SDRAM block (block pointer {mem:#x})")
+    return mem + (0x83900 if word(mem + 0xB100) != CW_MAGIC and word(mem + 0x83900) == CW_MAGIC else 0xB100)
 
 
 # The parameter mailbox (src/usbdev.c, DEV builds): cw_bank + 0xF00. magic, seq, op/row/col, id, value; the unit writes

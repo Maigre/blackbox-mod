@@ -32,7 +32,7 @@
  *         frames, dst, 4) twice (bl @0x0804cf62 / @0x0804cf7c; three 20-bit samples per pair of 32-bit words, so the
  *         converters get 20 bits and USB gets 24), then FUN_0805feb4 twice (bl @0x0804cf8e / @0x0804cfa0). usbaud_tap
  *         and usbaud_tap1 wrap them and copy three of the four buses, after the Out volumes, into a ring of 1024
- *         frames in SDRAM (behind Prism's block).
+ *         frames in SDRAM (master.c's block, behind the LFOs').
  *   send: one packet per 1 ms USB frame, loaded by the controller's own interrupt (vector 77, usbaud_isr), which is
  *         the only interrupt this file uses and touches only endpoint 2. 48 frames a packet, 47 or 49 when the ring
  *         runs low or high, silence until the ring has ~4.7 ms in it.
@@ -147,7 +147,7 @@ uint8_t *master_block(void);     /* master.c: the SDRAM block taken at boot, or 
 #define CHANNELS   6
 #define RING       1024u         /* frames */
 #define RING_BYTES (RING * CHANNELS * 4u)
-#define RING_OFFSET (0x56800u + 0x1000u)     /* behind Prism's block and the LFOs' (master.c) */
+#define RING_OFFSET 0x1000u        /* in master.c's block, behind the LFOs' */
 #define PRIME      224u          /* frames in the ring before the first real packet */
 #define LOW        96u
 #define HIGH       352u

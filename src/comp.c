@@ -60,7 +60,7 @@ typedef void (*store_add_fn)(void *store, int param, int value);
 #define PARAM_CLIP     0x1b2     /* how hard the mix is pushed into the clipper */
 #define PARAM_SHAPE    0x1b3     /* soft .. hard */
 #define PARAM_CLIPPER  0x1b4     /* Off, Clean, Diode */
-#define CLIP_OFFSET    (0x56800u + 0x2d000u)                 /* in master.c's block, behind insert.c's bank */
+#define CLIP_OFFSET    0xb000u                               /* in master.c's block, behind filter.c's S950 bank */
 uint8_t *master_block(void);
 
 void bkp_enable(void);
