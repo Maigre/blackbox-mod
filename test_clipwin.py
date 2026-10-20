@@ -4458,6 +4458,84 @@ check(f"  (h) the waveform's tick following the playhead at 300 000: the view go
       f"the view's own 192 000 it stops at {follows_to(l0, 300000)} (37.2.x, stock: the freeze at 57 %)",
       follows_to(lv, 300000) == 300000 and follows_to(l0, 300000) == 192000)
 
+# ---- Thomas at Gate 3b-18: a TL or TR turn takes the view to the edge it moves (it was following the playhead, which
+# ran the edge being set off the screen), and the view follows the playhead again after a pause. That is stock's own
+# tap on the overview strip (the view handler's FUN_080c6e68 at 0x080a6cc0): the frame at the view's anchor (+ 0x244,
+# drawn at the pixel + 0x240), the waveform's follow mode + 0x1e0 = 2 and its count + 0x180 = 300. Its tick FUN_080c6c34
+# (real) counts down and holds the view, then (mode 1) follows the playhead again; each turn sets the count again.
+def tick(scr, at, n=1):
+    """n of the waveform's ticks with the pad playing at frame `at` (its per mille <= 1000): the view's anchor frame"""
+    m = scr.m
+    m.stub(0x0809A96C, lambda: m.w32(m.arg(0) + 8, 500))
+    m.stub(0x0809A810, lambda: (m.uc.reg_write(UC_ARM_REG_R1, 0), m.ret(at)))
+    m.stub(0x080C6A78)
+    for _ in range(n):
+        m.call(0x080C6C34, WV, 0x2407D000)
+    return m.r32(WV + 0x244)
+
+
+def follow(scr):
+    """(the view's anchor frame, its follow mode, its count)"""
+    return scr.m.r32(WV + 0x244), scr.m.r8(WV + 0x1E0), scr.m.r32(WV + 0x180)
+
+
+jv = Screen()
+jv.open({**CLIP12, P_REGION: LOOP})
+opened = follow(jv)
+jv.m.uc.mem_write(WV + 0x1E0, b"\x01")
+at0 = tick(jv, 150000)
+_, f_tl = jv.turn(0, -400, t=50_000)
+ls_ = jv.vals[0x91]
+got_tl = follow(jv)
+check(f"a TL turn (Loop Start to {ls_}) while the view follows the playhead at {at0}: the view goes to Loop Start and "
+      f"holds, stock's overview tap ({got_tl}: anchor, mode 2, 300 ticks); not on the setup ({opened})",
+      at0 == 150000 and f_tl and f_tl[0][1] == 0x91 and ls_ < 24000 and got_tl == (ls_, 2, 300) and opened[1] != 2,
+      (at0, f_tl, got_tl, opened))
+held = tick(jv, 151000, 299)
+back = tick(jv, 152000)
+check(f"  the view stays on Loop Start for 299 ticks of the playing pad ({held}), then follows the playhead again "
+      f"({back}, mode {jv.m.r8(WV + 0x1E0)})", held == ls_ and back == 152000 and jv.m.r8(WV + 0x1E0) == 1,
+      (held, back, follow(jv)))
+_, f_tr = jv.turn(2, 400, t=60_000)
+le_ = jv.vals[0x92]
+got_tr = follow(jv)
+tick(jv, 153000, 150)
+_, f_tr2 = jv.turn(2, 400, t=60_500)
+le2 = jv.vals[0x92]
+mid = tick(jv, 154000, 299)
+check(f"  a TR turn: the view to Loop End ({got_tr}, Loop End {le_}); a second turn 150 ticks later starts the count "
+      f"again: still on its Loop End {le2} 299 ticks after it ({mid}), then the playhead ({tick(jv, 155000)})",
+      f_tr and f_tr[0][1] == 0x92 and le_ > 72000 and got_tr == (le_, 2, 300) and f_tr2 and le2 > le_ and mid == le2
+      and jv.m.r32(WV + 0x244) == 155000, (got_tr, le_, le2, mid, follow(jv)))
+# what does not move the view: Slip and Loop Len, both ends at once (not a knob: a preset, a load), a bracket that
+# appears or goes (a Region change), a zoom, a bracket Region does not play (no bracket: Region File), no bank 2
+nm, ok_ = [], True
+jv.m.uc.mem_write(WV + 0x1E0, b"\x01")
+for name, act in [("Slip turned (BL)", lambda: jv.turn(1, 400, t=70_000)), ("Loop Len turned (BR)", lambda: jv.turn(3, 400, t=80_000)),
+                  ("both ends stored at once", lambda: jv.stored(_91=12000, _92=96000)),
+                  ("Region File (the bracket goes)", lambda: jv.stored(_1c8=FILE)),
+                  ("Loop Start stored under Region File", lambda: jv.stored(_91=6000)),
+                  ("Region Loop again (the bracket comes back)", lambda: jv.stored(_1c8=LOOP)),
+                  ("a zoom (msg 0xe5)", lambda: jv.msg(0x080A66DC, 0xE5))]:
+    jv.m.w32(WV + 0x244, 160000)
+    act()
+    nm.append((name, follow(jv)))
+    ok_ &= follow(jv)[:2] == (160000, 1)
+fv = Screen()
+fv.open({**CLIP12, P_REGION: FILE})
+fv.m.uc.mem_write(WV + 0x1E0, b"\x01")
+fv.m.w32(WV + 0x244, 160000)
+fv.turn(0, -400, t=50_000)
+nb2 = Screen(bank2=False)
+nb2.open({**CLIP12, P_REGION: LOOP})
+nb2.m.uc.mem_write(WV + 0x1E0, b"\x01")
+nb2.m.w32(WV + 0x244, 160000)
+nb2.turn(0, -400, t=50_000)
+check(f"  the view stays with the playhead on {[n for n, _ in nm]} ({set(f for _, f in nm)}); on a TL turn under "
+      f"Region File, no bracket ({follow(fv)}); and without bank 2, as stock ({follow(nb2)}, entered {nb2.b2_entered[:2]})",
+      ok_ and follow(fv)[:2] == (160000, 1) and follow(nb2)[:2] == (160000, 1) and fv.vals[0x91] < 24000
+      and nb2.vals[0x91] < 24000, (nm, follow(fv), follow(nb2)))
+
 # ---- the zoom: msg 0xe5 (no refresh follows it) re-steps the pair, keeping range and value, as Sample mode's
 for s_ in (sc, sm):
     s_.m.uc.mem_write(VIEW + 0x1A0, struct.pack("<f", 16.0))

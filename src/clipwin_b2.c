@@ -741,16 +741,21 @@ void cw_text(char *t, int v)
 /* clip_view (clipwin.c): the white bracket, which shows the loop when Region plays it (is_loop over the view's store:
    mode, [ls, le), the file's len frames), written here, never with FUN_080c6edc, which hides the slice markers
    (+0x238). was = the bracket as last drawn: the stock refresh clears it without marking the widget dirty, and so
-   would leave a bracket that is gone on the screen. */
-void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was)
+   would leave a bracket that is gone on the screen. Returns the one edge that moved on a bracket shown before and
+   after (a TL or TR turn: each moves one), for the view to go there; else -1 (a bracket that appears, goes, or moves
+   at both ends: a load, a Region change). */
+int32_t cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was)
 {
     int show = is_loop(mode, ls, le, len);
-    int32_t *lp = (int32_t *)(wave + WAVE_LOOP);
+    int32_t *lp = (int32_t *)(wave + WAVE_LOOP), edge = -1;
     if (show != was || (show && (lp[0] != ls || lp[1] != le)))
         wave[WAVE_DIRTY] = 1;
+    if (show && was && (lp[0] != ls) != (lp[1] != le))
+        edge = lp[0] != ls ? ls : le;
     if (show) {
         lp[0] = ls;
         lp[1] = le;
     }
     wave[WAVE_LOOP_ON] = (uint8_t)show;
+    return edge;
 }

@@ -37,7 +37,8 @@ JOEBOX):
 - **Loop Fade** on a region — the loop point crossfades as in Sample mode, so a loop whose ends do not meet does not
   click.
 - **The Waveform screen in Clip mode**: the four knobs are Loop Start, Loop End, Slip and Loop Len; the loop bracket
-  shows; the playhead line shows the frame you hear.
+  shows; the playhead line shows the frame you hear. Turning Loop Start or Loop End takes the view to that edge, and
+  it follows the playhead again after a pause.
 
 Everywhere:
 
