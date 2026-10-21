@@ -3787,9 +3787,10 @@ check(f"live, Fit 1 bar -> 2 bars at sample 418 000: at Quant 4 bars (launched o
       q4[0][:5] == [384000, 480000, 576000, 768000, 960000] and q4[1] <= 1 + 1e-6 and q4[2] == 0 and not q4[3]
       and q1[0][:4] == [288000, 384000, 480000, 672000] and q1[1] <= 1 + 1e-6 and not q1[3], res)
 
-# the wrap-grid hold and a polymetric clip: a fitted 14-beat region (grid gcd(1 bar, 14 beats) = half a bar: its passes
-# start on the bar and on the half bar in turn) made 16 beats (grid 1 bar) while it plays waits for a pass that starts on
-# the bar, one pass at most; made 13 beats (grid a beat) it is taken at the next wrap, wherever it falls
+# the wrap-grid hold and a polymetric clip: a 14-beat region at Fit Auto (Beats) (grid gcd(1 bar, 14 beats) = half a
+# bar: its passes start on the bar and on the half bar in turn) made 16 beats (grid 1 bar) while it plays waits for a
+# pass that starts on the bar, one pass at most; made 13 beats (grid a beat) it is taken at the next wrap, wherever it
+# falls. (Auto (Bars) makes the same region 4 bars, every pass on the bar: nothing to wait for.)
 def loop_end(at, le):
     def pre(r):
         if r.S >= at and not getattr(r, "le_done", False):
@@ -3800,8 +3801,8 @@ def loop_end(at, le):
 
 res = {}
 for beats_, at in ((16, 300000), (16, 700000), (13, 300000)):
-    d = fit_audio(1, beats=0, blocks=int((1360000 - 287000) / N), cell=0x102, vals={P_SYNC: 3}, frames=400000, region=LOOP,
-                  points=(6144, 6144 + 336000, 1), pre=loop_end(at, 6144 + beats_ * 24000))
+    d = fit_audio(AUTO_BEATS, beats=0, blocks=int((1360000 - 287000) / N), cell=0x102, vals={P_SYNC: 3}, frames=400000,
+                  region=LOOP, points=(6144, 6144 + 336000, 1), pre=loop_end(at, 6144 + beats_ * 24000))
     g = d["gain"][:len(d["gain"]) - N]
     res[(beats_, at)] = (pass_starts(d["rig"]), float(g.max()), int((np.abs(g[288300 - d["base"]:]) < 1e-7).sum()),
                          seamless(d, beats_ * 24000, since=pass_starts(d["rig"])[-2] + 300)[2])
