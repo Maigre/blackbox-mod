@@ -21,7 +21,7 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 
 `37.<feature step>.<build>` on the Tools page; dev builds carry a `d` (`37.1.1d`) and add the USB debug peek/poke
 (src/usbdev.c), never in a release. `src/release.h` holds both names. Release notes, with each release's sha256:
-[`notes/releases/`](notes/releases/37.4.0.md).
+[`notes/releases/`](notes/releases/37.4.1.md).
 
 | version | adds | where |
 |---|---|---|
@@ -35,6 +35,7 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 | 37.3.2 | 37.3.1 on **JOEBOX 1 rc4** (upstream `19d29f1`, D-027): the restart-loop fix is upstream's own `b2_step` now (our PR #2 superseded); USB with the compressor on Limit (usbdev's state off the Limit lookahead); the insert models' new names (Pebble, Electra, Jet). Bank 2 unchanged: 37.3.1's `BBEXTRA.BIN` pairs with it. The dev build (37.3.2d) fits: its dev-only code made smaller, same behaviour, the release build unchanged (D-027) | branch `rc4-sync` (local), `halo` + upstream `main` |
 | 37.3.3 | Gate 3b F-a: **a step 0 inside the audio fades in** (at Attack 0, stock's default, stock starts each pass's step 0 and each launch hard; slipped, on a Region past frame 0, in Loop Len's window or on a seamless wrap that clicked or doubled: it now gets stock's 256-sample fade-in at its first read, its timing unchanged; D-028). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.2 |
 | 37.4.0 | 37.3.3 + **Munchi's engine in bank 2** (`feat/munchi-bank2`, D-029): 6.4 KB of bank 1 back for the Looper and MIDI, Munchi's output bit for bit rc4's. Munchi now needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.3 |
+| 37.4.1 | after Gate 3b part 4: **a take loaded into a playing Clip pad plays its own window** (F-p: the pad's Sync sent again after the open when its step came from the closed slot); **Fit's two Autos**, Auto (Bars) and Auto (Beats) (D-031: a saved Auto loads as Auto (Bars)); **the Waveform view goes to the marker you turn**; the boot SDRAM block core first (D-030). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | `maigre` |
 | — | **Looper FX** (P4) | branch `feat/looper` (local, kept apart until Gate 3) |
 
 ## Upstream pull requests (one feature each, from upstream `main`)

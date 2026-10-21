@@ -24,7 +24,7 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
   the images' sha256 (the images are never in git): [`releases/37.2.0.md`](releases/37.2.0.md),
   [`releases/37.3.0.md`](releases/37.3.0.md), [`releases/37.3.1.md`](releases/37.3.1.md),
   [`releases/37.3.2.md`](releases/37.3.2.md), [`releases/37.3.3.md`](releases/37.3.3.md),
-  [`releases/37.4.0.md`](releases/37.4.0.md).
+  [`releases/37.4.0.md`](releases/37.4.0.md), [`releases/37.4.1.md`](releases/37.4.1.md).
 
 The hub side (tasks, bench cards, the project log) is `37Projects/projects/blackbox/`. The fork's overview is
 [`../FORK.md`](../FORK.md).
