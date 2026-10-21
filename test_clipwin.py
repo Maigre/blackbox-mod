@@ -3530,7 +3530,7 @@ cases = (("14 beats, Quant 1 bar, Sync 1/16", dict(sync=240), (1920, 240, 56)),
          ("14 beats, Quant None (synced 0)", dict(quant=0, synced=0), (0, 13440, 1)),
          ("14 beats, Sync None (synced 0)", dict(sync=0, synced=0), (1920, 13440, 1)),
          ("14 beats, Sync Slice without markers", dict(sync=0xF0000), (1920, 13440, 1)))
-rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 7, **kw)[1:4], want)
+rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 8, **kw)[1:4], want)
         for w, kw, want in cases]
 check(f"the polymetric grid and steps: wrap grid gcd(Quant, clip), steps one when Sync is the clip or longer, else "
       f"gcd(Sync, clip): {[(w, g_) for w, g_, _ in rows]}", all(g_ == w_ for _, g_, w_ in rows),
