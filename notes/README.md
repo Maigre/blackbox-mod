@@ -14,6 +14,8 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
 
 - [`plan.md`](plan.md) — the plan: the two deliverables, the design, the RE plan, the phases, the PR strategy.
 - [`decisions.md`](decisions.md) — dated decisions (D-001 …) with their reasons; newest first.
+- [`clip-window-audit.md`](clip-window-audit.md) — the Clip Window audited after P3 (21/10): the core kept, the
+  policy layer consolidated in three stages; a proposal for Thomas's review.
 - [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root.
 - [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X3) and the hand-off index (`re/README.md`).
 - `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it:
