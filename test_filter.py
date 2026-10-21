@@ -427,7 +427,7 @@ def q12(x):
 e.uc.mem_map(0x38800000, 0x1000)                 # backup SRAM: master.c keeps the SDRAM block's address there
 e.uc.mem_map(0x58024000, 0x1000)
 e.uc.mem_map(0xC0000000, 0x90000)
-SDRAM, BANK = 0xC0000000, 0xC0000000 + 0x56800 + 0x7000
+SDRAM, BANK = 0xC0000000, 0xC0000000 + 0x7000   # in master.c's core, behind the LFOs and the USB ring
 
 
 def sdram(on=True):

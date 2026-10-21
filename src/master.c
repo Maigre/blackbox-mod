@@ -13,6 +13,8 @@
  * its Tools row. Nothing on a page changes what another knob is.
  * The header of these pages is the global cell's name: master_title supplies it (cpu.c's cpu_name asks).
  * Prism's memory (PRISM_BYTES of SDRAM) comes from the firmware's own permanent allocator, once, at boot: master_alloc.
+ * It is the block's tail, with insert.c's bank, and is only taken when bank 2 holds this image's payload (b2_present):
+ * a unit without one runs neither, so it keeps their 0x78800 bytes for presets. The always-on parts come first.
  *
  * VHS (clean-room, after the Chase Bliss Generation Loss manual: a worn tape / VHS machine):
  *   Saturate -> short modulated delay (Wow slow + deep, Flutter fast + shallow) -> Dropout (random level dropouts, one
@@ -113,12 +115,15 @@ void prism_block(uint8_t *mem, const struct prism_params *p, float bpm, float *l
 int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, the matching payload */
 #define PRISM_BYTES 0x56800u
 #define PRISM_MAGIC 0x50525331u
-/* where Prism's memory is, and a check word (backup SRAM survives a reset; the block is re-allocated every boot) */
+/* where the block is, and a check word (backup SRAM survives a reset; the block is re-allocated every boot) */
 #define PRISM_MEM   (*(volatile uint32_t *)0x38800f70u)
 #define PRISM_CHECK (*(volatile uint32_t *)0x38800f74u)
-#define PRISM_KEY   0x5052534du
-#define EXTRA_BYTES 0x2e100u      /* behind Prism's: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.c's S950 bank (0x4000), insert.c's bank (0x22000), comp.c's clipper (0x100), clipwin.c's bank (0x1000 since Fit) */
-_Static_assert(0x2d100u + 0x1000u <= EXTRA_BYTES, "clipwin.c's bank (0x1000 at PRISM_BYTES + 0x2d100) fits the block");
+#define PRISM_KEY   0x5052534du   /* the check word's key: the block has its tail */
+#define CORE_KEY    0x434f5245u   /* "CORE": the block is the core alone (no payload in bank 2 at boot) */
+#define CORE_BYTES  0xc100u       /* first, on every unit: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.c's S950 bank (0x4000), comp.c's clipper (0x100), clipwin.c's bank (0x1000 since Fit) */
+#define TAIL_BYTES  (PRISM_BYTES + 0x22000u)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000) */
+_Static_assert(0xb100u + 0x1000u <= CORE_BYTES, "clipwin.c's bank (0x1000 at 0xb100) fits the core");
+_Static_assert(CORE_BYTES + TAIL_BYTES == 0x84900u, "the reorder moves parts, it does not grow the block (x2: a boot-time SDRAM overflow hangs the unit)");
 
 /* which master page the knob screen shows, and whether it is showing one (backup SRAM, next to munchi's words) */
 struct master_ui {
@@ -500,7 +505,9 @@ typedef uint32_t (*perm_alloc_fn)(uint32_t bytes, int one);
 
 /*
  * Replaces the last of the delay constructor's three line allocations (bl FUN_0806aa80 @0x0805462a): runs once per
- * boot, at the point where stock itself takes permanent SDRAM. Takes Prism's block after it.
+ * boot, at the point where stock itself takes permanent SDRAM. Takes the block after it. This is still `main`, before
+ * the scheduler, so b2_present has no task to race; its answer holds for the whole boot, since the card loader
+ * restarts the unit after it writes bank 2.
  */
 void master_alloc(int *line, int floats)
 {
@@ -509,28 +516,47 @@ void master_alloc(int *line, int floats)
                                                                because this is the one hook that runs once per boot,
                                                                and it runs before any audio block. */
     fw_line_alloc(line, floats);
-    uint32_t mem = fw_perm_alloc(PRISM_BYTES + EXTRA_BYTES, 1);
+    int tail = b2_present();
+    uint32_t mem = fw_perm_alloc(tail ? CORE_BYTES + TAIL_BYTES : CORE_BYTES, 1);
     bkp_enable();
     PRISM_MEM = mem;
-    PRISM_CHECK = mem ^ PRISM_KEY;
+    PRISM_CHECK = mem ^ (tail ? PRISM_KEY : CORE_KEY);
     if (mem) {
-        *(volatile uint32_t *)mem = 0;                       /* Prism and the LFOs start clean, whatever a reset left there */
-        *(volatile uint32_t *)(mem + PRISM_BYTES) = 0;
-        *(volatile uint32_t *)(mem + PRISM_BYTES + 0x7000u) = 0;
-        *(volatile uint32_t *)(mem + PRISM_BYTES + 0xb000u) = 0;    /* insert.c's bank */
-        *(volatile uint32_t *)(mem + PRISM_BYTES + 0x2d000u) = 0;   /* comp.c's clipper */
-        *(volatile uint32_t *)(mem + PRISM_BYTES + 0x2d100u) = 0;   /* clipwin.c's bank */
+        *(volatile uint32_t *)mem = 0;                       /* every part starts clean, whatever a reset left there: the LFOs */
+        *(volatile uint32_t *)(mem + 0x7000u) = 0;           /* filter.c's S950 bank */
+        *(volatile uint32_t *)(mem + 0xb000u) = 0;           /* comp.c's clipper */
+        *(volatile uint32_t *)(mem + 0xb100u) = 0;           /* clipwin.c's bank */
+        if (tail) {
+            *(volatile uint32_t *)(mem + CORE_BYTES) = 0;                   /* Prism */
+            *(volatile uint32_t *)(mem + CORE_BYTES + PRISM_BYTES) = 0;     /* insert.c's bank */
+        }
     }
 }
 
-static uint8_t *prism_mem(void)
+/* the block if the check word vouches for it with this key, else 0 */
+static uint8_t *block(uint32_t key)
 {
     uint32_t mem = PRISM_MEM;
-    return mem >= 0xc0000000u && mem < 0xc4000000u - PRISM_BYTES - EXTRA_BYTES && (mem ^ PRISM_KEY) == PRISM_CHECK ? (uint8_t *)mem : 0;
+    return mem >= 0xc0000000u && mem < 0xc4000000u - CORE_BYTES - TAIL_BYTES && (mem ^ key) == PRISM_CHECK ? (uint8_t *)mem : 0;
 }
 
-/* lfo.c: the same block (its part starts PRISM_BYTES in) */
+/* Prism's memory, at the start of the tail: 0 without one */
+static uint8_t *prism_mem(void)
+{
+    uint8_t *mem = block(PRISM_KEY);
+    return mem ? mem + CORE_BYTES : 0;
+}
+
+/* lfo.c, usbdev.c, filter.c, comp.c, clipwin.c: the block, with or without its tail */
 uint8_t *master_block(void)
+{
+    bkp_enable();
+    uint8_t *mem = block(PRISM_KEY);
+    return mem ? mem : block(CORE_KEY);
+}
+
+/* insert.c: the tail (Prism's part first), or 0 */
+uint8_t *master_tail(void)
 {
     bkp_enable();
     return prism_mem();

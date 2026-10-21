@@ -32,14 +32,25 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
-- **D-031 (2026-10-21) — Fit has two Autos: Auto (Bars), second, and Auto (Beats), last** (hub #t-027 → #t-029;
-  D-030 is #t-016's, on its branch). Thomas at Gate 3b part 4 (20/10): « fit auto doesnt make the loop metronome
+- **D-031 (2026-10-21) — Fit has two Autos: Auto (Bars), second, and Auto (Beats), last** (hub #t-027 → #t-029).
+  Thomas at Gate 3b part 4 (20/10): « fit auto doesnt make the loop metronome
   syncable », then « yes separate entry: Auto (Bars), then Auto (Beats) »; under a bar the nearest of 1/4, 1/2, 1 bar:
   « ok ». The list is `Off, Auto (Bars), 1/4 … 8 bars, Auto (Beats)` (order answered 21/10, bars-first-beats-last): a
   preset stores the list's index, so the lengths keep theirs and a saved Auto (1) loads as Auto (Bars) — pad 1's
   14.015-beat take then plays as 4 bars until set to Auto (Beats). Auto (Bars) rounds the length itself, not Auto
   (Beats)' count (5.9 beats is 6 beats but 1 bar), ties up as D-026's. Both share `abeats`/`alen`; `abars` (cw_bank
   `0x898`, appended, the magic kept: no field moves) says which Auto counted, so the other one chosen counts again.
+- **D-030 (2026-10-20) — The boot SDRAM block is core first, then a tail taken only with this image's payload in bank
+  2; D-011's companion fix, built** (Thomas, hub #t-016: "build it after 37.3.0"). `master_alloc` asks `b2_present()`:
+  still `main`, before the scheduler, so no task races it, and the card loader restarts the unit after it writes bank 2,
+  so the answer holds for the whole boot. Core, on every unit, 0xC100 B: the LFOs +0, the USB ring +0x1000, the S950
+  bank +0x7000, the clipper +0xB000, the Clip Window bank +0xB100 (its 4 KB hold the bench mailbox, so it stays in the
+  core). Tail, 0x78800 B: Prism's +0, the inserts' bank +0x56800, reached through `master_tail()`. The check word's key
+  says which block it is (`PRISM_KEY` with the tail, `CORE_KEY` without), so Prism and the inserts get no memory from a
+  core-only block even if bank 2 pairs later in that boot. The whole block stays 0x84900 B (a bigger one hangs the
+  boot, X2): a paired unit allocates what 37.4.0 did, and a unit without a usable payload keeps 493,568 B more for
+  presets. Bank 2 is byte for byte 37.4.0's (no rewrite at install); bank 1 +24 B. `bench/bbusb.py` finds the Clip
+  Window bank by its magic at either offset, so it still reads a 37.4.0 unit.
 - **D-029 (2026-10-18) — Munchi's engine in bank 2 on our line (37.4.0): bank-1 room for the Looper and MIDI; the
   upstream PR `feat/munchi-bank2` pending Justin** (Thomas: "merge `feat/munchi-bank2` into our line for 37.4"; hub
   #t-014). Bank 1 was the hard budget: 37.3.3 left 656 B free in the release build and 16 in the dev build, while the
@@ -236,6 +247,7 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   from bank 2 (~770 KB, leaf DSP), whose self-install is JOEBOX 1's restart bug → find and fix it first, offer the
   fix upstream. Small companion fix: allocate Prism's and the inserts' SDRAM (~490 KB) only when bank 2 is live.
   Fallback only if bank 2 cannot be made safe: a fork-only lean build (`MUNCHI=0` frees 6.7 KB, upstream's own switch).
+  *Built by D-030 (core first, Prism and the inserts in a tail taken only with the payload).*
 - **D-010 (2026-10-15) — Builds are not byte-identical to upstream's releases** (Arm GNU 14.2 here vs the
   maintainer's toolchain: 782,200 B vs 781,840 B for the same sources). The Unicorn suites are the proof of a build,
   not the sha; ask the maintainer which gcc he uses (first-contact item).

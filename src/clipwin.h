@@ -120,10 +120,10 @@ struct cw_bank {
                                         other Auto is chosen) */
 };
 #define CW_MAGIC  0x43574e42u        /* "CWNB": bumped with the layout (SDRAM keeps its contents through a reset) */
-#define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
-#define CW_BYTES  0x1000u            /* what master.c's EXTRA_BYTES gives the bank (0x800 before Fit) */
-_Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's EXTRA_BYTES gives the bank CW_BYTES");
-_Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d100, cleared in master_alloc");
+#define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */
+#define CW_BYTES  0x1000u            /* what master.c's CORE_BYTES gives the bank (0x800 before Fit) */
+_Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's CORE_BYTES gives the bank CW_BYTES");
+_Static_assert(CW_OFFSET == 0xb100u, "master.c: 0xb100, cleared in master_alloc");
 _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_bank, zero_dir) == 0x4bc &&
                offsetof(struct cw_bank, zero_slow) == 0x4bd &&
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&

@@ -410,7 +410,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | H4 | none: `clipwin_tick` sends `cw_looplen`'s message | — | `FUN_08067648(pad, engine, {0x39, 0, cell, 0x94, idx, 0}, engine + 0x128E0)` | Loop Len's forced Sync, as the app's message would set it (stock re-grids live) |
 | R | `master_register` (`src/master.c`) | — | `clipwin_register(table)` | `fw_register_list` Region (3 names), `fw_register_num` Slip (type 1, ±3840), `fw_register_list` Loop Len (8 of stock's own strings), `fw_register_list` Fit (10 names, stock's strings but "3 beats" and "6 beats") |
 | D | `insert_defaults` tail (`src/insert.c`) | — | `clipwin_defaults(store)` | `fw_store_add` of the four ids `0x1C8..0x1CB` at 0 (`0xFA` is stock's own); a pad store holds 86 of JOEBOX's 96 |
-| M | `master_alloc` (`src/master.c`) | — | `EXTRA_BYTES` `0x2E100` (includes `0x1000` for `cw_bank` since Fit; `0x2D900` and `0x800` before) | the bank's magic cleared at `block + 0x83900` every boot |
+| M | `master_alloc` (`src/master.c`) | — | `CORE_BYTES` `0xC100` on every unit, `cw_bank` its last `0x1000` (D-030; until then `EXTRA_BYTES` `0x2E100` behind Prism's, `0x2D900` and `0x800` before Fit) | the bank's magic cleared at `block + 0xB100` every boot |
 
 H5 (37.3.1) rewrites only the message: the render keeps stock's position for itself (`pad + 0x248`, its own test
 that the position moved).
@@ -421,8 +421,8 @@ knob, no bracket. The Waveform still binds its four rows (TL and TR are stock's 
 
 ### 3.3 State: `cw_bank`
 
-The bank lives in SDRAM at `master_block() + 0x83900` (`PRISM_BYTES 0x56800 + 0x2D100`), with `0x1000` reserved
-(`0x800` until Fit: `EXTRA_BYTES` + 0x800, the block 0x84900 B) and `0x8A8` used (`0x898` until Auto (Bars), D-031). The layout is in `src/clipwin.h`
+The bank lives in SDRAM at `master_block() + 0xB100`, the end of the block's core, which every unit takes with or
+without bank 2 (D-030; `+ 0x83900` before, behind Prism's), with `0x1000` reserved (`0x800` until Fit) and `0x8A8` used (`0x898` until Auto (Bars), D-031). The layout is in `src/clipwin.h`
 and the magic is `CWNB`. The magic history: `CWN1` was 37.1.x, `CWN2`
 the stale-latch fix (the latch's `len`), `CWN3` the Region step, `CWN4` arrived with Loop Len, and `CWN5` with the
 knob's v2 (37.2.1: the bench fields at `0x720`, `zero_hold` gone), `CWN6` with Loop Len's settle (`llv`, `llc`,
@@ -1158,7 +1158,7 @@ Fit Auto's count outlives a preset load (check 21's second half: the review's F3
   bank 2's offsets.
 - `src/clipwin_thunk.S`: the H1, H1′, H3 and H3′ thunks.
 - `src/filter_thunk.S`: `clip_read_b` → `clipwin_read`.
-- The chain lines are in `src/duck.c` (`clipwin_tick(engine)`), `src/master.c` (`clipwin_register`, `EXTRA_BYTES`,
+- The chain lines are in `src/duck.c` (`clipwin_tick(engine)`), `src/master.c` (`clipwin_register`, `CORE_BYTES`,
   the magic clear) and `src/insert.c` (`clipwin_defaults`).
 - `build.sh` (`BANK2_SRCS` += `clipwin_b2`).
 - `patches/clipwin.py`: the sites and the Pos pages; it is imported by `patches/filter.py`.

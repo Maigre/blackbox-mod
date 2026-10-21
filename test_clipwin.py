@@ -108,7 +108,7 @@ APP_PADS = APP + 0x1840
 GUI_MS = 0x2402EEE0
 PMEM, PCHECK, KEY = 0x38800F70, 0x38800F74, 0x5052534D
 BLOCK = 0xC0000000                                   # master.c's boot-time SDRAM block, here
-BANK = BLOCK + 0x56800 + 0x2D100                     # clipwin.c's cw_bank in it
+BANK = BLOCK + 0xB100                                # clipwin.c's cw_bank in it: the end of its core
 B_SLIP, B_PAD, B_VALID, B_LATCH, B_H1, B_HINTED = 8, 0x48, 0x88, 0x98, 0x498, 0x4A8
 B_WRAP, B_REGION, B_GOOD, B_ORIGIN, B_LL, B_FORCED, B_SF = 0x4BE, 0x4C0, 0x540, 0x5C0, 0x600, 0x610, 0x620
 B_ZERO_AT, B_ZERO_DIR, B_KNOB_COUNTS, B_KNOB_SPEED = 0x4B8, 0x4BC, 0x720, 0x722   # the Slip knob's (clipwin_turn)
@@ -329,9 +329,9 @@ e.stub(0x0804436C, lambda: allocs.append(("perm", e.arg(0))), value=BLOCK)
 e.w32(BANK, CW_MAGIC)
 e.call("master_alloc", 0x24076000, 192000)
 e.meter_up()
-check(f"master_alloc: one 0x84900-byte block, cw_bank's {B_BYTES:#x} bytes at its end (+0x83900; it uses {B_SIZE:#x}), its "
-      "magic cleared each boot",
-      allocs[-1] == ("perm", 0x84900) and BANK + B_BYTES == BLOCK + 0x84900 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
+check(f"master_alloc: one 0x84900-byte block (bank 2 holds the payload here), cw_bank's {B_BYTES:#x} bytes at the end of its "
+      f"0xC100-byte core (+0xB100; it uses {B_SIZE:#x}), its magic cleared each boot",
+      allocs[-1] == ("perm", 0x84900) and BANK + B_BYTES == BLOCK + 0xC100 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
 del e.stubs[0x0806AA80], e.stubs[0x0804436C]
 
 # ====================================================================================================== 2. registration
@@ -4857,7 +4857,7 @@ info("out/halo-preview.png: stock's corner labels (left) and these (right), over
 # (FUN_080a1718 -> SetCellParam, real): the store, the engine's 0x39 and the screens' 0x66 as from a turn. Real: the
 # app's handler, SetCellParam, the store, the parameter table (the stock registrar's, with our rows). Stubbed: the knob
 # scan's ADC, SetCellParam's posts (recorded).
-MB = BLOCK + 0x56800 + 0x2D100 + 0xF00
+MB = BLOCK + 0xB100 + 0xF00
 check("the app pass's knob scan at 0x080a2cd6: stock 'bl 0x08040724' is now 'bl usbdev_mailbox_scan' (dev build)",
       branch(0x080A2CD6, stock) == ("bl", 0x08040724) and branch(0x080A2CD6) == ("bl", S["usbdev_mailbox_scan"]))
 # Its five stock calls are direct bl's to their 3.1.9 addresses (absolute Thumb symbols in usbdev.c, bank 1 room for

@@ -17,7 +17,7 @@ e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58020000, 0x5000)                 # GPIO, RCC, PWR
 e.uc.mem_map(0x40040000, 0x4000)
 CYC = 0xE0001004
-SDRAM, RING_AT = 0xC0100000, 0xC0100000 + 0x56800 + 0x1000
+SDRAM, RING_AT = 0xC0100000, 0xC0100000 + 0x1000   # in master.c's core, behind the LFOs'
 e.uc.mem_map(SDRAM, 0x60000)
 e.w32(0x38800F70, SDRAM)                         # master.c's block, as its boot hook leaves it
 e.w32(0x38800F74, SDRAM ^ 0x5052534D)

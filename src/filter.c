@@ -187,7 +187,7 @@ static void out_stage(uint8_t *obj, float **ch, int n, const float *c)
 
 /*
  * The S950's low-pass needs six values per channel, more than the filter object has spare: they live in SDRAM, in the
- * block master.c takes at boot (behind Prism's, the LFOs' and the USB ring), a slot per filter object that ever ran
+ * block master.c takes at boot (behind the LFOs' and the USB ring), a slot per filter object that ever ran
  * an S950 mode. No block or no slot left = that voice goes without the low-pass.
  */
 void s950_read(float grid, const float *fir, int32_t base, float sgn, float gain, float post, float rate,
@@ -196,7 +196,7 @@ unsigned s950_filter_count(float clock, unsigned index);
 void s950_filter(float *z, float **ch, int n, unsigned count);
 uint8_t *master_block(void);
 
-#define S9_OFFSET (0x56800u + 0x7000u)
+#define S9_OFFSET 0x7000u        /* in master.c's block, behind the LFOs and the USB ring */
 #define S9_SLOTS  256
 #define S9_MAGIC  0x53393530u    /* "S950" */
 struct s9_slot {
@@ -207,7 +207,7 @@ struct s9_bank {
     uint32_t magic, used;
     struct s9_slot slot[S9_SLOTS];
 };
-_Static_assert(sizeof(struct s9_bank) <= 0x4000, "master.c's EXTRA_BYTES gives the bank 0x4000");
+_Static_assert(sizeof(struct s9_bank) <= 0x4000, "master.c's CORE_BYTES gives the bank 0x4000");
 
 static float *s950_state(const uint8_t *obj, struct ostate *o)
 {

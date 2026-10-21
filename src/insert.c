@@ -128,14 +128,14 @@ struct ins_bank {
 };
 #define INS_MAGIC  0x494e5332u   /* "INS2": bumped with the layout. The SDRAM keeps its contents through a reset and a
                                     reflash, so an old magic would vouch for bytes an older build never wrote. */
-#define INS_OFFSET (0x56800u + 0xb000u)                  /* behind Prism, the LFOs, the USB ring and the S950 bank */
-_Static_assert(sizeof(struct ins_bank) <= 0x22000, "master.c's EXTRA_BYTES gives the bank 0x22000");
+#define INS_OFFSET 0x56800u                              /* in master.c's tail, behind Prism's */
+_Static_assert(sizeof(struct ins_bank) <= 0x22000, "master.c's TAIL_BYTES gives the bank 0x22000");
 
-uint8_t *master_block(void);     /* master.c: the boot-time SDRAM block, or 0 */
+uint8_t *master_tail(void);      /* master.c: the boot-time SDRAM block's tail, or 0 (no bank 2 payload at boot) */
 
 static struct ins_bank *bank(void)
 {
-    uint8_t *mem = master_block();
+    uint8_t *mem = master_tail();
     if (!mem)
         return 0;
     struct ins_bank *b = (struct ins_bank *)(mem + INS_OFFSET);

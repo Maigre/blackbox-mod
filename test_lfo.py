@@ -46,7 +46,7 @@ def f32(a):
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
 e.uc.mem_map(0xC0000000, 0x90000)
-BLOCKMEM, LFOS = 0xC0000000, 0xC0000000 + 0x56800
+BLOCKMEM, LFOS = 0xC0000000, 0xC0000000 + 0x0    # the LFOs' part is the block's first (master.c's core)
 APP_PADS = 0x24020088 + 0x1840
 ARR = 0x24072000
 

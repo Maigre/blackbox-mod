@@ -24,7 +24,7 @@ reworks `src/usbdev.c` (+130) and `src/cpu.c`. A local branch `rc4-sync` (37.3.2
 | — | fork-only, never a PR | `notes/`, `bench/` (`bbusb.py`, `bbshot`, `bbmidi`), the parameter mailbox (dev builds, needs `cw_bank`), the 37.x names in `src/release.h`, `FORK.md` | | |
 
 The Clip Window shares, across 6a–6e: the reserved ids `0x1C8–0x1CB` (ask Justin to reserve them, first contact
-#t-006), `cw_bank` in SDRAM (`EXTRA_BYTES`), its bank-2 payload, and the chain lines (`master.c` register / alloc,
+#t-006), `cw_bank` in SDRAM (the core of master's block, `CORE_BYTES`), its bank-2 payload, and the chain lines (`master.c` register / alloc,
 `insert.c` defaults, one line in `duck_block`). Each layer adds its own rows, hooks and maths to `clipwin*.c`.
 
 ## Two ways to ship the Clip Window
@@ -67,6 +67,6 @@ one PR or a stack. 5. The Clip Window layers, one at a time. 6. The Looper after
 - Upstream keeps moving (rc2 → rc4 in three days): cut the PR branches right before proposing them.
 - **The Looper does not fit beside the Clip Window as it stands**: it needs 673 B of bank 1 (`looper.o` 645 +
   `looper_thunk.o` 28, features/looper.md "Costs") against 696 B free in the 37.3.1 release build and 8 B in its dev
-  build; and its SDRAM bank (master's block `+ 0x84100`) now falls inside the Clip Window's (`+ 0x83900`, 0x1000 since
-  Fit). Bank-1 room is the architecture question before P4 lands, and the MIDI plan meets the same wall (its option:
+  build; and its SDRAM bank (master's block `+ 0x84100`) now falls inside the inserts' bank (`+ 0x62900`, since D-030;
+  the Clip Window's `+ 0x83900` before). Bank-1 room is the architecture question before P4 lands, and the MIDI plan meets the same wall (its option:
   let bank-2 code call stock at its fixed 3.1.9 addresses, never the cave — needs Justin's view).

@@ -13,7 +13,7 @@
  * duck_block's tick, for the pads that have one of them routed; routing is the ENV mechanism (envmod.c).
  * Sample, Multisample, Clip and Slicer pads (3.1.D added the last two: envmod.c's class B path). Not Granular pads.
  *
- * Memory: 0x1000 bytes behind Prism's block (master.c takes both from the firmware's permanent allocator at boot).
+ * Memory: the first 0x1000 bytes of master.c's block (it takes it from the firmware's permanent allocator at boot).
  * UI: the pad parameter screen has three tab bars (FUN_080b8c0c builds them): 0 = Main Pos LFO Conf, 1 = the granular
  * one with a fourth tab "Gran" for page 3, 2 = Main LFO Conf for multisamples. Page 3 is empty for Sample, Multi, Clip
  * and Slicer pads, so its eight slots hold these knobs, and those pads are given bar 1 with the tab relabelled "LFO+".
@@ -113,7 +113,7 @@ struct lfo_state {
 #define DUCK_TRIGS (*(volatile uint16_t *)(0x2405ff70u + 14))   /* duck_state's spare bytes: a bit per pad, set at voice start */
 
 uint8_t *master_block(void);     /* master.c: the boot-time SDRAM block, or 0 */
-#define LFO_OFFSET 0x56800u      /* behind Prism's */
+#define LFO_OFFSET 0x0u          /* the block's first part (master.c) */
 
 static struct lfo_state *lfo_state(void)
 {
