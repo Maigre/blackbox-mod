@@ -288,6 +288,15 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
     `+0x254`, which the bind block's `FUN_080C6F44` sets from that length). Without bank 2, or before the pad's first
     recompute, the view's own length is used, as stock does.
   - Turned all the way into each other, they leave no loop, and the pad plays the whole file until they part.
+- **The view goes to the edge being set** (Thomas at Gate 3b-18): a TL or TR turn takes the view to Loop Start or
+  Loop End, where it was following the playhead (which ran the edge off the screen once zoomed in), and the view
+  follows the playhead again after a pause. It is stock's tap on the overview strip (`FUN_080C6E68`, the view
+  handler at `0x080A6CC0`): the frame at the view's anchor pixel (`+0x240`), follow mode `+0x1E0` = 2 and a count
+  `+0x180` of 300 of the waveform's ticks (`FUN_080C6C34`), set again by every turn; at 0 the tick follows the
+  playhead again (only while the pad plays: a stopped pad's view stays where the knob left it). Only a refresh
+  that moved one edge of a bracket shown before and after (`cw_bracket`'s return): not a bind, a zoom, a load or
+  a preset (both ends at once), a Region change, Region File (no bracket), nor without bank 2. 300 ticks in
+  seconds is a bench measure.
 - **BL Slip and BR Loop Len.** These are the Pos tab's rows, with the same text and feel.
 - **The names.** A knob there draws one line, "name value", 12 px a character (the 6 × 8 font at double size), in a
   151-px box: left-aligned from x 6 on the left, right-aligned to x 309 on the right. Twelve characters stay in the

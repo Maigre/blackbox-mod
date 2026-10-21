@@ -175,7 +175,7 @@ int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsig
 /* the Slip knob: 0 = no move, else *add for the stepper; its text (at most 13 bytes); the Waveform's bracket */
 int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, uint32_t now, int32_t *add);
 void cw_text(char *t, int v);
-void cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was);
+int32_t cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len, int was);
 
 /* what the cw_* functions are compiled against (no code: the compiler checks them). Changing one reprograms bank 2. */
 _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank, pad) == 0x48 &&

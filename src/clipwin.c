@@ -95,7 +95,8 @@
  * bracket. TL = Loop Start, TR = Loop End (stock's 0x91 / 0x92, sample positions one zoom pixel a step, ranged as in
  * Sample mode), BL = Slip, BR = Loop Len; the white bracket shows the loop Region plays, from the view's store, so a
  * playing pad catches up with it at its next wrap (clipwin_bind, clipwin_zoom, clipwin_wave). The view's own forward
- * stores them all.
+ * stores them all. A TL or TR turn takes the view to the edge it moves, as a tap on the overview does, and the view
+ * follows the playhead again after a pause.
  *
  * Bank 2 (D-017, D-018): the maths and the policy of every hook below are in flash bank 2, clipwin_b2.c (the cw_*
  * functions: the latch, the read's mapping and seam hint, Region's rule and its adoption, the lengths H3 tells, the
@@ -502,6 +503,7 @@ typedef void (*len_fn)(uint8_t *widget, int32_t len);
 #define fw_view_zoom    ((view_zoom_fn)FN(0x080a52c4))   /* the position knobs' step, range, value: not for Clip */
 #define fw_wave_slices  ((wave_fn)FN(0x080c6e8c))
 #define fw_overview_len ((len_fn)FN(0x080c4df0))      /* the overview strip's length (as len / 16, f32) */
+#define fw_wave_show    ((len_fn)FN(0x080c6e68))      /* the view to a frame, held 300 ticks: the overview's tap */
 #define VIEW_WAVE   0x38
 #define VIEW_OVERVIEW 0x2168
 #define VIEW_CELL   0x29c
@@ -558,7 +560,11 @@ static int32_t clip_len(const uint8_t *view)
    are. The binder leaves a type-0xd knob at the table's range (0 .. 1000) with its value only pending, and one turn
    would post the clamped value (notes/re/a3): the step goes first (the range is counted in steps of it), then the
    range, then the value, as stock does for Sample mode. was = the bracket as last drawn: the stock refresh clears it
-   without marking the widget dirty, and so would leave a bracket that is gone on the screen. */
+   without marking the widget dirty, and so would leave a bracket that is gone on the screen.
+   A TL or TR turn (a refresh, step 0, that moved one edge of the bracket) takes the view to that edge, as a tap on the
+   overview strip takes it to the frame tapped (FUN_080c6e68, the view handler's 0x080a6cc0): the waveform's tick
+   (FUN_080c6c34) holds it there while its count (+ 0x180, 300 ticks from each turn) runs, then follows the playhead
+   again (Thomas at Gate 3b-18: the playhead ran the edge being set off the screen). Not on a bind or a zoom. */
 static void clip_view(uint8_t *view, int step, int was)
 {
     uint8_t *tl = view + (clip_knobs[0] >> 16), *tr = view + (clip_knobs[1] >> 16), *wave = view + VIEW_WAVE;
@@ -585,8 +591,11 @@ static void clip_view(uint8_t *view, int step, int was)
             fw_revalue((int)id, v, k);
     }
     /* the bracket, when Region plays the loop (cw_bracket); without bank 2 none, as stock */
-    if (b2_live())
-        cw_bracket(wave, fw_setting(st, P_REGION), ls, le, len, was);
+    if (b2_live()) {
+        int32_t edge = cw_bracket(wave, fw_setting(st, P_REGION), ls, le, len, was);
+        if (!step && edge >= 0)
+            fw_wave_show(wave, edge);
+    }
 }
 
 /* Replaces bl FUN_080a52c4 @0x080a53b0, in FUN_080a53a2 (r1 = (int)zoom): every bind of the screen, every zoom change
