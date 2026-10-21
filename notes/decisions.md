@@ -32,6 +32,14 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-031 (2026-10-21) — Fit has two Autos: Auto (Bars), second, and Auto (Beats), last** (hub #t-027 → #t-029).
+  Thomas at Gate 3b part 4 (20/10): « fit auto doesnt make the loop metronome
+  syncable », then « yes separate entry: Auto (Bars), then Auto (Beats) »; under a bar the nearest of 1/4, 1/2, 1 bar:
+  « ok ». The list is `Off, Auto (Bars), 1/4 … 8 bars, Auto (Beats)` (order answered 21/10, bars-first-beats-last): a
+  preset stores the list's index, so the lengths keep theirs and a saved Auto (1) loads as Auto (Bars) — pad 1's
+  14.015-beat take then plays as 4 bars until set to Auto (Beats). Auto (Bars) rounds the length itself, not Auto
+  (Beats)' count (5.9 beats is 6 beats but 1 bar), ties up as D-026's. Both share `abeats`/`alen`; `abars` (cw_bank
+  `0x898`, appended, the magic kept: no field moves) says which Auto counted, so the other one chosen counts again.
 - **D-030 (2026-10-20) — The boot SDRAM block is core first, then a tail taken only with this image's payload in bank
   2; D-011's companion fix, built** (Thomas, hub #t-016: "build it after 37.3.0"). `master_alloc` asks `b2_present()`:
   still `main`, before the scheduler, so no task races it, and the card loader restarts the unit after it writes bank 2,

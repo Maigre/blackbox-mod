@@ -163,7 +163,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
 #define P_SLIP      0x1c9
 #define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
-#define P_FIT       0x1cb            /* Off, Auto, then 1/4 .. 8 bars (clipwin_b2.c's fit_beats) */
+#define P_FIT       0x1cb            /* Off, Auto (Bars), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats), Auto (Beats) */
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
@@ -198,11 +198,11 @@ void clipwin_register(void *table)
     static const char *const looplen_names[LOOPLEN_MAX + 1] = {
         (const char *)0x080cd7a8, (const char *)0x080ce714, (const char *)0x080ce710, (const char *)0x080ce70c,
         (const char *)0x080ce708, (const char *)0x080ce700, (const char *)0x080ce6f8, (const char *)0x080ce6f0};
-    /* stock's "Off" and "Auto" (0x080cd7b4), Quant Size's names for 1 beat .. 8 bars, and two of our own between */
+    /* stock's "Off", Quant Size's names for 1 beat .. 8 bars, and our own: the two Autos and two lengths between */
     static const char *const fit_names[FIT_MAX + 1] = {
-        (const char *)0x080cd7a8, (const char *)0x080cd7b4, (const char *)0x080ce70c, (const char *)0x080ce708,
+        (const char *)0x080cd7a8, "Auto (Bars)", (const char *)0x080ce70c, (const char *)0x080ce708,
         "3 beats", (const char *)0x080ce700, "6 beats", (const char *)0x080ce6f8, (const char *)0x080ce6f0,
-        (const char *)0x080ce6e8};
+        (const char *)0x080ce6e8, "Auto (Beats)"};
     fw_register_list(table, P_REGION, "Region:", region_names, 3, "clipregion");
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
     fw_register_list(table, P_LOOPLEN, "Loop Len:", looplen_names, LOOPLEN_MAX + 1, "cliplooplen");
