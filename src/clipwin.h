@@ -25,6 +25,7 @@
 #define PAD_LAUNCH  0x1f8            /* u8 Launch Mode + 1: 1 Trigger, 2 Gate, 3 Toggle */
 #define PAD_HARD0   0xba1            /* u8 1 = Attack (0x3c) is 0: stock starts every step 0 without a fade-in */
 #define PAD_FPS     0x1fc            /* f32 source frames per step */
+#define PAD_FPS_WAS 0x200            /* f32 the frames per step a Sync or Quant set re-gridded from (notes/re/a2) */
 #define PAD_STEP_OUT 0x204           /* f32 output samples per step: a segment's countdown + 256 (FUN_08065550) */
 #define PAD_TPS     0x208            /* i64 ticks per step */
 #define PAD_STEPS   0x210            /* u32 steps n */

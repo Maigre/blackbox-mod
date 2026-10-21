@@ -5124,5 +5124,55 @@ for name, kw in (("Slip 0, the whole file, Fit Off (no latch)", dict(frames=9600
                                                                     else ""),
           ok and len(hard) >= 2 and ("bank 2" not in name or not a.b2_entered), d)
 
+# ---- F-p (Gate 3b part 4): a take loaded into a playing pad, with a Sync or Quant set while its slot is closed. The
+# browser closes the slot (fw_src_len = SRC_BAD) and opens the new take a few blocks later; a Sync set in between
+# re-grids the playing segments onto a step of the closed slot's 2^28-frame clip, and stock's recompute at the open
+# re-grids nothing: no segment for millions of samples (the unit: valid 0010, the old region's latches). The poll sends
+# the pad's own Sync again once the file is open: one re-grid from the open file, then the take's own lattice (a fresh
+# launch of 96 003 frames under Beat Count Auto passes every 750 blocks: 758, 1508, 2258).
+FP_SW, FP_CL, FP_LEN = 265, 4, 96003
+
+
+def fp_load(inside, sends):
+    hooked = []
+
+    def pre(rr):
+        if not hooked:
+            hooked.append(1)
+            rr.uc.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: sends.append(rr.block), begin=0x08067ABA, end=0x08067ABA)
+        if rr.block == FP_SW:
+            rr.len = 0x10000000          # SRC_BAD: the slot closed
+            rr.param(0x90, 0)
+        if rr.block == FP_SW + 1:
+            for pid, v in inside:
+                rr.param(pid, v)
+        if rr.block == FP_SW + FP_CL:
+            rr.len = FP_LEN
+        if rr.block == FP_SW + FP_CL + 1:
+            for pid, v in ((0x8F, 0), (0x90, FP_LEN), (0x91, 0), (0x92, FP_LEN)):
+                rr.param(pid, v)
+    return pre
+
+
+def fp_run(inside, load=True):
+    sends = []
+    r = scenario(frames=96000, beats=0, sync=5, cell=0x102, blocks=2600, slip=112, region=AUTO, points=(24000, 96000, 1),
+                 pre=fp_load(inside, sends) if load else None)
+    return [m_["block"] for m_ in r.made if m_["block"] > FP_SW + FP_CL + 1], [s for s in sends if s > FP_SW + 1]
+
+
+fp_after, fp_sent = fp_run(((0x94, 0), (0x47, 3)))
+check("F-p: Sync Slice and Quant 1 bar set while the slot is closed: the pad's own Sync is sent once after the open "
+      f"(blocks {fp_sent}) and the pad sounds again at once, then passes on the take's own lattice (fresh launch: 758, "
+      "1508, 2258)", len(fp_sent) == 1 and FP_SW + FP_CL + 1 < fp_sent[0] <= FP_SW + FP_CL + 1 + 32 and
+      len(fp_after) >= 4 and fp_after[0] == fp_sent[0] and fp_after[2:4] == [1508, 2258], f"made {fp_after[:8]}")
+fp_plain, fp_plain_sent = fp_run(())
+fp_none, _ = fp_run((), load=False)
+fp_gap = max(b_ - a_ for a_, b_ in zip(fp_plain, fp_plain[1:]))
+check("  ...a load with no Sync set inside it sends nothing: the pad plays on through it, a step every 1/16 as with no "
+      f"load (longest gap {fp_gap} blocks)", not fp_plain_sent and fp_plain[:8] == fp_none[:8] and fp_gap <= 50 and
+      fp_plain[-1] > 2500, f"sent {fp_plain_sent}, made {fp_plain[:8]} / {fp_none[:8]}")
+
+
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)
