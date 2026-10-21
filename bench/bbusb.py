@@ -285,16 +285,17 @@ def main(argv):
             print("speeds seen: " + (", ".join(f"{m}: {n}" for m, n in sorted(seen.items())) or "none (no turn?)"))
     elif cmd == "fit":
         # src/clipwin_b2.c cw_fit: cw_bank + 0x784 u8 fit[16] (the row as the pad took it, with its region: 0 Off,
-        # 1 Auto, then 1/4 .. 8 bars), + 0x7a4 u8 fon[16] (its last recompute stored Fit's step fields), + 0x7b4 u16
-        # abeats[16] and + 0x7d4 i32 alen[16] (Auto's count and the length it counted), + 0x814 f32 bpm[16] (the tempo
-        # they were made at), + 0x858 u16 fade[16] (Loop Fade as taken, 0 .. 1000); the pad object (+ 0x48 + 4q) for its
-        # step fields. Read only.
+        # 1 Auto (Bars), then 1/4 .. 8 bars, 10 Auto (Beats)), + 0x7a4 u8 fon[16] (its last recompute stored Fit's step
+        # fields), + 0x7b4 u16 abeats[16] and + 0x7d4 i32 alen[16] (Auto's count and the length it counted), + 0x814 f32
+        # bpm[16] (the tempo they were made at), + 0x858 u16 fade[16] (Loop Fade as taken, 0 .. 1000); the pad object
+        # (+ 0x48 + 4q) for its step fields. Read only.
         bank = cw_bank()
         magic = word(bank)
         if magic != CW_MAGIC:
             sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): another layout, no "
                      "Fit fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
-        names = ["Off", "Auto", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
+        names = ["Off", "Auto (Bars)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars",
+                 "Auto (Beats)"]
         fit, fon = peek(bank + 0x784, 16), peek(bank + 0x7A4, 16)
         abeats = struct.unpack("<16H", peek(bank + 0x7B4, 32))
         alen = struct.unpack("<16i", peek(bank + 0x7D4, 64))

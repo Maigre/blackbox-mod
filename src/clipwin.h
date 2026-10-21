@@ -65,9 +65,10 @@
 #define P_SYNC      0x94             /* stock's Sync: Slice, 1 bar, 1/2, 1/4, 1/8, 1/16, None (0 .. 6, unchecked) */
 #define SLIP_MAX    3840             /* Slip's range, +- one bar of ticks */
 #define LOOPLEN_MAX 7                /* Loop Len: Off, then 1/16 << (value - 1) up to 4 bars */
-#define FIT_AUTO    1                /* Fit: Off, Auto, then 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2, 4 and 8 bars */
-#define FIT_MAX     9
-#define FIT_AUTO_MAX 1024            /* Fit Auto's most beats (an 8.5-minute loop at 120 BPM) */
+#define FIT_AUTO    1                /* Fit: Off, Auto (Bars), then 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2, 4 and 8 bars, */
+#define FIT_BEATS   10               /* ...then Auto (Beats) (D-031: a saved Auto loads as Auto (Bars), a length as itself) */
+#define FIT_MAX     10
+#define FIT_AUTO_MAX 1024            /* Fit Auto's most beats (an 8.5-minute loop at 120 BPM; a whole number of bars) */
 #define LOOP_FADE_MAX 1000           /* stock's Loop Fade row (0xfa): 0 .. 1000 = 0 .. 100 % of the loop */
 
 struct cw_latch {
@@ -102,7 +103,8 @@ struct cw_bank {
     uint8_t llv[16];                 /* Loop Len as the poll last read it from the store, */
     uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
     int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform's length */
-    uint8_t fit[16];                 /* Fit as taken with the region (at the pad's wrap, or stopped): 0 Off, 1 Auto */
+    uint8_t fit[16];                 /* Fit as taken with the region (at the pad's wrap, or stopped): 0 Off, 1 Auto
+                                        (Bars), 10 Auto (Beats) */
     uint8_t pfit[16];                /* ...the one it had before (cw_hold puts it back when it holds the wrap) */
     uint8_t fon[16];                 /* 1: the pad's last recompute stored Fit's step fields (cw_fit) */
     uint16_t abeats[16];             /* Fit Auto: the beats it counted ... */
@@ -114,6 +116,8 @@ struct cw_bank {
                                         fade-in stock takes from a hard start (cw_latch, cw_slot; Gate 3b F-a) */
     uint8_t wrapped[16];             /* 1: pad q's wrap has just been recomputed (cw_hold): its next segment is that
                                         pass's step 0, not a launch */
+    uint8_t abars[16];               /* 1: abeats is Auto (Bars)' count, 0: Auto (Beats)' (cw_fit counts again when the
+                                        other Auto is chosen) */
 };
 #define CW_MAGIC  0x43574e42u        /* "CWNB": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + the old EXTRA_BYTES, where this bank begins */
@@ -126,7 +130,8 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, fit) == 0x784 && offsetof(struct cw_bank, fon) == 0x7a4 &&
                offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
                offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
-               offsetof(struct cw_bank, wrapped) == 0x888 && sizeof(struct cw_bank) == 0x898,
+               offsetof(struct cw_bank, wrapped) == 0x888 && offsetof(struct cw_bank, abars) == 0x898 &&
+               sizeof(struct cw_bank) == 0x8a8,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*
@@ -208,7 +213,8 @@ _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START ==
                WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
                CW_SET_END == 2 && CW_SET_FIT == 3 && CW_SET_FADE == 4 && CW_SET_ROWS == 5 && CW_WAS_GRID == 2 &&
-               CW_WAS_CLIP == 3 && FIT_AUTO == 1 && FIT_MAX == 9 && FIT_AUTO_MAX == 1024 && LOOP_FADE_MAX == 1000,
+               CW_WAS_CLIP == 3 && FIT_AUTO == 1 && FIT_BEATS == 10 && FIT_MAX == 10 &&
+               FIT_AUTO_MAX == 1024 && LOOP_FADE_MAX == 1000,
                "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch, cw_hold) is compiled against the "
                "knob's and the waveform's fields, these settings and values, clipwin_len's row order and "
                "clipwin_wrap's: changing one reprograms bank 2");

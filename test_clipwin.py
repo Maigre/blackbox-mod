@@ -100,8 +100,9 @@ S = e.sym
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
 P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
-FIT_NAMES = ["Off", "Auto", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
-FIT_BEATS = [None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (Auto counts its own)
+FIT_NAMES = ["Off", "Auto (Bars)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars", "Auto (Beats)"]
+FIT_BEATS = [None, None, 1, 2, 3, 4, 6, 8, 16, 32, None]   # Fit's list: its beats (each Auto counts its own)
+AUTO_BARS, AUTO_BEATS = 1, 10                        # #t-029: a saved Auto (1) loads as Auto (Bars)
 APP = 0x24020088
 APP_PADS = APP + 0x1840
 GUI_MS = 0x2402EEE0
@@ -117,7 +118,8 @@ B_FLEN = 0x744                                       # fw_src_len at each pad's 
 B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0x7B4, 0x7D4, 0x814, 0x854   # Fit's
 B_FADE = 0x858                                       # Loop Fade as taken with the region
 B_FIN, B_WRAPPED = 0x878, 0x888                      # F-a: the slots that get their fade-in back, the wraps just made
-B_SIZE = 0x898                                       # sizeof(struct cw_bank)
+B_ABARS = 0x898                                      # 1: Auto's count is Auto (Bars)', 0: Auto (Beats)'
+B_SIZE = 0x8A8                                       # sizeof(struct cw_bank)
 B_BYTES = 0x1000                                     # what master.c's block gives it (0x800 before Fit)
 CW_MAGIC = 0x43574E42
 HEAP = 0xC1000000
@@ -382,8 +384,8 @@ check(f"... and 0x1ca once, after Slip: 'Loop Len:', a list of {lists.get(P_LOOP
       and {ll_reg[0][1]} == list_type and lists.get(P_LOOPLEN) == LL_NAMES and regs.index(ll_reg[0]) > regs.index(ours[0]),
       (ll_reg, lists.get(P_LOOPLEN)))
 fit_reg = [r for r in regs if r[0] == P_FIT]
-check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)} (stock's own strings but '3 beats' and "
-      "'6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
+check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)} (stock's own strings but the two Autos, "
+      "'3 beats' and '6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
       and {fit_reg[0][1]} == list_type and lists.get(P_FIT) == FIT_NAMES and regs.index(fit_reg[0]) > regs.index(ll_reg[0]),
       (fit_reg, lists.get(P_FIT)))
 check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
@@ -3487,12 +3489,31 @@ for length, base, want_b, what in ((336359, 1.0, 14, "14.015 beats (Gate 3's tak
                                    (7200, 1.0, 1, "0.3 beat (at least one)"), (96000, 1.0, 4, "one bar"),
                                    (82465, 0.91875, 4, "3.74 beats of a 44.1 kHz file (+0x1f0 0.91875)"),
                                    (24000 * 2000, 1.0, 1024, "2 000 beats (at most 1 024)")):
-    got = fit_at(length, 1, base=base)
+    got = fit_at(length, AUTO_BEATS, base=base)
     want = fit_want(length, want_b)
     rows.append((what, got[8], want_b, got[:8] == want and got[8] == want_b == auto_beats(length, base=base) and got[9] == length))
-check(f"Fit Auto counts the nearest whole number of beats at the tempo, at least 1, at most 1 024 (len / (+0x1f0 x 48 000) "
-      f"x BPM / 60 + 0.5, truncated), and site 3 stores the step fields for that clip "
+check(f"Fit Auto (Beats) counts the nearest whole number of beats at the tempo, at least 1, at most 1 024 (len / (+0x1f0 "
+      f"x 48 000) x BPM / 60 + 0.5, truncated), and site 3 stores the step fields for that clip "
       f"({[(w, g_) for w, g_, _, _ in rows]})", all(ok for *_, ok in rows), [r_ for r_ in rows if not r_[3]])
+# Auto (Bars) (Thomas 20/10, #t-029: "fit auto doesnt make the loop metronome syncable"): under a bar the nearest of 1/4,
+# 1/2 and 1 bar, from a bar up the nearest whole number of bars - of the length itself, not of Auto (Beats)' count (5.9
+# beats is 6 to the beat but 1 bar to the bar) - ties up, as Auto (Beats)'
+rows = []
+for length, want_b, what in ((7200, 1, "0.3 beat"), (35999, 1, "1.49996 beats"), (36000, 2, "1.5 beats (a tie: up)"),
+                             (71999, 2, "2.99996 beats"), (72000, 4, "3 beats (a tie: up)"), (89760, 4, "3.74 beats"),
+                             (141600, 4, "5.9 beats"), (144000, 8, "6 beats (a tie: up)"),
+                             (336359, 16, "14.015 beats (pad 1's take)"), (374400, 16, "15.6 beats"),
+                             (24000 * 2000, 1024, "2 000 beats (at most 1 024: 256 bars)")):
+    got = fit_at(length, AUTO_BARS)
+    rows.append((what, got[8], got[:8] == fit_want(length, want_b) and got[8] == want_b and got[9] == length))
+check(f"Fit Auto (Bars) counts 1, 2 or 4 beats under a bar, a whole number of bars from a bar up, and site 3 stores the "
+      f"step fields for that clip ({[(w, g_) for w, g_, _ in rows]})", all(ok for *_, ok in rows),
+      [r_ for r_ in rows if not r_[2]])
+seq = [fit_at(336359, AUTO_BEATS)[8], fit_at(336359, AUTO_BARS)[8], fit_at(336359, AUTO_BEATS)[8],
+       fit_at(336359, AUTO_BARS, bpm=60.0)[8], fit_at(336359, AUTO_BARS)[8]]
+check(f"the other Auto chosen counts again, of the same length: 14.015 beats is {seq[0]} (Beats), {seq[1]} (Bars), "
+      f"{seq[2]} (Beats); Bars counted at 60 BPM is {seq[3]} beats, and still {seq[4]} at 120 (counted once per length)",
+      seq == [14, 16, 14, 8, 8], seq)
 rows = []
 for v in range(2, 10):
     got = fit_at(96000, v)
@@ -3509,29 +3530,29 @@ cases = (("14 beats, Quant 1 bar, Sync 1/16", dict(sync=240), (1920, 240, 56)),
          ("14 beats, Quant None (synced 0)", dict(quant=0, synced=0), (0, 13440, 1)),
          ("14 beats, Sync None (synced 0)", dict(sync=0, synced=0), (1920, 13440, 1)),
          ("14 beats, Sync Slice without markers", dict(sync=0xF0000), (1920, 13440, 1)))
-rows = [(w, fit_at(336359 if w.startswith("14") else 192000, 1 if w.startswith("14") else 7, **kw)[1:4], want)
+rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 7, **kw)[1:4], want)
         for w, kw, want in cases]
 check(f"the polymetric grid and steps: wrap grid gcd(Quant, clip), steps one when Sync is the clip or longer, else "
       f"gcd(Sync, clip): {[(w, g_) for w, g_, _ in rows]}", all(g_ == w_ for _, g_, w_ in rows),
       [r_ for r_ in rows if r_[1] != r_[2]])
 for what, kw, beats in (("3 beats, Sync 1 bar (one step)", dict(sync=3840), 3), ("6 beats, Sync 1 bar", dict(sync=3840), 6),
                         ("5 beats, Quant 1 bar, Sync 1/4", dict(), 5)):
-    got = fit_at(beats * 24000 + 77, 1, **kw)
+    got = fit_at(beats * 24000 + 77, AUTO_BEATS, **kw)
     check(f"  {what}: {got[1:4]}, as the rule gives", got[:8] == fit_want(beats * 24000 + 77, beats, **kw), (got, fit_want(beats * 24000 + 77, beats, **kw)))
 # counted once per length: a tempo change keeps Auto's count (the speed moves), a new length or Auto chosen again counts
-seq = [fit_at(336359, 1)[8], fit_at(336359, 1, bpm=60.0)[8], fit_at(336359, 1, bpm=60.0)[6]]
-seq += [fit_at(336359, 0, bpm=60.0)[7], fit_at(336359, 1, bpm=60.0)[8], fit_at(300000, 1, bpm=60.0)[8]]
+seq = [fit_at(336359, AUTO_BEATS)[8], fit_at(336359, AUTO_BEATS, bpm=60.0)[8], fit_at(336359, AUTO_BEATS, bpm=60.0)[6]]
+seq += [fit_at(336359, 0, bpm=60.0)[7], fit_at(336359, AUTO_BEATS, bpm=60.0)[8], fit_at(300000, AUTO_BEATS, bpm=60.0)[8]]
 check(f"Auto is counted once per length: 14 at 120 BPM, still 14 at 60 (rate {seq[2]:.6f}: the clip lasts twice as long); "
       f"Off (fon {seq[3]}), then Auto again counts at 60 BPM ({seq[4]}), and so does another length ({seq[5]})",
       seq[0] == 14 and seq[1] == 14 and abs(seq[2] - 336359 / 672000) < 1e-6 and seq[3] == 0 and seq[4] == 7 and seq[5] == 6, seq)
 # ...and forgotten when a recompute finds the file closed (0 frames, or the provider's 0x10000000): a file opened again
 # (a preset loaded with it) counts at the tempo then, as after a boot - not at the tempo of whatever played it before
-seq = [fit_at(336359, 1, bpm=90.0)[8], fit_at(336359, 1, bpm=120.0)[8]]
+seq = [fit_at(336359, AUTO_BEATS, bpm=90.0)[8], fit_at(336359, AUTO_BEATS, bpm=120.0)[8]]
 for closed in (0, 0x10000000):
     fit_at(336359, 0, bpm=90.0)                                  # Off, then Auto again: counted at 90 BPM
-    before = fit_at(336359, 1, bpm=90.0)[8]
-    shut = fit_at(closed, 1, bpm=120.0)
-    seq += [before, (shut[7], shut[9]), fit_at(336359, 1, bpm=120.0)[8]]
+    before = fit_at(336359, AUTO_BEATS, bpm=90.0)[8]
+    shut = fit_at(closed, AUTO_BEATS, bpm=120.0)
+    seq += [before, (shut[7], shut[9]), fit_at(336359, AUTO_BEATS, bpm=120.0)[8]]
 check(f"Auto's count made at 90 BPM ({seq[0]} beats) stays at 120 ({seq[1]}); counted at 90 again ({seq[2]}, {seq[5]}), "
       f"a recompute with the file closed (0 frames: fon, the length counted {seq[3]}; the provider's 0 frames: "
       f"{seq[6]}) forgets it, and the file opened again at 120 BPM counts {seq[4]} and {seq[7]}, as a fresh boot does",
@@ -3659,7 +3680,7 @@ check(f"a one-shot of the 3.74-beat region (Launch Trigger, Loop Off): Fit Off s
 SYNCS = {"1 bar": 1, "1/2": 2, "1/4": 3, "1/16": 5}
 
 
-def poly(beats, quant=3, sync="1/4", kind="File", image=IMAGE, fit=1, bc=0):
+def poly(beats, quant=3, sync="1/4", kind="File", image=IMAGE, fit=AUTO_BEATS, bc=0):
     vlen = beats * 24000
     kw = dict(frames=vlen) if kind == "File" else dict(frames=vlen + 2 * 6144 + 1000, region=LOOP, points=(6144, 6144 + vlen, 1))
     d = fit_audio(fit, beats=bc, quant=quant, sync=SYNCS[sync], blocks=int((2.05 * vlen + 4000) / N), cell=0x102,
@@ -3682,7 +3703,7 @@ for kind, b_, quant, sync in ([(k, b, 3, s_) for k in ("File", "Region") for b i
     if not (len(apart) >= 2 and set(apart) == {b_ * 24000} and not big and zeros == 0 and peak <= 1 + 1e-6
             and (quant == 8 or ps[0] == 288000)):
         bad.append((kind, b_, sync, quant, ps, big[:3], zeros, peak))
-check(f"polymetric, Fit Auto: {len(seen)} cases - a File and a Region of 3, 5, 6, 7 and 14 beats, Quant 1 bar, Sync 1/16, "
+check(f"polymetric, Fit Auto (Beats): {len(seen)} cases - a File and a Region of 3, 5, 6, 7 and 14 beats, Quant 1 bar, Sync 1/16, "
       f"1/4 and 1 bar; {'every one at Quant None too' if FULL else '3 and 14 beats at Quant None'}; 5 at Sync 1/2 -: "
       f"every pass B beats after the one before, no jump over half a frame at any joint, no zero-gain sample, gain at "
       f"most 1", not bad, bad)
@@ -3714,7 +3735,7 @@ for what, a, want_ps, want_big in (
         ("a 1-bar file, Quant 1/16, Sync 1/4, Fit 1 bar", (4, 7, "1/4", 5), [294000, 384000, 480000, 576000], [(312001, 6000)]),
         ("  ...Fit Off", (4, 7, "1/4", 0), [294000, 384000, 480000, 576000], [(312001, 6000)]),
         ("  ...the stock image", (4, 7, "1/4", 0, "File", 0, STOCK), [294000, 384000, 480000, 576000], [(312001, 6000)]),
-        ("a 14-beat file, Quant 1/16, Sync 1/4, Fit Auto", (14, 7, "1/4", 1), [294000, 624000, 960000, 1296000],
+        ("a 14-beat file, Quant 1/16, Sync 1/4, Fit Auto (Beats)", (14, 7, "1/4", AUTO_BEATS), [294000, 624000, 960000, 1296000],
          [(312001, 6000)]),
         ("the 3.74-beat region, Quant 1/16, Sync 1/4, Fit Auto", (4, 7, "1/4", 1, "Region"), [294000, 384000, 480000, 576000],
          [(312001, 5610)]),
@@ -3866,7 +3887,8 @@ r.note_on()
 r.run(700)
 hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (
     ("fit", B_FIT, B_PFIT), ("pfit", B_PFIT, B_FON), ("fon", B_FON, B_ABEATS), ("abeats", B_ABEATS, B_ALEN),
-    ("alen", B_ALEN, B_BPM), ("bpm", B_BPM, B_ENGINE), ("engine", B_ENGINE, B_FADE), ("fade", B_FADE, B_SIZE))}
+    ("alen", B_ALEN, B_BPM), ("bpm", B_BPM, B_ENGINE), ("engine", B_ENGINE, B_FADE), ("fade", B_FADE, B_FIN),
+    ("abars", B_ABARS, B_SIZE))}
 check(f"in a fitted run with Loop Fade, every write clipwin.c and clipwin_b2.c make into the SDRAM block lands in "
       f"cw_bank's {B_SIZE:#x} bytes (Fit's and Loop Fade's fields written: {hit})", w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w),
       (sorted({hex(a_) for a_, s_ in w if not BANK <= a_ < BANK + B_SIZE})[:4], hit))

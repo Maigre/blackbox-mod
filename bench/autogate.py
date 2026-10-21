@@ -200,7 +200,7 @@ def c_settle(o):
 def c_fit(o):
     setrow(B, "lps", 6072); setrow(B, "lpe", 95744); setrow(B, "region", "Loop"); setrow(B, "fit", "Off")
     time.sleep(4.5); record(f"{o}/fit0.wav", 12)
-    setrow(B, "fit", "Auto"); time.sleep(4.5); record(f"{o}/fit1.wav", 12)
+    setrow(B, "fit", "Auto (Bars)"); time.sleep(4.5); record(f"{o}/fit1.wav", 12)
     fitline = run(f"{BENCH}/bbusb.py", "fit").strip().splitlines()
     res = [f"fit1 1-bar periodic {periodic(f'{o}/fit1.wav', BAR):.5f}", *[l for l in fitline if "row 3 col 1" in l]]
     for name, beats in (("3 beats", 3), ("6 beats", 6)):
@@ -224,7 +224,7 @@ def c_fade(o):
 def c_fa(o):
     """F-a: pad 1's slots around its wraps while it plays slipped (as set by hand, or by the mailbox if present)"""
     if has_mailbox():
-        setrow(PAD1, "slip", "-0.645"); setrow(PAD1, "fit", "Auto")
+        setrow(PAD1, "slip", "-0.645"); setrow(PAD1, "fit", "Auto (Bars)")
     stop(B); start(PAD1)
     p = pad(PAD1); rows = []; t0 = time.time()
     proc = subprocess.Popen([PY, f"{BENCH}/bbusb.py", "record", "20", f"{o}/fa.wav"], stdout=subprocess.DEVNULL,

@@ -117,20 +117,23 @@ static uint32_t gcd(uint32_t a, uint32_t c)
 
 /* ---- Fit ---- */
 
-/* Fit's beats for its rows 2 .. FIT_MAX: 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars */
-static const uint8_t fit_beats[FIT_MAX - 1] = {1, 2, 3, 4, 6, 8, 16, 32};
+/* Fit's beats for its rows 2 .. FIT_BEATS - 1: 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars */
+static const uint8_t fit_beats[FIT_BEATS - 2] = {1, 2, 3, 4, 6, 8, 16, 32};
 
 /* H3 site 3 of pad q's recompute (cw_len): stock has just stored the step fields for its own clip (the Beat Count, or
    Beat Count Auto's power of two). A fitted pad's are stored again, for a clip of Fit's beats, as stock stores them
    for a Beat Count of that many, and with the source rate (+0x1f0) that makes each step's frames last its ticks: every
    segment takes +0x1f0 as its rate (FUN_08065550, 0x080656de), so stock's own re-placement at each step lands where
    the audio already is, and its end countdown and its Sync re-index reckon with the same rate. len = what the pad
-   plays (its region, or the file); the tempo is the engine's, as the poll last had it. Auto is the nearest whole
-   number of beats, at least one (Thomas at Gate 3, of a 14.015-beat take: "that weird length is intended as
-   polyrhythmic loop and should be handled properly"; 3.74 -> 4, 15.6 -> 16), counted once per length: a tempo change
-   then moves only the speed.
-   The count is forgotten when a recompute finds the file closed (len 0, or the provider's 0 frames): a file opened
-   again is counted again, at the tempo then.
+   plays (its region, or the file); the tempo is the engine's, as the poll last had it. Auto (Beats) is the nearest
+   whole number of beats, at least one (Thomas at Gate 3, of a 14.015-beat take: "that weird length is intended as
+   polyrhythmic loop and should be handled properly"; 3.74 -> 4, 15.6 -> 16). Auto (Bars) keeps the loop on the bar
+   (Thomas, 20/10: "fit auto doesnt make the loop metronome syncable"): under a bar the nearest of 1/4, 1/2 and 1 bar,
+   from a bar up the nearest whole number of bars, both of the length itself, ties up as Auto (Beats)' (1.5 beats -> 2,
+   3 -> 4, 5.9 -> 4, 6 -> 8, 14.015 -> 16). Either is counted once per length: a tempo change then moves only the
+   speed.
+   The count is forgotten when a recompute finds the file closed (len 0, or the provider's 0 frames), or the other
+   Auto chosen: a file opened again is counted again, at the tempo then.
    Polymetric: a clip that is no whole number of Quants (3, 5, 6, 7, 14 beats on Quant 1 bar) cycles against the bar.
    Pass k starts k clips after a launch on the Quant grid, so its wrap grid is gcd(Quant, clip), which every launch
    point and every pass start lies on - not stock's min(Quant, clip): there the render snaps the end of every other
@@ -143,19 +146,21 @@ static const uint8_t fit_beats[FIT_MAX - 1] = {1, 2, 3, 4, 6, 8, 16, 32};
    when the pad is not fitted (stock's stay). */
 __attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len)
 {
-    unsigned v = b->fit[q];
+    unsigned v = b->fit[q], bars = v == FIT_AUTO, autos = bars || v == FIT_BEATS;
     float bpm = b->engine ? *(const float *)(b->engine + ENGINE_BPM) : 0.0f, base = *(const float *)(pad + PAD_RATE);
     b->fon[q] = 0;
-    if (v != FIT_AUTO || len <= 0 || len >= SRC_BAD)
+    if (!autos || len <= 0 || len >= SRC_BAD)
         b->alen[q] = 0;              /* Auto counts again when it is chosen again, or its file opened again */
     if (!v || v > FIT_MAX || sliced(pad) || !(bpm > 0.0f) || len <= 0 || len >= SRC_BAD || !(base > 0.0f))
         return 0;
     int32_t beats;
-    if (v == FIT_AUTO) {
-        if (b->alen[q] != len) {
-            int32_t c = (int32_t)((float)len / (base * 48000.0f) * bpm / 60.0f + 0.5f);
+    if (autos) {
+        if (b->alen[q] != len || b->abars[q] != bars) {
+            float f = (float)len / (base * 48000.0f) * bpm / 60.0f;
+            int32_t c = !bars ? (int32_t)(f + 0.5f) : f < 1.5f ? 1 : f < 3.0f ? 2 : (int32_t)(f / 4.0f + 0.5f) * 4;
             b->abeats[q] = (uint16_t)(c < 1 ? 1 : c > FIT_AUTO_MAX ? FIT_AUTO_MAX : c);
             b->alen[q] = len;
+            b->abars[q] = (uint8_t)bars;
         }
         beats = b->abeats[q];
     } else {

@@ -32,6 +32,14 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-031 (2026-10-21) — Fit has two Autos: Auto (Bars), second, and Auto (Beats), last** (hub #t-027 → #t-029;
+  D-030 is #t-016's, on its branch). Thomas at Gate 3b part 4 (20/10): « fit auto doesnt make the loop metronome
+  syncable », then « yes separate entry: Auto (Bars), then Auto (Beats) »; under a bar the nearest of 1/4, 1/2, 1 bar:
+  « ok ». The list is `Off, Auto (Bars), 1/4 … 8 bars, Auto (Beats)` (order answered 21/10, bars-first-beats-last): a
+  preset stores the list's index, so the lengths keep theirs and a saved Auto (1) loads as Auto (Bars) — pad 1's
+  14.015-beat take then plays as 4 bars until set to Auto (Beats). Auto (Bars) rounds the length itself, not Auto
+  (Beats)' count (5.9 beats is 6 beats but 1 bar), ties up as D-026's. Both share `abeats`/`alen`; `abars` (cw_bank
+  `0x898`, appended, the magic kept: no field moves) says which Auto counted, so the other one chosen counts again.
 - **D-029 (2026-10-18) — Munchi's engine in bank 2 on our line (37.4.0): bank-1 room for the Looper and MIDI; the
   upstream PR `feat/munchi-bank2` pending Justin** (Thomas: "merge `feat/munchi-bank2` into our line for 37.4"; hub
   #t-014). Bank 1 was the hard budget: 37.3.3 left 656 B free in the release build and 16 in the dev build, while the
