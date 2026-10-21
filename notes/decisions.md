@@ -32,6 +32,11 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-032 (2026-10-21) — The Clip Window goes upstream as one PR of five commits** (hub #t-039). Thomas, the night
+  Gate 3 closed: « one PR with five-commits ». One branch, `feat/clip-window`, from upstream `main`: slip, region (+
+  the Clip-mode Waveform knobs and the playhead), looplen, fit, loopfade, each commit building and passing
+  `./check.sh` alone (notes/pr-map.md). The corner labels stay PR #9's, the parameter mailbox fork-only. Opened after
+  Justin answers the first-contact issue (#4); if he asks for a stack, it is five branches cut at those commits.
 - **D-031 (2026-10-21) — Fit has two Autos: Auto (Bars), second, and Auto (Beats), last** (hub #t-027 → #t-029).
   Thomas at Gate 3b part 4 (20/10): « fit auto doesnt make the loop metronome
   syncable », then « yes separate entry: Auto (Bars), then Auto (Beats) »; under a bar the nearest of 1/4, 1/2, 1 bar:

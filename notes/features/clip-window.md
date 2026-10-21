@@ -1,5 +1,9 @@
 # Clip Window: Slip, Region, Loop Len, Fit, Loop Fade and the Clip-mode Waveform knobs
 
+**State (2026-10-21):** on `maigre` as **37.4.1**; **Gate 3 passed** on the unit with 37.4.1d (§7's last rows,
+`notes/bench/2026-10-21-gate3b-part5.md`), so P3, Workflow 1, is complete. Upstream: one PR of five commits (D-032,
+`notes/pr-map.md`). The history below starts at 37.3.1; what each later release changed is in `notes/releases/`.
+
 Release **37.3.1** (dev build 37.3.1d), branch `halo`, cut from `37loop/blackbox-t-021` at 37.3.0; the release
 notes are `notes/releases/37.3.1.md` (37.3.0's: `notes/releases/37.3.0.md`). Its history:
 

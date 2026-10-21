@@ -6,6 +6,18 @@ the proposal for that, and the map of what we have. Upstream moved on 2026-10-17
 the restart loop with PRIMASK instead of LDREXB/STREXB — the same root cause as our PR #2, which it supersedes — and
 reworks `src/usbdev.c` (+130) and `src/cpu.c`. A local branch `rc4-sync` (37.3.2) merges it into 37.3.1.
 
+## State on 2026-10-21 (this section supersedes the table's "state" column)
+
+- **#1** closed 17/10 (superseded by rc4, D-027). **#2–#5 and `fix/b2load-readonly`** are open upstream since 20/10
+  as PRs #6 (`fix/b2load-readonly`), #7 (`fix/preview-cell`), #8 (`fix/usbdev-debug`), #9 (`fix/waveform-labels`),
+  #10 (`feat/linux-dev`); no review or comment yet. `feat/munchi-bank2` is held until F-o is told apart from it
+  (hub #t-025).
+- **The Clip Window (6a–6e)** passed Gate 3 on 37.4.1d (21/10). Thomas chose **one PR of five commits** (D-032), on
+  one branch, `feat/clip-window`, cut from upstream `main`: the corner labels stay PR #9's and the parameter mailbox
+  stays fork-only, so neither is in it. To cut (hub #t-039); it is opened after Justin answers the first-contact
+  issue (#4, 18/10: the ids, the shape, the pace), unanswered so far.
+- **The Looper (7)**: P4 is next on the fork; its PR comes after Gate 4.
+
 ## The layers
 
 | # | branch (from upstream `main`, rc4) | what | state | depends on |
@@ -38,6 +50,10 @@ The Clip Window shares, across 6a–6e: the reserved ids `0x1C8–0x1CB` (ask Ju
 Recommendation: ask Justin which he prefers at first contact; prepare the five-commit series either way (a stack is
 then five branches cut at those commits).
 
+**Taken (Thomas, 21/10, D-032): one PR of five commits.** Each commit must still build and pass `./check.sh` alone, so
+the series costs the same four intermediate states of the Clip Window's files as the stack would; only the
+branches are saved.
+
 ## Mechanics (closing D-019's open point)
 
 1. From now on **one commit = one layer**: never `src/` and `notes/` in one commit, never two features in one
@@ -60,13 +76,13 @@ one PR or a stack. 5. The Clip Window layers, one at a time. 6. The Looper after
 
 ## Risks
 
-- **Bank-1 room** is the hard budget: the release build has 696 B free after 37.3.1, the dev build 8 B. Each PR must
-  fit on upstream alone; the layers' sizes are measured by `prcheck.sh`, not guessed.
+- **Bank-1 room** is the hard budget: 37.4.1's release build has 6 782 B free, its dev build 6 158 (Munchi's engine
+  in bank 2, D-029, gave 6.4 KB back; 37.3.1 had 696 and 8). Each PR must fit on upstream alone; the layers' sizes
+  are measured by `prcheck.sh`, not guessed.
 - The split must not change behaviour: the union of the PR branches, built, must be byte-identical to `maigre`'s
   release build (`prcheck.sh` checks this).
 - Upstream keeps moving (rc2 → rc4 in three days): cut the PR branches right before proposing them.
-- **The Looper does not fit beside the Clip Window as it stands**: it needs 673 B of bank 1 (`looper.o` 645 +
-  `looper_thunk.o` 28, features/looper.md "Costs") against 696 B free in the 37.3.1 release build and 8 B in its dev
-  build; and its SDRAM bank (master's block `+ 0x84100`) now falls inside the inserts' bank (`+ 0x62900`, since D-030;
-  the Clip Window's `+ 0x83900` before). Bank-1 room is the architecture question before P4 lands, and the MIDI plan meets the same wall (its option:
-  let bank-2 code call stock at its fixed 3.1.9 addresses, never the cave — needs Justin's view).
+- **The Looper beside the Clip Window**: it needs 673 B of bank 1 (`looper.o` 645 + `looper_thunk.o` 28,
+  features/looper.md "Costs"), which 37.4.1 has; its SDRAM bank (master's block `+ 0x84100`) must be placed again
+  against D-030's core-first block before P4 lands. The MIDI plan still meets the bank-1 wall in the long run (its
+  option: let bank-2 code call stock at its fixed 3.1.9 addresses, never the cave — needs Justin's view).

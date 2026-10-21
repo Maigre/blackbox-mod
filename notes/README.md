@@ -16,6 +16,9 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
 - [`decisions.md`](decisions.md) — dated decisions (D-001 …) with their reasons; newest first.
 - [`clip-window-audit.md`](clip-window-audit.md) — the Clip Window audited after P3 (21/10): the core kept, the
   policy layer consolidated in three stages; a proposal for Thomas's review.
+- [`pr-map.md`](pr-map.md) — how the fork's work becomes JOEBOX pull requests: the layers, their state, the order.
+- [`upstream-first-contact.md`](upstream-first-contact.md) — the first-contact issue sent to JOEBOX (#4, 18/10);
+  [`upstream-input-resample.md`](upstream-input-resample.md) — an issue text on a JOEBOX bug (F-m), Thomas's to send.
 - [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root.
 - [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X3) and the hand-off index (`re/README.md`).
 - `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it:

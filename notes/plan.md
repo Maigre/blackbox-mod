@@ -240,6 +240,9 @@ from the Pads LOOP knobs (P5) or CC (P6).
 
 ## Phases, gates, estimates
 
+State on 2026-10-21: P0–P3 done; **Gate 3 passed** on 37.4.1d (21/10) — Workflow 1 is complete. P4 (the Looper) is
+next. What went upstream and how: `notes/pr-map.md` and `FORK.md`.
+
 | Phase | Deliverable | Bench gate (Thomas) | Est. |
 |---|---|---|---|
 | **P0 setup + pipeline** | fork `Maigre/blackbox-mod` (`main` = upstream mirror, `maigre` = integration), mgr-ran toolchain, stock image at `/srv/dev/firmware/`, `check.sh` green on Linux (host build → gcc `.so`), fork-only commit (`src/release.h` RELEASE_NAME "BBLOOP 1" ≤8 chars, distinct BUILD letter), build cave-only (`patch.py cave`) + full-set images, hub mint + arming | **Gate 0**: cave-only image WITHOUT `BBEXTRA.BIN` boots, TOOLS shows our name, pads play; then the full set (restart loop yes/no = data for the maintainer); back to stock | machine 1 d · bench 0.5 h |
