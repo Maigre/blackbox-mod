@@ -10,8 +10,9 @@ remote. Every feature is written so that it can go back to JOEBOX as its own pul
 > contain 1010music's firmware: you supply your own copy of stock 3.1.9 and patch it yourself. Tested on a small
 > number of units; use at your own risk; flash stock before asking 1010music for support.
 
-**Current release: 37.4.0, on JOEBOX 1 rc4** — a test release. Release notes, with each build's sha256:
-[`notes/releases/`](notes/releases/). The Tools page shows the version (`37.4.0`; a `d` marks a developer build).
+**Current release: 37.4.1, on JOEBOX 1 rc4** — a test release; its developer build passed the Clip Window's bench
+gate on a unit (Gate 3, 2026-10-21). Release notes, with each build's sha256: [`notes/releases/`](notes/releases/).
+The Tools page shows the version (`37.4.1`; a `d` marks a developer build).
 
 ---
 
@@ -63,13 +64,13 @@ controllers). Known issues per feature: [`notes/features/clip-window.md`](notes/
 
 1. Download stock firmware **3.1.9** from <https://1010music.com/downloads> (its `BLACKBOX.bin`).
 2. Get this repository (Code > Download ZIP, or `git clone`), and patch your copy with the release's patch file,
-   in `docs/`: `python3 apply.py path/to/BLACKBOX.bin docs/blackbox-mod-37.4.0.json`. Name the file: `docs/` also
+   in `docs/`: `python3 apply.py path/to/BLACKBOX.bin docs/blackbox-mod-37.4.1.json`. Name the file: `docs/` also
    holds JOEBOX's own patch. `apply.py` needs only Python 3; it checks that your file is the stock 3.1.9 and writes
    **two files**, `BLACKBOX.bin` and `BBEXTRA.BIN`. Patched firmware is never distributed here.
 3. Copy **both** to the root of the Blackbox's SD card.
 4. Power on holding **BACK + INFO**. When a release changes the second file, the first boot installs it and
    **restarts once** by itself: leave the power on until it is back.
-5. TOOLS shows `37.4.0` with no `!` in front of the load figures. A `!` means the two files are not from the same
+5. TOOLS shows `37.4.1` with no `!` in front of the load figures. A `!` means the two files are not from the same
    build: copy both again.
 
 Back to stock: the stock `BLACKBOX.bin` on the card, the same BACK + INFO start.

@@ -35,8 +35,8 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 | 37.3.2 | 37.3.1 on **JOEBOX 1 rc4** (upstream `19d29f1`, D-027): the restart-loop fix is upstream's own `b2_step` now (our PR #2 superseded); USB with the compressor on Limit (usbdev's state off the Limit lookahead); the insert models' new names (Pebble, Electra, Jet). Bank 2 unchanged: 37.3.1's `BBEXTRA.BIN` pairs with it. The dev build (37.3.2d) fits: its dev-only code made smaller, same behaviour, the release build unchanged (D-027) | branch `rc4-sync` (local), `halo` + upstream `main` |
 | 37.3.3 | Gate 3b F-a: **a step 0 inside the audio fades in** (at Attack 0, stock's default, stock starts each pass's step 0 and each launch hard; slipped, on a Region past frame 0, in Loop Len's window or on a seamless wrap that clicked or doubled: it now gets stock's 256-sample fade-in at its first read, its timing unchanged; D-028). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.2 |
 | 37.4.0 | 37.3.3 + **Munchi's engine in bank 2** (`feat/munchi-bank2`, D-029): 6.4 KB of bank 1 back for the Looper and MIDI, Munchi's output bit for bit rc4's. Munchi now needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.3 |
-| 37.4.1 | after Gate 3b part 4: **a take loaded into a playing Clip pad plays its own window** (F-p: the pad's Sync sent again after the open when its step came from the closed slot); **Fit's two Autos**, Auto (Bars) and Auto (Beats) (D-031: a saved Auto loads as Auto (Bars)); **the Waveform view goes to the marker you turn**; the boot SDRAM block core first (D-030). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | `maigre` |
-| — | **Looper FX** (P4) | branch `feat/looper` (local, kept apart until Gate 3) |
+| 37.4.1 | after Gate 3b part 4: **a take loaded into a playing Clip pad plays its own window** (F-p: the pad's Sync sent again after the open when its step came from the closed slot); **Fit's two Autos**, Auto (Bars) and Auto (Beats) (D-031: a saved Auto loads as Auto (Bars)); **the Waveform view goes to the marker you turn**; the boot SDRAM block core first (D-030). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot). **Gate 3 passed on 37.4.1d** (21/10): the Clip Window is proven on the unit | `maigre` |
+| — | **Looper FX** (P4) | branch `feat/looper` (on origin, built, never on a unit): next, now that Gate 3 has passed |
 
 ## Upstream pull requests (one feature each, from upstream `main`)
 
@@ -48,16 +48,22 @@ own layer (`notes/`, `bench/`, `README.md`, this file, the 37.x names), moved on
 | branch | what | state |
 |---|---|---|
 | `fix/restart-loop-ldrex` | the restart-loop fix + a no-exclusives check in test_cpu.py | **closed** 17/10: superseded by JOEBOX 1 rc4's own fix (`19d29f1`, `b2_step` under PRIMASK; D-027), with a note handing over the MPU observation (j3threejay/blackbox-mod#2) |
-| `fix/b2load-readonly` | `B2LOAD_WRITE=0` (the read-only card loader) compiles again; the default build byte for byte the same | on origin (`d046828`); offered in the first-contact issue (18/10) |
-| `fix/preview-cell` | the browser's pre-listen voice (cell 0x401) is no pad: pad 2's input, insert and LFO retrigger stay off it | on origin (`f3e6f91`, rc4 merged in); offered 18/10 |
-| `fix/usbdev-debug` | dev builds: DEBUG peek / poke bounded to whole regions; EP0 IN flushed at every SETUP; the release image unchanged | on origin (`9692f7f`); offered 18/10 |
-| `fix/waveform-labels` | the Waveform screen's corner labels white with a 1 px black edge, every pad mode; its own module, riding on the `slice` set | on origin (`eefe93b`); offered 18/10 |
-| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment | on origin (`fff2d37`, rc4 merged in); offered 18/10 |
-| `feat/munchi-bank2` | Munchi's engine in bank 2, its hooks and stock calls in bank 1: 6.4 KB of the cave back, the output bit for bit; MUNCHI_OFF fixed | on origin (`c3ccbb5`); offered 18/10; merged here for 37.4.0 (D-029) |
+| `fix/b2load-readonly` | `B2LOAD_WRITE=0` (the read-only card loader) compiles again; the default build byte for byte the same | **PR #6** (opened 20/10, `d046828`) |
+| `fix/preview-cell` | the browser's pre-listen voice (cell 0x401) is no pad: pad 2's input, insert and LFO retrigger stay off it | **PR #7** (opened 20/10, `f3e6f91`) |
+| `fix/usbdev-debug` | dev builds: DEBUG peek / poke bounded to whole regions; EP0 IN flushed at every SETUP; the release image unchanged | **PR #8** (opened 20/10, `9692f7f`) |
+| `fix/waveform-labels` | the Waveform screen's corner labels white with a 1 px black edge, every pad mode; its own module, riding on the `slice` set | **PR #9** (opened 20/10, `eefe93b`) |
+| `feat/linux-dev` | build and test on Linux / hosts without clang or FMA; Ghidra paths from the environment | **PR #10** (opened 20/10, `fff2d37`) |
+| `feat/munchi-bank2` | Munchi's engine in bank 2, its hooks and stock calls in bank 1: 6.4 KB of the cave back, the output bit for bit; MUNCHI_OFF fixed | on origin (`c3ccbb5`); merged here for 37.4.0 (D-029); its PR held until F-o (the analog crunch) is told apart from it |
 | `feat/repo-layout` | the suites in `tests/`, the RE helpers in `tools/`; images byte-identical | local (`452f4f8`): offered to Justin first, adopted here only if he takes it |
-| `feat/clip-*` | the Clip Window as five layers (slip, region, looplen, fit, loopfade) | to cut after Justin's answer on one PR or a stack (notes/pr-map.md); `feat/slip` (37.1 layout) is superseded by it |
+| `feat/clip-window` | the Clip Window: **one PR of five commits**, one per layer (slip, region + the Waveform knobs, looplen, fit, loopfade; D-032) | to cut from upstream `main` (hub #t-039); opened after Justin answers the first-contact issue; `feat/slip` (37.1 layout) is superseded by it |
 
-First contact: an issue on j3threejay/blackbox-mod (18/10), text in `notes/upstream-first-contact.md`. JOEBOX's updates
+The five small PRs' changes are on `maigre`, though not as merges of their branches, and two in another form: the
+corner labels inside `src/clipwin.c` (PR #9 makes them a module), the bounded peek beside the fork's parameter
+mailbox in `src/usbdev.c`.
+Their branches are merged in when Justin takes them, his version winning.
+
+First contact: an issue on j3threejay/blackbox-mod (#4, 18/10; no answer yet on 21/10), text in
+`notes/upstream-first-contact.md`. JOEBOX's updates
 reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when his `main` moves).
 
 ## Build, install, bench
