@@ -117,8 +117,8 @@ static uint32_t gcd(uint32_t a, uint32_t c)
 
 /* ---- Fit ---- */
 
-/* Fit's beats for its rows 2 .. FIT_BEATS - 1: 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars */
-static const uint8_t fit_beats[FIT_BEATS - 2] = {1, 2, 3, 4, 6, 8, 16, 32};
+/* Fit's beats for its rows FIT_BEATS + 1 .. FIT_MAX: 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars */
+static const uint8_t fit_beats[FIT_MAX - FIT_BEATS] = {1, 2, 3, 4, 6, 8, 16, 32};
 
 /* H3 site 3 of pad q's recompute (cw_len): stock has just stored the step fields for its own clip (the Beat Count, or
    Beat Count Auto's power of two). A fitted pad's are stored again, for a clip of Fit's beats, as stock stores them
@@ -164,7 +164,7 @@ __attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad
         }
         beats = b->abeats[q];
     } else {
-        beats = fit_beats[v - 2];
+        beats = fit_beats[v - FIT_BEATS - 1];
     }
     int32_t clip = beats * 960, quant = *(const int32_t *)(pad + PAD_QUANT), sync = *(const int32_t *)(pad + PAD_SYNC);
     int32_t grid = quant > 0 ? (int32_t)gcd((uint32_t)quant, (uint32_t)clip) : 0, step = clip;
