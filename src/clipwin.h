@@ -67,7 +67,7 @@
 #define SLIP_MAX    3840             /* Slip's range, +- one bar of ticks */
 #define LOOPLEN_MAX 7                /* Loop Len: Off, then 1/16 << (value - 1) up to 4 bars */
 #define FIT_AUTO    1                /* Fit: Off, Auto (Bars), Auto (Beats), then 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2, 4 */
-#define FIT_BEATS   2                /* ...and 8 bars (D-032, after D-031's: no migration, a saved length loads one up) */
+#define FIT_BEATS   2                /* ...and 8 bars (D-032: no migration, a saved length loads as the row before it) */
 #define FIT_MAX     10
 #define FIT_AUTO_MAX 1024            /* Fit Auto's most beats (an 8.5-minute loop at 120 BPM; a whole number of bars) */
 #define LOOP_FADE_MAX 1000           /* stock's Loop Fade row (0xfa): 0 .. 1000 = 0 .. 100 % of the loop */

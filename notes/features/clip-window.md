@@ -56,7 +56,7 @@ and Known issues. The research model of the hooks is outside the repo, in `/srv/
 | Clip pad, Pos tab, row 5 | `Region:` | `0x1c8` | Auto, File, Loop | Auto | `clipregion` |
 | Clip pad, Pos tab, row 6; Clip Waveform BL (`Slip`) | `Slip:` | `0x1c9` | −4.000 … +4.000 (−3840 … +3840 ticks) | +0.000 | `clipslip` |
 | Clip pad, Pos tab, row 7; Clip Waveform BR (`LpLen`) | `Loop Len:` | `0x1ca` | Off, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Off | `cliplooplen` |
-| Clip pad, Pos tab, row 8 | `Fit:` | `0x1cb` | Off, Auto (Bars), 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars, Auto (Beats) | Off | `clipfit` |
+| Clip pad, Pos tab, row 8 | `Fit:` | `0x1cb` | Off, Auto (Bars), Auto (Beats), 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars | Off | `clipfit` |
 | Clip pad, Pos tab, row 9 | stock's Loop Fade | stock `0xfa` | 0 … 100 % (0 … 1000) | 0 | stock's |
 | Clip Waveform TL | `LpS` | stock `0x91` | 0 … Loop End, frames | stock's | stock's |
 | Clip Waveform TR | `LpE` | stock `0x92` | Loop Start … the file's length, frames | stock's | stock's |
@@ -221,10 +221,12 @@ At their defaults the pad plays exactly as stock (bit for bit, under emulation).
   at the tempo then. The list's other values force a length. Thomas at Gate 3 (16/10, ~13:00), of pad 1's 14.015-beat
   take: « that weird length is intended as polyrhythmic loop and should be handled properly », so Auto is not stock's
   Beat Count Auto (the power of two nearest the length, which makes that take 16 beats). That Auto is **Auto (Beats)**
-  since D-031 (#t-029), last in the list; **Auto (Bars)**, second, keeps a loop cut by ear on the bar (Thomas, 20/10:
+  since D-031 (#t-029), third in the list since D-032 (#t-033); **Auto (Bars)**, second, keeps a loop cut by ear on the bar (Thomas, 20/10:
   « fit auto doesnt make the loop metronome syncable »): under a bar the nearest of 1/4, 1/2 and 1 bar, from a bar up
   the nearest whole number of bars, both of the length itself, ties up (5.9 beats → 1 bar, 6 → 2 bars, 14.015 → 4
-  bars). A preset saved with Auto loads as Auto (Bars); its lengths load as they were.
+  bars). A preset saved with Auto loads as Auto (Bars). Since D-032 (both Autos after Off) a preset saved with a length
+  or with Auto (Beats) loads one place off (a length as the row before it, Auto (Beats) as 8 bars): no migration,
+  Thomas's call (21/10).
 - **Polymetric.** A length that is no whole number of Quants (3, 5, 6, 7, 14 beats on Quant 1 bar) comes round every
   so many beats against the bar. Each pass starts one loop after the one before, seamlessly. Under emulation stock does
   not keep such a clip (§5, 11b): it snaps each pass's end to its wrap grid min(Quant, clip), so a 14-beat clip on
@@ -465,7 +467,7 @@ exclusive access anywhere (D-013).
 | `0x723` | `u8 llv[16]` | Loop Len as the poll last read it from the store (the settle, finding 8) |
 | `0x733` | `u8 llc[16]` | the polls since it changed: taken at `LL_SETTLE` (7; 4 until 37.3.0) |
 | `0x744` | `i32 flen[16]` | `fw_src_len` at the pad's last recompute (H3 site 1): the Clip Waveform's file length (finding 12) |
-| `0x784` | `u8 fit[16]` | Fit as taken with the region (0 Off, 1 Auto (Bars), 2 … 9 = 1/4 … 8 bars, 10 Auto (Beats)) |
+| `0x784` | `u8 fit[16]` | Fit as taken with the region (0 Off, 1 Auto (Bars), 2 Auto (Beats), 3 … 10 = 1/4 … 8 bars; D-032) |
 | `0x794` | `u8 pfit[16]` | the Fit the pad had before its wrap's adoption: `cw_hold` puts it back |
 | `0x7A4` | `u8 fon[16]` | 1: the pad's last recompute stored Fit's step fields (the poll's tempo check, the whole file's seamless end and latch) |
 | `0x7B4` | `u16 abeats[16]` | Fit Auto's count … |
