@@ -336,8 +336,33 @@ void clipwin_tick(uint8_t *engine)
     uint8_t *pad = b->pad[q];
     if (r & 8)                           /* Fit: a fitted pad made at another tempo */
         fw_recompute(pad, engine);
-    if (r & 4)                           /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
-        cw_retire(pad, fw_src_len(*(void **)(pad + PAD_SOURCE)));
+    if (r & 4) {                         /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
+        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
+        cw_retire(pad, len);
+        /* F-p: a Sync or Quant set while the slot was closed re-gridded the playing segments onto a step of the
+           closed slot's 2^28-frame clip (+0x200 keeps the frames per step it re-gridded from), and the recompute at
+           the open re-grids nothing, so the pad sounds no segment for millions of samples. Its own Sync, sent again,
+           re-grids them from the open file (the class-B param-set has no same-value check, notes/re/a2). A step
+           longer than the whole file is only that; the param-set stores the new one, so it is sent once. Never
+           while a launch waits for its Quant point: any Sync message sounds it at once (droplaunch). */
+        if (engine && !(r & 2) && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] &&
+            *(const float *)(pad + PAD_FPS_WAS) > (float)len) {
+            int wait = 0;
+            for (unsigned k = 0; k < 4; k++) {
+                const uint8_t *seg = pad + SEG0 + k * SEG_SIZE;
+                wait |= seg[0] && !seg[1] && seg[SEG_FIRST];
+            }
+            if (!wait) {
+                msg[0] = 0x39;
+                msg[1] = 0;
+                msg[2] = *(const uint32_t *)(pad + PAD_ID);
+                msg[3] = P_SYNC;
+                msg[4] = (uint32_t)fw_setting(store, P_SYNC);
+                msg[5] = 0;
+                r |= 2;
+            }
+        }
+    }
     if (r & 2)
         fw_pad_param(pad, engine, msg, engine + CLOCK_CTX);
     if (!(r & 1))
