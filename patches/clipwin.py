@@ -43,6 +43,8 @@ PATCHES = [
     hook(0x080A582A, 0x080A7EE0, "clipwin_bind"),
     hook(0x080A53B0, 0x080A52C4, "clipwin_zoom"),
     hook(0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
+    # the waveform's tick, after it placed the playhead line: no line while a Clip view holds on an edge
+    hook(0x080C6DCA, 0x080C6ACC, "clipwin_line"),
     # the Waveform screen's four corner labels, in every pad mode: the end of the view's constructor (FUN_080a5b90), which
     # greys each corner knob's three labels once (TL, BL, TR, BR); the knob's line gets white with a black edge
     hook(0x080A660A, 0x080B02E6, "clipwin_label"),

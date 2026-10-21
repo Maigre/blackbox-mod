@@ -240,6 +240,7 @@ sites = {"H1 (segment start, FUN_08065550)": (0x0806578C, PREFETCH, "clipwin_seg
          "W (the Waveform's Clip bind block, its last unbind: BR)": (0x080A582A, 0x080A7EE0, "clipwin_bind"),
          "W (FUN_080a53a2: the position knobs at every bind and zoom change)": (0x080A53B0, 0x080A52C4, "clipwin_zoom"),
          "W (the Waveform refresh's Clip case: the slice markers)": (0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
+         "W (the waveform's tick, after it placed the playhead line)": (0x080C6DCA, 0x080C6ACC, "clipwin_line"),
          **{f"L (the Waveform view's constructor colouring its {n} knob)": (at, 0x080B02E6, "clipwin_label")
             for n, at in (("TL", 0x080A660A), ("BL", 0x080A6612), ("TR", 0x080A661A), ("BR", 0x080A6622))}}
 for what, (at, was, now) in sites.items():
@@ -4558,6 +4559,44 @@ check(f"  the view stays with the playhead on {[n for n, _ in nm]} ({set(f for _
       f"Region File, no bracket ({follow(fv)}); and without bank 2, as stock ({follow(nb2)}, entered {nb2.b2_entered[:2]})",
       ok_ and follow(fv)[:2] == (160000, 1) and follow(nb2)[:2] == (160000, 1) and fv.vals[0x91] < 24000
       and nb2.vals[0x91] < 24000, (nm, follow(fv), follow(nb2)))
+
+# ---- Thomas at the 37.4.1d bench: while the view holds on that edge, the white playhead line marks the edge, not the
+# playhead. In Clip mode the bind block pins the line to the anchor pixel (+ 0x248 = 1: + 0x23c = + 0x240 at each tick)
+# and scrolls the waveform under it. clipwin_line (at the tick's FUN_080c6acc) puts it left of the waveform's box for the
+# hold (the draw, FUN_080c6338 @0x080c68f2, draws + 0x23c only from the box's x + 0x4), and the tick puts it back after.
+# Sample mode (+ 0x248 = 0: the line moves over the view) keeps stock's line, held or not.
+def line(scr):
+    """the playhead line's pixel from the waveform box's left edge: < 0 is not drawn"""
+    return scr.m.r32(WV + 0x23C) - scr.m.r32(WV + 0x4)
+
+
+lh = Screen()
+lh.open({**CLIP12, P_REGION: LOOP})
+lh.m.uc.mem_write(WV + 0x1E0, b"\x01")
+tick(lh, 150000)
+following = line(lh), lh.m.r32(WV + 0x240) - lh.m.r32(WV + 0x4)
+lh.turn(0, -400, t=50_000)
+tick(lh, 151000)
+holding = line(lh), follow(lh)
+tick(lh, 151000, 298)
+still = line(lh), follow(lh)[1:]
+tick(lh, 152000)
+after = line(lh), follow(lh)[:2]
+check(f"the line on a Clip view (+0x248 {lh.m.r8(WV + 0x248)}): on the anchor pixel while it follows the playhead "
+      f"({following}); after a TL turn, out of the box while the view holds on Loop Start ({holding}), still for the "
+      f"hold's 299th tick ({still}); back on the anchor when the view follows the playhead again ({after})",
+      lh.m.r8(WV + 0x248) == 1 and following[0] == following[1] >= 0 and holding[0] < 0 and holding[1][1] == 2
+      and still == (holding[0], (2, 1)) and after == (following[0], (152000, 1)), (following, holding, still, after))
+sp = Screen()
+sp.open({**CLIP12, 0x8B: 0})
+sp.m.w32(WV + 0x244, 151000)
+sp.m.uc.mem_write(WV + 0x1E0, b"\x02")
+sp.m.w32(WV + 0x180, 300)
+tick(sp, 151000)
+check(f"  a Sample view (+0x248 {sp.m.r8(WV + 0x248)}) held the same way (an overview tap) keeps stock's line, on the "
+      f"playhead: {line(sp)} (the anchor's {sp.m.r32(WV + 0x240) - sp.m.r32(WV + 0x4)}, mode {sp.m.r8(WV + 0x1E0)})",
+      sp.m.r8(WV + 0x248) == 0 and sp.m.r8(WV + 0x1E0) == 2 and line(sp) == sp.m.r32(WV + 0x240) - sp.m.r32(WV + 0x4) >= 0,
+      (line(sp), follow(sp)))
 
 # ---- the zoom: msg 0xe5 (no refresh follows it) re-steps the pair, keeping range and value, as Sample mode's
 for s_ in (sc, sm):

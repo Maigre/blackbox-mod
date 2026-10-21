@@ -656,6 +656,28 @@ void clipwin_wave(uint8_t *wave, const void *slices)
     clip_view(wave - VIEW_WAVE, 0, was);
 }
 
+/* Replaces bl FUN_080c6acc @0x080c6dca, in the waveform's tick FUN_080c6c34 (the view's, 0x080a6f70: wave = view +
+   0x38), every tick, just after it set the playhead line's pixel (+ 0x23c). In Clip mode the bind block pins that line
+   to the view's anchor pixel (+ 0x240) and scrolls the waveform under it (FUN_080c6f44 @0x080a55e4: + 0x248 = 1, as
+   for Slicer), so while the view holds on a frame (follow mode + 0x1e0 = 2: a TL or TR turn, clip_view, or a tap on
+   the overview) the line marks that frame, the edge being set, not the playhead (Thomas at the 37.4.1d bench). It goes
+   then, to the pixel left of the waveform's box, which the draw skips (FUN_080c6338 @0x080c68f2), and the tick puts it
+   back once the view follows the playhead again. A stopped pad's view holds until it plays, and so does the line.
+   Every other mode keeps stock's line. */
+#define WAVE_X      0x4
+#define WAVE_FOLLOW 0x1e0
+#define WAVE_LINE   0x23c
+#define WAVE_FIXED  0x248
+#define fw_wave_tiles ((len_fn)FN(0x080c6acc))
+
+void clipwin_line(uint8_t *wave, int32_t anchor)
+{
+    if (wave[WAVE_FOLLOW] == 2 && wave[WAVE_FIXED] &&
+        fw_setting(wave - VIEW_WAVE + VIEW_STORE, P_PAD_MODE) == PAD_MODE_CLIP)
+        *(int32_t *)(wave + WAVE_LINE) = *(int32_t *)(wave + WAVE_X) - 1;
+    fw_wave_tiles(wave, anchor);
+}
+
 /* ---- the playhead ---- */
 
 /* H5. Replaces bl FUN_0804f504 @0x080668fc (clipwin_playhead_b: r6 = the pad, fp = the segment's slot): the render

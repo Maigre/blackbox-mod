@@ -301,6 +301,12 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   that moved one edge of a bracket shown before and after (`cw_bracket`'s return): not a bind, a zoom, a load or
   a preset (both ends at once), a Region change, Region File (no bracket), nor without bank 2. 300 ticks in
   seconds is a bench measure.
+- **No playhead line while the view holds** (Thomas at the 37.4.1d bench). Clip mode pins the white line to the
+  view's anchor pixel and scrolls the waveform under it (the bind block's `FUN_080C6F44`, `+0x248` = 1, as for
+  Slicer), so during the hold the line sat on the edge being set. While the waveform's follow mode is 2 (a TL
+  or TR turn, or a tap on the overview) `clipwin_line` puts the line's pixel (`+0x23C`) left of the waveform's
+  box, which the draw skips (`FUN_080C6338` at `0x080C68F2`); the tick puts it back when the view follows the
+  playhead again. A stopped pad's view holds until it plays, and so does the line. Sample mode's line is stock's.
 - **BL Slip and BR Loop Len.** These are the Pos tab's rows, with the same text and feel.
 - **The names.** A knob there draws one line, "name value", 12 px a character (the 6 × 8 font at double size), in a
   151-px box: left-aligned from x 6 on the left, right-aligned to x 309 on the right. Twelve characters stay in the
@@ -413,6 +419,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
+| W line | `0x080C6DCA` (the waveform's tick `FUN_080C6C34`, after it set the line's pixel `+0x23C`) | `bl 0x080C6ACC` tiles | `clipwin_line(wave, anchor)` | Clip mode, follow mode `+0x1E0` = 2 and the line pinned (`+0x248`): the line's pixel left of the box (`+0x4` − 1), not drawn; then stock |
 | L | `0x080A660A`, `0x080A6612`, `0x080A661A`, `0x080A6622` (`FUN_080A5B90`, the Waveform view's constructor: TL, BL, TR, BR) | `bl 0x080B02E6` the knob's colour (9) | `clipwin_label(knob, colour)` | stock's colour, then the knob's line (`+0xF4`) given `label_vt`, stock's label vtable with `label_draw` / `label_clip`: nine passes of stock's draw (`FUN_080C3D2C`, `FUN_080C3FC6`), black around, white on top, in the box inset by a pixel, while `b2_live()`; stock's draw otherwise |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0, 0, 0` | `0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA` | the five rows in slots 5–9 (stock's own Loop Fade `0xFA` in slot 9) |
 | tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); the segments its file no longer reaches retired (`cw_retire`, with the source's `fw_src_len`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
