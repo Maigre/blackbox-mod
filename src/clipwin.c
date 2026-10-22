@@ -97,6 +97,10 @@
  * playing pad catches up with it at its next wrap (clipwin_bind, clipwin_zoom, clipwin_wave). The view's own forward
  * stores them all. A TL or TR turn takes the view to the edge it moves, as a tap on the overview does, and the view
  * follows the playhead again after a pause.
+ * Region Move (hub blackbox#t-042, notes/re/x5): with "TL Knob:" Move (Loop Start | Move, after Loop Fade, saved as
+ * "cliptlknob") TL reads "Mov", ranges 0 .. file - (Loop End - Loop Start), and Loop End follows each turn by the same
+ * amount (clipwin_move, in the forward), so the region slides with its length; the view goes to Loop Start. With no
+ * region TL does not turn. Heard at the next pass, as a TL or TR turn.
  *
  * Bank 2 (D-017, D-018): the maths and the policy of every hook below are in flash bank 2, clipwin_b2.c (the cw_*
  * functions: the latch, the read's mapping and seam hint, Region's rule and its adoption, the lengths H3 tells, the
@@ -164,6 +168,8 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define P_SLIP      0x1c9
 #define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
 #define P_FIT       0x1cb            /* Off, Auto (Bars), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats), Auto (Beats) */
+#define P_TLKNOB    0x1cc            /* the Waveform's TL knob in Clip mode: Loop Start, Move (clipwin_move) */
+#define TLKNOB_MOVE 1
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
@@ -207,11 +213,13 @@ void clipwin_register(void *table)
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
     fw_register_list(table, P_LOOPLEN, "Loop Len:", looplen_names, LOOPLEN_MAX + 1, "cliplooplen");
     fw_register_list(table, P_FIT, "Fit:", fit_names, FIT_MAX + 1, "clipfit");
+    static const char *const tlknob_names[2] = {"Loop Start", "Move"};
+    fw_register_list(table, P_TLKNOB, "TL Knob:", tlknob_names, 2, "cliptlknob");
 }
 
 void clipwin_defaults(void *store)
 {
-    for (int p = P_REGION; p <= P_FIT; p++)   /* Region, Slip, Loop Len, Fit (0x1c8 .. 0x1cb), in that order */
+    for (int p = P_REGION; p <= P_TLKNOB; p++)   /* Region, Slip, Loop Len, Fit, TL Knob (0x1c8 .. 0x1cc), in order */
         fw_store_add(store, p, 0);   /* stock only overwrites ids already in a store: without these nothing saves */
 }
 
@@ -569,7 +577,7 @@ void clipwin_bind(int param, int value, uint8_t *knob)
         unsigned id = clip_knobs[i] & 0xffff;
         uint8_t *k = view + (clip_knobs[i] >> 16);
         fw_bind((int)id, fw_setting(view + VIEW_STORE, id), k);
-        fw_knob_name(k, clip_names[i]);
+        fw_knob_name(k, !i && fw_setting(view + VIEW_STORE, P_TLKNOB) == TLKNOB_MOVE ? "Mov" : clip_names[i]);
         fw_knob_redraw(k);
     }
 }
@@ -605,8 +613,17 @@ static void clip_view(uint8_t *view, int step, int was)
         *(int32_t *)(tr + KNOB_STEP) = step;
     }
     const void *st = view + VIEW_STORE;
-    int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = clip_len(view);
-    fw_knob_range(tl, 0, le);
+    int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = clip_len(view), edge = -1;
+    /* the bracket, when Region plays the loop (cw_bracket); without bank 2 none, as stock */
+    if (b2_live())
+        edge = cw_bracket(wave, fw_setting(st, P_REGION), ls, le, len, was);
+    int move = fw_setting(st, P_TLKNOB) == TLKNOB_MOVE;
+    if (!move)
+        fw_knob_range(tl, 0, le);
+    else if (wave[WAVE_LOOP_ON])
+        fw_knob_range(tl, 0, len - (le - ls));   /* Move: the region slides, its length kept, inside the file */
+    else
+        fw_knob_range(tl, ls, ls);               /* Move with no region (the bracket off): TL does not turn */
     fw_knob_value(tl, ls);
     fw_knob_range(tr, ls, len);
     fw_knob_value(tr, le);
@@ -620,12 +637,9 @@ static void clip_view(uint8_t *view, int step, int was)
         if (*(int32_t *)(k + KNOB_STEP0 + STEPPER_INDEX) + *(int32_t *)(k + KNOB_STEP0 + STEPPER_START) != v)
             fw_revalue((int)id, v, k);
     }
-    /* the bracket, when Region plays the loop (cw_bracket); without bank 2 none, as stock */
-    if (b2_live()) {
-        int32_t edge = cw_bracket(wave, fw_setting(st, P_REGION), ls, le, len, was);
-        if (!step && edge >= 0)
-            fw_wave_show(wave, edge);
-    }
+    /* A move's two refreshes each move one edge: in Move the view goes to Loop Start both times (x5 (b)) */
+    if (!step && edge >= 0)
+        fw_wave_show(wave, move ? ls : edge);
 }
 
 /* Replaces bl FUN_080a52c4 @0x080a53b0, in FUN_080a53a2 (r1 = (int)zoom): every bind of the screen, every zoom change
@@ -654,6 +668,44 @@ void clipwin_wave(uint8_t *wave, const void *slices)
     int was = wave[WAVE_LOOP_ON];
     fw_wave_slices(wave, slices);
     clip_view(wave - VIEW_WAVE, 0, was);
+}
+
+/* Region Move (TL Knob: Move, hub blackbox#t-042, notes/re/x5): TL still shows and sets Loop Start, and Loop End
+   follows it by the same amount, so the region slides with its length kept; the pad hears it at its next pass, as a
+   TL or TR turn. Called by the view's forward (slice.c's slice_forward, at 0x080a6c6c) with the knob's message to the
+   app (slice.c's struct msg: + 0 the id, + 0xc the row, + 0x10 the value), before it is posted. Returns 0 for every
+   message but a Clip pad's TL in Move, which it posts itself as two: SetCellParam clamps neither point against the
+   other (x5 (a)), so the edge ahead goes first (Loop End moving forward, Loop Start moving back) and the pair between
+   the two posts is a valid, longer region. The message is posted, then changed and posted again: stock's post copies
+   it. With no region (the bracket off, as without bank 2) the turn is dropped; clip_view gives TL no range then. */
+#define VMSG_PARAM  0x6e
+#define VMSG_ROW    0x0c
+#define VMSG_VALUE  0x10
+typedef void (*view_post_fn)(uint8_t *view, uint8_t *msg);
+#define fw_view_post ((view_post_fn)FN(0x080aed14))   /* the view's generic forward to the app */
+
+int clipwin_move(uint8_t *view, uint8_t *msg)
+{
+    const void *st = view + VIEW_STORE;
+    if (*(const uint16_t *)msg != VMSG_PARAM || *(const int32_t *)(msg + VMSG_ROW) != P_LOOP_START ||
+        fw_setting(st, P_PAD_MODE) != PAD_MODE_CLIP || fw_setting(st, P_TLKNOB) != TLKNOB_MOVE)
+        return 0;
+    int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = clip_len(view);
+    int32_t to = *(const int32_t *)(msg + VMSG_VALUE);
+    if (to > len - (le - ls))
+        to = len - (le - ls);
+    if (to < 0)
+        to = 0;
+    int32_t d = to - ls;
+    if (!view[VIEW_WAVE + WAVE_LOOP_ON] || !d)
+        return 1;
+    for (int i = 0; i < 2; i++) {
+        int end = (d > 0) != i;      /* Loop End first moving forward, Loop Start first moving back */
+        *(int32_t *)(msg + VMSG_ROW) = end ? P_LOOP_END : P_LOOP_START;
+        *(int32_t *)(msg + VMSG_VALUE) = end ? le + d : to;
+        fw_view_post(view, msg);
+    }
+    return 1;
 }
 
 /* ---- the playhead ---- */

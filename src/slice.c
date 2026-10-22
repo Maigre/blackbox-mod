@@ -84,6 +84,8 @@ static const float zoom_tab[ZOOM_LEVELS] = {
     4.0f, 2.828427f, 2.0f, 1.414214f, 1.0f,
 };
 
+int clipwin_move(uint8_t *view, uint8_t *msg);   /* clipwin.c */
+
 struct msg {
     uint16_t id, _r0;
     uint32_t tag;
@@ -318,5 +320,7 @@ void slice_forward(uint8_t *view, struct msg *m)
         focus(view, 1);
         return;
     }
+    if (clipwin_move(view, (uint8_t *)m))   /* clipwin.c: a Clip pad's TL in Move posts Loop Start and Loop End */
+        return;
     fw_post(view, m);
 }

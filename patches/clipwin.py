@@ -1,5 +1,5 @@
-"""Clip Window: per-pad Slip, Region, Loop Len and Fit on Clip pads (see src/clipwin.c, notes/re/README.md sections 2
-and 3).
+"""Clip Window: per-pad Slip, Region, Loop Len, Fit and TL Knob on Clip pads (see src/clipwin.c, notes/re/README.md
+sections 2 and 3).
 
 Rides with the `filter` set (patches/filter.py imports it), which already owns the clip reader's call and the pad
 pages, so the patched image keeps its name. The clip read itself needs no patch here: filter.py's hook at 0x08066622
@@ -51,7 +51,8 @@ PATCHES = [
     hook(0x080A6622, 0x080B02E6, "clipwin_label"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
     # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8, and
-    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9
-    (0x080EF998, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
-    (0x080EF290, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
+    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9,
+    # TL Knob (the Waveform's TL in Clip mode: Loop Start or Move) in slot 10
+    (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
+    (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
 ]

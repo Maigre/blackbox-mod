@@ -99,6 +99,7 @@ S = e.sym
 
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
 P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
+P_TLKNOB = 0x1CC                                      # TL Knob: Loop Start, Move (the Waveform's TL in Clip mode)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
 FIT_NAMES = ["Off", "Auto (Bars)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars", "Auto (Beats)"]
 FIT_BEATS = [None, None, 1, 2, 3, 4, 6, 8, 16, 32, None]   # Fit's list: its beats (each Auto counts its own)
@@ -298,11 +299,11 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
       order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
-POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE)   # the Clip Pos page's slots 5 .. 9
+POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 5 .. 10
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
     check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
-          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), then {32 - len(POS_ROWS)} empty slots",
+          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), TL Knob (0x1cc), then {32 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
@@ -388,18 +389,23 @@ check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)}
       "'3 beats' and '6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
       and {fit_reg[0][1]} == list_type and lists.get(P_FIT) == FIT_NAMES and regs.index(fit_reg[0]) > regs.index(ll_reg[0]),
       (fit_reg, lists.get(P_FIT)))
+tlk_reg = [r for r in regs if r[0] == P_TLKNOB]
+check(f"... and 0x1cc once, after Fit: 'TL Knob:', a list of {lists.get(P_TLKNOB)}, saved as 'cliptlknob'",
+      len(tlk_reg) == 1 and tlk_reg[0][2] == "TL Knob:" and tlk_reg[0][5] == "cliptlknob" and {tlk_reg[0][1]} == list_type
+      and lists.get(P_TLKNOB) == ["Loop Start", "Move"] and regs.index(tlk_reg[0]) > regs.index(fit_reg[0]),
+      (tlk_reg, lists.get(P_TLKNOB)))
 check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
-      and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9)
-check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8, 0x1c9, 0x1ca and 0x1cb there",
+      and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9 and tlk_reg and len(tlk_reg[0][2]) <= 9)
+check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8 .. 0x1cc there",
       not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF]
-      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT],
+      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB],
       [hex(r[0]) for r in regs if 0x1C8 <= r[0] <= 0x1CF])
 xmls = [r[5] for r in regs if r[5]]
 dups = sorted({x for x in xmls if xmls.count(x) > 1})
 stock_xmls = [r[5] for r in stock_regs if r[5]]
-check("'clipslip', 'clipregion', 'cliplooplen' and 'clipfit' are unique among every registered xml name (and new to the "
-      "image)", all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
-                    for x in ("clipslip", "clipregion", "cliplooplen", "clipfit")))
+check("'clipslip', 'clipregion', 'cliplooplen', 'clipfit' and 'cliptlknob' are unique among every registered xml name (and "
+      "new to the image)", all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
+                               for x in ("clipslip", "clipregion", "cliplooplen", "clipfit", "cliptlknob")))
 if dups:
     info(f"xml names registered more than once (stock's own: {sorted({x for x in stock_xmls if stock_xmls.count(x) > 1})}): {dups}")
 check(f"the patched registrar still registers stock's {len(stock_regs)} ids under their stock xml names (JOEBOX relabels a few)",
@@ -415,9 +421,9 @@ del e.stubs[0x0804436C]
 count, cap = e.r16(PSTORE + 10), e.r16(PSTORE + 12)
 entries = [struct.unpack_from("<HHi", bytes(e.uc.mem_read(PARR + 8 * i, 8))) for i in range(count)]
 ids = [x[0] for x in entries]
-check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off) and Fit 0 (Off) once each "
-      f"({count} of {cap} entries used)",
-      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT))
+check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off), Fit 0 (Off) and TL Knob 0 (Loop Start) "
+      f"once each ({count} of {cap} entries used)",
+      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB))
       and cap == 96 and count < cap,
       (count, cap, ids[-4:]))
 
@@ -5195,6 +5201,68 @@ fp_gap = max(b_ - a_ for a_, b_ in zip(fp_plain, fp_plain[1:]))
 check("  ...a load with no Sync set inside it sends nothing: the pad plays on through it, a step every 1/16 as with no "
       f"load (longest gap {fp_gap} blocks)", not fp_plain_sent and fp_plain[:8] == fp_none[:8] and fp_gap <= 50 and
       fp_plain[-1] > 2500, f"sent {fp_plain_sent}, made {fp_plain[:8]} / {fp_none[:8]}")
+
+
+# ====================================================================================================== 12e. Region Move
+# TL Knob: Move (0x1cc, hub blackbox#t-042, notes/re/x5): on a Clip pad's Waveform TL still sets Loop Start, ranged 0 ..
+# file - (Loop End - Loop Start), and Loop End follows it by the same amount. The view's forward (slice_forward ->
+# clipwin_move) posts the pair itself, the edge ahead first (SetCellParam clamps neither, x5 (a)); the app stores each
+# and posts its own 0x66 (done here one refresh per post, as the app does it); the view ends on Loop Start (x5 (b)).
+def mv_run(vals, counts, mode=1):
+    """the Screen opened on CLIP12 + vals; one TL turn per entry of counts. Returns (the screen, per turn: (the knob's
+    forwards, the pair stored after it, every frame the view was sent to))"""
+    sc = Screen()
+    shows = []
+    sc.m.uc.hook_add(UC_HOOK_CODE, lambda *a: shows.append(sc.m.arg(1)), begin=0x080C6E68, end=0x080C6E68)
+    sc.open({**CLIP12, 0x8B: mode, **vals}, was=mode)
+    out, t = [], 50_000
+    for c in counts:
+        t += 5_000
+        sc.m.w32(GUI_MS, t)
+        sc.posts.clear()
+        sc.msg(0x080A6D28, 0x32, 0, c)
+        own, fwd = list(sc.posts), []
+        for p_ in own:
+            sc.posts.clear()
+            sc.m.uc.mem_write(VMSG, struct.pack("<HHIHHiiI", p_[0], 0, 0x080CFBA4, 0, 0, p_[1], p_[2], 0))
+            sc.m.call(0x080A66DC, VIEW, VMSG, count=50_000_000)
+            fwd += sc.posts
+        shows.clear()
+        for p_ in fwd:
+            if p_[0] == 0x6E:
+                sc.stored(**{f"_{p_[1]:x}": p_[2]})
+        out.append(([(r, v) for _, r, v in fwd], (sc.vals[0x91], sc.vals[0x92]), list(shows)))
+    return sc, out
+
+
+mv, mv_out = mv_run({P_TLKNOB: 1}, (+2000, -3600))
+k_ = mv.knob("TL")
+mv_names = [x for a, x in mv.texts if a == KN12["TL"] + 0x44]
+check("Move: TL keeps Loop Start (0x91), named 'Mov', ranged 0 .. 192 000 - 48 000 (the region slides inside the file, "
+      "its length kept)", k_["id"] == 0x91 and mv.shown("TL") == mv_out[-1][1][0] and (k_["lo"], k_["hi"]) == (0, 144000)
+      and mv_names[-1:] == ["Mov"], (k_, mv_names))
+(f1, p1, v1), (f2, p2, v2) = mv_out
+check("  ...a turn forward posts Loop End first, then Loop Start, by the same amount: the pair between them is a valid, "
+      f"longer region; the length stays 48 000 and the view ends on the new Loop Start ({f1}, views {v1})",
+      [r for r, _ in f1] == [0x92, 0x91] and f1[0][1] - 72000 == f1[1][1] - 24000 > 0 and p1[1] - p1[0] == 48000
+      and v1[-1:] == [p1[0]], (f1, p1, v1))
+check(f"  ...a turn back posts Loop Start first, then Loop End; the length kept, the view on Loop Start ({f2}, views {v2})",
+      [r for r, _ in f2] == [0x91, 0x92] and f2[1][1] - p1[1] == f2[0][1] - p1[0] < 0 and p2[1] - p2[0] == 48000
+      and v2 == [p2[0], p2[0]] and mv.wave()["on"] == 1 and (mv.wave()["ls"], mv.wave()["le"]) == p2, (f2, p2, v2))
+ls_, ls_out = mv_run({}, (+2000, -3600))
+k_ = ls_.knob("TL")
+check("TL Knob: Loop Start (the default) is the knob as before: 'LpS', ranged 0 .. Loop End, one post of Loop Start a "
+      "turn, the view on the edge it moved", (k_["lo"], k_["hi"]) == (0, ls_out[-1][1][1])
+      and [x for a, x in ls_.texts if a == KN12["TL"] + 0x44][-1:] == ["LpS"]
+      and all([r for r, _ in f] == [0x91] and v == [p[0]] for f, p, v in ls_out) and ls_out[-1][1][1] == 72000, ls_out)
+fl, fl_out = mv_run({P_TLKNOB: 1, P_REGION: 1}, (+2000, -3600))
+k_ = fl.knob("TL")
+check("Move with no region (Region File, the bracket off): TL does not turn (its range is Loop Start alone) and nothing is "
+      "posted", (k_["lo"], k_["hi"]) == (24000, 24000) and all(not f and p == (24000, 72000) for f, p, _ in fl_out),
+      (k_, fl_out))
+sm, sm_out = mv_run({P_TLKNOB: 1}, (+2000,), mode=0)
+check("Sample mode with TL Knob Move: TL is stock's Start (0x8f) and posts it alone", sm.knob("TL")["id"] == 0x8F
+      and [r for r, _ in sm_out[0][0]] == [0x8F] and sm_out[0][1] == (24000, 72000), sm_out)
 
 
 print(f"{fails} failed")
