@@ -4,8 +4,9 @@ Stock 3.1.9. Marks as in the other notes: ✓ = run under Unicorn, *inferred* = 
 /tmp copy of `/srv/dev/firmware/ghidra`), *design* = a choice. Plan of record: hub `blackbox` notes
 `2026-10-22-t-031-close.md` (rev 1, ratified 22/10).
 
-**Status (22/10, turn 1): the static half.** The chain below is read, its hook sites named. Still owed before the
-patch leans on it, by a Unicorn run (FatFs served from memory): §5's list.
+**Status (22/10, turn 2): the static half, plus §6 ✓ (the meta's loop and crop, stock's two helpers run).** The chain
+below is read, its hook sites named. Still owed before the patch leans on it, by a Unicorn run (FatFs served from
+memory): the rest of §5's list.
 
 ## 1. The menu — `FUN_080B3194`, case `0x127` (the File menu opening) *inferred*
 
@@ -47,8 +48,8 @@ In order, with the call sites the patch can take:
 6. Every other cell naming `path` is reloaded too (`0x080A108A`), then `FUN_0809EAEC(app, 6, 0)`.
 
 So the cut stays stock's if, for a Clip pad, the meta carries the loop and the crop **before step 4**: *design* —
-redirect `0x080A0FD0` to a bank-1 thunk that, when a Clip trim is pending, calls `FUN_08077738` with the region's
-`[LS, LE)` and `FUN_0807775C(meta, LS − F, LE − LS + F)`, then tail-calls stock's request. The crop moves the loop
+redirect `0x080A0FD0` to a bank-1 thunk that, when a Clip trim is pending, calls `FUN_08077738(meta, 0, &{LS, LE,
+type})` and `FUN_0807775C(meta, LS − F, LE − LS + F)` (the call shapes: §6), then tail-calls stock's request. The crop moves the loop
 into the cut file as `[F, F + LE − LS)` (t-031's read of `FUN_0807775C`, to prove: §5). Step 2's branch and the store
 stay stock's.
 
@@ -81,10 +82,37 @@ What follows for the patch (*inferred*, to prove in §5):
 
 1. A Clip pad's File menu reaches case `0x127` (the browser opened from a Clip pad), and `0x080B3620`'s `on` for
    mode 1 is 0 on stock.
-2. `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
+2. *(the meta and its chunks ✓, §6; the audio bytes owed)* `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
    from memory) are `[LS − F, LE)` and the `smpl` loop reads back `[F, end)` — `dwEnd` as written (x3: `0x92` is
    written verbatim, read back verbatim).
 3. The reload with the fresh byte cleared after `0x080A0FE0`: Quant, Sync, Launch, Loop Mode, Beat Count kept;
    `0x91` where the patch put it after `0xE` and `0x1B`.
 4. That `FUN_080B3194` runs in the GUI task, as `FUN_080A2258` does (§4): a hook at `0x080B38B4` that records the
    task, or the thread-create calls in `main` (README's open question 17).
+
+## 6. ✓ The meta's loop and crop — stock's two helpers under Unicorn (22/10, turn 2)
+
+Run on the stock image (`/srv/dev/firmware/BLACKBOX-3.1.9.bin`), meta block in RAM behind a handle, three cues
+(one before the region, one in it, one at Loop End), 1 M frames:
+
+- **`FUN_08077738(meta**, index, loop*)`** writes only when `index` == 0 (its first instruction is `cbnz r1`). `loop`
+  points at `{u32 start, u32 end, u8 type}`; it sets meta `+0x20C` start, `+0x210` end, `+0x214` type, `+0x218` = 1
+  (has a loop), `+0x21C` = 1 (dirty). So the thunk builds that 9-byte record on its stack and passes `r1` = 0;
+  §3's « with the region's `[LS, LE)` » was short of the shape.
+- **`FUN_0807775C(meta**, start, length)`** sets `+0x228` start, `+0x22C` length, `+0x21C` = 1, keeps the cues in
+  `[start, start + length)` rebased by − start (a cue AT the crop's end is dropped, half-open) and **rebases the loop
+  by − start**. LS 300 000, LE 700 000, F 4 800 → crop `(295 200, 404 800)`, loop `[4 800, 404 800)`: `[F, F + LE −
+  LS)` with its end at the cut file's end, as §3 planned. LE at the file's end (1 M) gives `[4 800, 704 800)`, same
+  rule. F 0 gives `[0, 400 000)`.
+- **Loop Start < F has to clamp** (*design*, from the run): with LS 4 000 and F 4 800 there is no `LS − F`; the crop
+  that starts at 0 keeps the loop at `[4 000, 700 000)`. So the patch crops from `LS − min(F, LS)` and Loop Start
+  := `min(F, LS)` after the reload; the task's « `[Loop Start − F, Loop End)` » reads with that `F`.
+- **What reaches the card's chunks.** `FUN_08072A40` (the disk copy, static) reads the crop at `+0x228`/`+0x22C`
+  (length 0 = the whole asset), streams the audio in `0xC000`-byte blocks, then hands the meta to `FUN_0807723c`,
+  which writes `acid` (24 B), `smpl` (36 B + 24 B per loop), `cue ` and a 7-byte chunk through `f_write`
+  (`0x08086a06`; `f_lseek` `0x08086d96`). Run with those two stubbed on the meta the crop left: `smpl` loop 0 =
+  `{type 0, start 4 800, end 404 800}` (LE 1 M: `end 704 800`), the cue at `204 800`. So **`dwEnd` goes out as the
+  cut file's frame count**, the exclusive end, verbatim from `+0x210` (x3's « written verbatim, read back
+  verbatim »): a fresh load would set Loop End := the file's end, which is the region's end.
+- Still owed in item 2: the audio bytes `FUN_08072A40` copies (`[crop start × bytes/frame, + length × bytes/frame)`
+  is the static read), which needs the app's asset table and `FUN_080769f4`'s `f_open` under the run.
