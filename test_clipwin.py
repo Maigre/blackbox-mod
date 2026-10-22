@@ -3096,6 +3096,32 @@ check(f"Loop Len 1/4 on Region [24 000, 72 000) with Slip 480 (taken at origin {
       on and on[2] == 960 and len(sg) >= 5 and all(x[2] == 60000 for x in sg) and n_ > 80000 and err <= 0.02 and bad_ == 0
       and out == 0 and z == 0 and same_gain(ref_, cw, 288300) == 0, (on, sg[:6], n_, err, bad_, out, z))
 
+# Region Move (TL Knob: Move, hub blackbox#t-042) under Loop Len: the stacked pad above, its region moved forward as
+# clipwin_move posts it (Loop End 84 000 first, then Loop Start 36 000) inside step 0 of a pass, Loop Len 1/4 engaged.
+# The in-point stays; from the next wrap every step plays the window's beat in the moved region, 36 000 + (24 000 +
+# 12 000) mod 48 000 = 72 000 on; before it, every sample as the run without the move (cw above). Under Loop Len a
+# latch's delta is Slip's frames + the window's (cw_latch): the moved run's are cw's, rs 12 000 on
+W = 384000
+mv = audio(pre=ll_pre({300: 3}, slip=480, then=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000))
+                       if rr.block == 500 else None), **kw)
+r = mv["rig"]
+up_to = (W - 287000) // N - 1
+same_before = all(np.array_equal(x, y) for x, y in zip(cw["rig"].out[:up_to], r.out[:up_to]))
+on = taken(r, 3)
+sg = seg_firsts(mv, W)
+n_, err, bad_ = follows(mv, sf=12000, rs=36000, vlen=48000, after=W + 300)
+out, z, pk = inside(mv, 36000, 48000, W + 300)
+lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
+lat_ = [latch(cw["rig"].m, 6, k) for k in range(4) if bank_valid(cw["rig"].m, 6) >> k & 1]
+check(f"Region Move forward under Loop Len 1/4 (Region [24 000, 72 000) -> [36 000, 84 000), Slip 480, the move inside "
+      f"step 0 at sample {287000 + 500 * N}): every output sample as without the move up to the wrap at {W}; the in-point "
+      f"kept (origin {on and on[2]}); from it every step starts on 72 000 ({[x[2] for x in sg[:5]]}), every sample 36 000 + "
+      f"(its step's frame + 12 000) mod 48 000 ({n_}, max {err:.4f}); latched {lat}: the run without the move's, 12 000 on "
+      f"(length, Slip and window kept); nothing outside the moved region, {z} zero-gain samples",
+      same_before and on and on[2] == 960 and len(sg) >= 4 and all(x[2] == 72000 for x in sg) and n_ > 60000
+      and err <= 0.02 and bad_ == 0 and out == 0 and z == 0 and lat and lat == [(a + 12000, v, d) for a, v, d in lat_],
+      (same_before, on, sg[:6], n_, err, bad_, out, z, lat, lat_))
+
 # where Loop Len does nothing: Quant None (no grid); Sync None (no clock phase: a1; forcing a Sync there would make
 # stock's None-to-synced re-grid double a whole step at gain 2); a window of the whole clip or more (2 bars on 4 beats);
 # a Slicer pad; Sync = Slice with markers - every read, fetch, sample and message as the same run without it, the pad's Sync
