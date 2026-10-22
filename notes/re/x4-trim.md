@@ -4,9 +4,9 @@ Stock 3.1.9. Marks as in the other notes: ✓ = run under Unicorn, *inferred* = 
 /tmp copy of `/srv/dev/firmware/ghidra`), *design* = a choice. Plan of record: hub `blackbox` notes
 `2026-10-22-t-031-close.md` (rev 1, ratified 22/10).
 
-**Status (22/10, turn 3): the static half, plus §6 ✓ (the meta's loop and crop) and §7 ✓ (the disk copy's bytes).** The chain
-below is read, its hook sites named. Still owed before the patch leans on it, by a Unicorn run (FatFs served from
-memory): the rest of §5's list.
+**Status (22/10, turn 4): the static half, plus §6 ✓ (the meta's loop and crop), §7 ✓ (the disk copy's bytes) and §8
+(the menu's enables ✓, the task read).** The chain below is read, its hook sites named. Still owed before the patch
+leans on it, by a Unicorn run: §5 item 3, the reload.
 
 ## 1. The menu — `FUN_080B3194`, case `0x127` (the File menu opening) *inferred*
 
@@ -80,14 +80,22 @@ What follows for the patch (*inferred*, to prove in §5):
 
 ## 5. Owed to the Unicorn run (sub-step ① not done until these are ✓)
 
-1. A Clip pad's File menu reaches case `0x127` (the browser opened from a Clip pad), and `0x080B3620`'s `on` for
-   mode 1 is 0 on stock.
+1. ✓ *(§8)* A Clip pad's File menu reaches case `0x127` (the browser opened from a Clip pad), and `0x080B3620`'s `on` for
+   mode 1 is 0 on stock. (Case `0x127` has no mode gate of its own; that a Clip pad's page opens the browser is
+   the patch test's and #t-041's.)
 2. ✓ *(§6 the meta and its chunks, §7 the audio bytes)* `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
    from memory) are `[LS − F, LE)` and the `smpl` loop reads back `[F, end)` — `dwEnd` as written (x3: `0x92` is
    written verbatim, read back verbatim).
 3. The reload with the fresh byte cleared after `0x080A0FE0`: Quant, Sync, Launch, Loop Mode, Beat Count kept;
-   `0x91` where the patch put it after `0xE` and `0x1B`.
-4. That `FUN_080B3194` runs in the GUI task, as `FUN_080A2258` does (§4): a hook at `0x080B38B4` that records the
+   `0x91` where the patch put it after `0xE` and `0x1B`. *Read so far (turn 4), from x3's two runs, not yet one run of
+   the trim's case*: `FUN_0809D998` tests the byte at `app + 0x8A96 + row·0x78 + col·0x18` (= §4's `+0xE`); its
+   `0xEA` branch (the MultiSam zone) returns before it, so it never fires on a Clip pad; not fresh, only Root (store
+   0) and an Auto Beat Count are written (x3 t6), and the Clip defaults `FUN_0809aa94` and the `smpl` loop sit past
+   that test. The `0xE` handler `FUN_080A121C` sets Length := Loop End := frames and posts `0x8F`–`0x92` **from the
+   store** (x3 t13). So the patch writes `0x91` := F into the store right where it clears the fresh byte, after
+   `0x080A0FE0` returns (§8: before any `0xE` is read), and `0xE` posts it. The run owes: that chain on one Clip
+   store, fresh byte cleared, `0x91` set, the cut file's header and `smpl`.
+4. ✓ *(§8, a static read of the call chain)* That `FUN_080B3194` runs in the GUI task, as `FUN_080A2258` does (§4): a hook at `0x080B38B4` that records the
    task, or the thread-create calls in `main` (README's open question 17).
 
 ## 6. ✓ The meta's loop and crop — stock's two helpers under Unicorn (22/10, turn 2)
@@ -149,3 +157,40 @@ case « a trim under a playing pad »). And the reload reads the new file, *infe
 (`FUN_0804c310` → `FUN_08070db0`, type `8 − 1` = 7) goes on the same ring, `+0x5808` / `+0x7C4C`, of the same host
 (`DAT_080a10b8` = `DAT_080a0cf0` = `0x2400A9C0`) right after the `0xB`, so in ring order it runs after the rename.
 §5 item 3's run proves it with the rest of the reload.
+
+## 8. The menu's enables ✓ and the task that runs the Trim (22/10, turn 4)
+
+**The enables, case `0x127` under Unicorn** (bare `Uc` on the stock image as §6; browser object in RAM, the message
+`{u16 2, …, +12: u16 0x127}`; stubbed by address: the cell-param getter `FUN_08099504` (`0xEA` and `0x8B` from the
+case), the path builders `FUN_0804290c` / `FUN_08099d1c`, `FUN_080bd566` recorded, `FUN_080bd24c` / `FUN_080a3e00`
+null; stock's compare `FUN_080c8b48` runs). The case reads only `0xEA` then `0x8B`, nothing else of the pad. The
+last word on each item, Pad Mode 0–3 × MultiSam 0/1 × own file or another:
+
+| Pad Mode | `0xEA` | own file | Trim `0x124` (`0x080B3620`) | Save `0x123` (`0x080B35F6`) | Save As `0x122` |
+|---|---|---|---|---|---|
+| 0 Sample | 0 | yes | **1** | 1 | 1 |
+| 0 Sample | 0 | no | 0 | 0 | 1 |
+| 1 Clip, 2, 3 | 0 | yes / no | **0** | own file | 1 |
+| any | 1 | yes / no | 0 | own file | 0 |
+
+- So on stock a Clip pad never gets Trim, **and neither does mode 3**: §3's « mode 0 or 3 » is the smpl/crop branch
+  inside `FUN_080A0DD4`, not the menu. The thunk at `0x080B3620` keeps stock's `on` and ORs the Clip case in.
+- Stock quirk, kept: Save's second enable is « own file » alone; it overrides the first, so MultiSam 1 + own file
+  leaves Save on.
+- Case `0x127` has no mode gate before the enables (all four modes reach them in the run). Whether a Clip pad's page
+  opens the browser is a UI path this run does not take: the patch's test drives it, #t-041 sees it.
+
+**The task, a static read of the call chain** (*inferred*, not run; stronger than §4's): `FUN_080A2258`'s only caller
+is `FUN_0808b654`, slot 2 of the vtable at `0x080EAF4C` (its pointer at `0x080EAF54`; the base vtable `0x080EAF38`
+has the same three slots). That method calls `FUN_080A2258(app)` once, **then** drains the UI queue
+(`FUN_08097aae`) into the view stack at `+0x280`: all 27 calls of `FUN_080ab570` sit in it. `FUN_080ab570` takes the
+current view (`+0x34`) to `FUN_080aed32`, its slot `+0x34`; a view's handler passes the message on to its focused
+child (`+0x2c`) through `FUN_080aed14`, which calls the child's slot `+0x30` (254 call sites, the views'). The browser
+vtable (`0x080F0E10`, constructor `0x080B3D00`) has `FUN_080B3194` at `+0x30` (`0x080F0E40`). Case `0x124` opens the
+« Trim and Save? » child (`browser + 0x20E0`) with the reply id 300 at `+0x2250`; message 300 is the branch that calls
+`FUN_080A0DD4(…, 1)` at `0x080B38B4`.
+
+What follows for the patch (*design*): the Trim and the host-message pass run inside **one call** of the same method,
+the pass first. The `0x1B` that would read the reload's fresh byte is posted by the loader task and read only by a
+later `FUN_080A2258` pass, so clearing the byte right after `0x080A0FE0` returns, in the same drain, comes first by
+construction. Only the reload itself (§5 item 3) is still owed to a run.
