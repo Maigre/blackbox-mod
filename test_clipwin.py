@@ -120,9 +120,10 @@ B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0
 B_FADE = 0x858                                       # Loop Fade as taken with the region
 B_FIN, B_WRAPPED = 0x878, 0x888                      # F-a: the slots that get their fade-in back, the wraps just made
 B_ABARS = 0x898                                      # 1: Auto's count is Auto (Bars)', 0: Auto (Beats)'
-B_SIZE = 0x8A8                                       # sizeof(struct cw_bank)
+B_MOVING = 0x8A8                                     # 1: a Region Move is between its two posts (clipwin_move)
+B_SIZE = 0x8B8                                       # sizeof(struct cw_bank)
 B_BYTES = 0x1000                                     # what master.c's block gives it (0x800 before Fit)
-CW_MAGIC = 0x43574E42
+CW_MAGIC = 0x43574E43
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -2682,6 +2683,37 @@ check(f"live, Region Move forward (Loop End posted first, then Loop Start), Slip
       f"and Slip kept, nothing outside [36 000, 84 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
       same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
       and pk <= 1.0 + 1e-6 and lat and all(x == (36000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
+
+# ...a wrap between the move's two posts (x5 3: an audio tick can fall there; the plan's Risk 1): clipwin_move marks the
+# pad moving in cw_bank across them (12e), and adopt keeps the region the pad has while it is marked. Loop End 84 000
+# alone with the mark inside step 0 (the recompute for the wrap at 336 000 runs when step 1 starts), then Loop Start
+# 36 000 and the mark cleared inside the next pass's step 0: that pass plays the old region, the one after the moved one.
+# Without the mark, the pass from 336 000 plays the half-moved pair [24 000, 84 000)
+gw = {}
+for mark in (1, 0):
+    mid = []
+    def pre(rr, mark=mark, mid=mid):
+        if rr.block == 100:
+            rr.m.uc.mem_write(BANK + B_MOVING + 6, bytes([mark]))
+            rr.param(0x92, 84000)
+        elif rr.block == 420:
+            mid.extend(latch(rr.m, 6, k) for k in range(4) if bank_valid(rr.m, 6) >> k & 1)
+        elif rr.block == 450:
+            rr.param(0x91, 36000)
+            rr.m.uc.mem_write(BANK + B_MOVING + 6, bytes(1))
+    cw = audio(pre=pre, **kw)
+    r = cw["rig"]
+    gw[mark] = (mid, [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1],
+                [x for x in starts(r) if x[0] >= 336000][:5], inside(cw, 24000, 48000, 336000 + 300, 384000)[0],
+                inside(cw, 36000, 48000, 384000 + 300)[0])
+mid, lat, s_, old, new = gw[1]
+check(f"live, Region Move with a wrap between its two posts (Loop End posted with the pad marked moving): the pass from "
+      f"336 000 keeps the old region (latched {mid[:1]}, {old} frames outside [24 000, 72 000)), the pass from 384 000 "
+      f"plays the moved one once Loop Start is posted and the mark cleared (latched {lat[:1]}, {new} outside); "
+      f"unmarked, the pass from 336 000 plays the half-moved pair ({gw[0][0][:1]})",
+      mid and all(x == (24000, 48000, 12000) for x in mid) and old == 0 and lat and new == 0
+      and all(x == (36000, 48000, 12000) for x in lat) and [a for a, _, _ in s_] == [336000, 360000, 384000, 408000, 432000]
+      and gw[0][0] and all(x == (24000, 60000, 15000) for x in gw[0][0]) and gw[0][3] > 0, gw)
 
 # a change that makes the clip longer moves stock's wrap grid (+0x230 = min(Quant, clip)): a pass that does not start on
 # it has its end snapped back into the past. Stock does that on a live Beat Count change (2 -> 4 beats, Quant 1 bar):
@@ -5274,12 +5306,16 @@ check("  ...a load with no Sync set inside it sends nothing: the pad plays on th
 # file - (Loop End - Loop Start), and Loop End follows it by the same amount. The view's forward (slice_forward ->
 # clipwin_move) posts the pair itself, the edge ahead first (SetCellParam clamps neither, x5 (a)); the app stores each
 # and posts its own 0x66 (done here one refresh per post, as the app does it); the view ends on Loop Start (x5 (b)).
-def mv_run(vals, counts, mode=1):
+def mv_run(vals, counts, mode=1, marks=None):
     """the Screen opened on CLIP12 + vals; one TL turn per entry of counts. Returns (the screen, per turn: (the knob's
-    forwards, the pair stored after it, every frame the view was sent to))"""
+    forwards, the pair stored after it, every frame the view was sent to)); marks, when given, gets cw_bank's moving[]
+    as each post to the app found it"""
     sc = Screen()
     shows = []
     sc.m.uc.hook_add(UC_HOOK_CODE, lambda *a: shows.append(sc.m.arg(1)), begin=0x080C6E68, end=0x080C6E68)
+    if marks is not None:
+        sc.m.uc.hook_add(UC_HOOK_CODE, lambda *a: marks.append(bytes(sc.m.uc.mem_read(BANK + B_MOVING, 16))),
+                         begin=0x080AED14, end=0x080AED14)
     sc.open({**CLIP12, 0x8B: mode, **vals}, was=mode)
     out, t = [], 50_000
     for c in counts:
@@ -5326,6 +5362,16 @@ k_ = fl.knob("TL")
 check("Move with no region (Region File, the bracket off): TL does not turn (its range is Loop Start alone) and nothing is "
       "posted", (k_["lo"], k_["hi"]) == (24000, 24000) and all(not f and p == (24000, 72000) for f, p, _ in fl_out),
       (k_, fl_out))
+# the wrap guard (x5 3, the plan's Risk 1): each post reaches the engine as it is made, and an audio tick can fall
+# between the two; the pad is marked moving in cw_bank across them, so a wrap there keeps the region it has (adopt; the
+# engine side is the region -> region tests' « half moved » case)
+gm = []
+gd, gd_out = mv_run({P_TLKNOB: 1}, (+2000, -3600), marks=gm)
+gq = [[i for i, x in enumerate(mk) if x] for mk in gm]
+check(f"  ...the knob's own message to the forward finds no pad marked; clipwin_move's two posts of each turn find the "
+      f"pad (6) marked moving in cw_bank, and only it ({gq}); the mark is gone after the turn",
+      gq == [[], [6], [6]] * 2 and bytes(gd.m.uc.mem_read(BANK + B_MOVING, 16)) == bytes(16)
+      and [f for f, _, _ in gd_out] == [f for f, _, _ in mv_out], (gq, gd_out))
 sm, sm_out = mv_run({P_TLKNOB: 1}, (+2000,), mode=0)
 check("Sample mode with TL Knob Move: TL is stock's Start (0x8f) and posts it alone", sm.knob("TL")["id"] == 0x8F
       and [r for r, _ in sm_out[0][0]] == [0x8F] and sm_out[0][1] == (24000, 72000), sm_out)

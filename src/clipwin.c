@@ -582,15 +582,23 @@ void clipwin_bind(int param, int value, uint8_t *knob)
     }
 }
 
+/* The bank and the view's pad's index q, when the view is on one of the sixteen pads; else 0. */
+static struct cw_bank *view_bank(const uint8_t *view, unsigned *q)
+{
+    unsigned cell = *(const uint16_t *)(view + VIEW_CELL), row = (cell & 0xff) >> 4, col = cell & 0xf;
+    *q = row * 4 + col;
+    return !(cell & 0x1f00) && row < 4 && col < 4 ? bank() : 0;
+}
+
 /* The length of the view's pad's file: the engine's (flen), when its bank is up and a recompute has measured it; else
    the view's own (stock's). */
 static int32_t clip_len(const uint8_t *view)
 {
     int32_t len = *(const int32_t *)(view + VIEW_LEN);
-    unsigned cell = *(const uint16_t *)(view + VIEW_CELL), row = (cell & 0xff) >> 4, col = cell & 0xf;
-    struct cw_bank *b = !(cell & 0x1f00) && row < 4 && col < 4 ? bank() : 0;
-    if (b && b->flen[row * 4 + col] > 0 && b->flen[row * 4 + col] < SRC_BAD)
-        len = b->flen[row * 4 + col];
+    unsigned q;
+    struct cw_bank *b = view_bank(view, &q);
+    if (b && b->flen[q] > 0 && b->flen[q] < SRC_BAD)
+        len = b->flen[q];
     return len;
 }
 
@@ -677,7 +685,9 @@ void clipwin_wave(uint8_t *wave, const void *slices)
    message but a Clip pad's TL in Move, which it posts itself as two: SetCellParam clamps neither point against the
    other (x5 (a)), so the edge ahead goes first (Loop End moving forward, Loop Start moving back) and the pair between
    the two posts is a valid, longer region. The message is posted, then changed and posted again: stock's post copies
-   it. With no region (the bracket off, as without bank 2) the turn is dropped; clip_view gives TL no range then. */
+   it. With no region (the bracket off, as without bank 2) the turn is dropped; clip_view gives TL no range then. The
+   pad is marked moving in the bank across the two posts: each reaches the engine as it is posted, and an audio tick
+   (Realtime, over this GUI task) can fall between them (x5 3); a wrap in it keeps the region the pad has (adopt). */
 #define VMSG_PARAM  0x6e
 #define VMSG_ROW    0x0c
 #define VMSG_VALUE  0x10
@@ -699,12 +709,18 @@ int clipwin_move(uint8_t *view, uint8_t *msg)
     int32_t d = to - ls;
     if (!view[VIEW_WAVE + WAVE_LOOP_ON] || !d)
         return 1;
+    unsigned q;
+    struct cw_bank *b = view_bank(view, &q);
+    if (b)
+        b->moving[q] = 1;
     for (int i = 0; i < 2; i++) {
         int end = (d > 0) != i;      /* Loop End first moving forward, Loop Start first moving back */
         *(int32_t *)(msg + VMSG_ROW) = end ? P_LOOP_END : P_LOOP_START;
         *(int32_t *)(msg + VMSG_VALUE) = end ? le + d : to;
         fw_view_post(view, msg);
     }
+    if (b)
+        b->moving[q] = 0;
     return 1;
 }
 
