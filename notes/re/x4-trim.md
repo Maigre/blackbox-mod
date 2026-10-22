@@ -4,7 +4,7 @@ Stock 3.1.9. Marks as in the other notes: ✓ = run under Unicorn, *inferred* = 
 /tmp copy of `/srv/dev/firmware/ghidra`), *design* = a choice. Plan of record: hub `blackbox` notes
 `2026-10-22-t-031-close.md` (rev 1, ratified 22/10).
 
-**Status (22/10, turn 2): the static half, plus §6 ✓ (the meta's loop and crop, stock's two helpers run).** The chain
+**Status (22/10, turn 3): the static half, plus §6 ✓ (the meta's loop and crop) and §7 ✓ (the disk copy's bytes).** The chain
 below is read, its hook sites named. Still owed before the patch leans on it, by a Unicorn run (FatFs served from
 memory): the rest of §5's list.
 
@@ -82,7 +82,7 @@ What follows for the patch (*inferred*, to prove in §5):
 
 1. A Clip pad's File menu reaches case `0x127` (the browser opened from a Clip pad), and `0x080B3620`'s `on` for
    mode 1 is 0 on stock.
-2. *(the meta and its chunks ✓, §6; the audio bytes owed)* `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
+2. ✓ *(§6 the meta and its chunks, §7 the audio bytes)* `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
    from memory) are `[LS − F, LE)` and the `smpl` loop reads back `[F, end)` — `dwEnd` as written (x3: `0x92` is
    written verbatim, read back verbatim).
 3. The reload with the fresh byte cleared after `0x080A0FE0`: Quant, Sync, Launch, Loop Mode, Beat Count kept;
@@ -114,5 +114,38 @@ Run on the stock image (`/srv/dev/firmware/BLACKBOX-3.1.9.bin`), meta block in R
   `{type 0, start 4 800, end 404 800}` (LE 1 M: `end 704 800`), the cue at `204 800`. So **`dwEnd` goes out as the
   cut file's frame count**, the exclusive end, verbatim from `+0x210` (x3's « written verbatim, read back
   verbatim »): a fresh load would set Loop End := the file's end, which is the region's end.
-- Still owed in item 2: the audio bytes `FUN_08072A40` copies (`[crop start × bytes/frame, + length × bytes/frame)`
-  is the static read), which needs the app's asset table and `FUN_080769f4`'s `f_open` under the run.
+- The audio bytes `FUN_08072A40` copies: §7.
+
+## 7. ✓ The disk copy — `FUN_08072A40` under Unicorn, FatFs served from memory (22/10, turn 3)
+
+Run on the stock image: the meta as §6 leaves it (smpl helper, then the crop `(LS − min(F, LS), LE − that)`), one
+asset record (`+0x170` stride behind host `+0x4348`, index table `+0x434C`): `+4` its `FIL`, `+8` data offset 44,
+`+0x10` data bytes, `+0x18..+0x26` fmt (PCM, 2 ch, 48 k, 6 B/frame, 24 bit), `+0x28` open, `+0x5C` its path. A
+60 000-frame source whose frame *i* holds *i*. Stubbed by address: `f_open` `0x08086534`, `f_read` `0x08086866`,
+`f_write` `0x08086a06`, `f_lseek` `0x08086d96` (64-bit offset in `r2:r3`), `f_close` `0x08086d76`, and the five calls
+below; the header buffer is the word at `DAT_0807697c` (`0x24015CE0`: null = no header written).
+
+- **The bytes are `[LS − F, LE)`, frame for frame.** LS 30 000, LE 50 000, F 4 800: the source is sought to
+  `44 + 25 200 × 6`, then 24 800 frames in `0xC000`-byte blocks, equal to source frames `[25 200, 50 000)`. Also
+  equal on the unaligned branch (LS 12 345, LE 50 001: a start whose byte offset is 2 mod 4 goes through the
+  `memmove` path), with LE at the file's end, and with the clamp (LS 4 000 < F: `[0, 50 000)`, loop `[4 000, …)`).
+- **The file on the card**: a `0x200`-byte header (`fmt `, `JUNK` 460, data at `0x200`; `FUN_08076874`, rewritten at
+  close), the audio, then `smpl` (no `acid`, no `cue `: this meta had neither): loop 0 `{type 0, 4 800, 24 800}`,
+  so `dwEnd` = the cut's frame count, as §6.
+- **Trim onto its own file goes through a temp file.** When the request's path equals the asset's (`FUN_080c8b48`), the
+  copy opens **`-WRITETEMP-.WAV`** (`DAT_08072d78`) with mode 10, and after the close calls `FUN_08072898(host,
+  asset)` (the source asset's release, *inferred*: it walks the voices on that asset), `FUN_08042e30(fs, path)`
+  then `FUN_08042e24(fs, temp, path)` (read as unlink and rename; stubbed, not run), then `FUN_0809151c(…, path)`.
+  Another path: no temp, no release, no rename. It posts `0x1C` (progress, per cent) after each block and `0x1D` at
+  the end, on the ring at host `+0x7C50`.
+- **The request is queued, and it takes the meta with it** (*inferred*, `FUN_080712C8`): `FUN_0807744c(host +
+  0x8F74, meta)` at the request, then a type-`0xB` entry on the ring at host `+0x5808` (580 × 16 B, count
+  `+0x7C4C`) and a signal (`FUN_08088402`). So the thunk at `0x080A0FD0` writes the loop and the crop before the
+  meta is handed over, and the copy runs later, in the disk task.
+
+What follows for the patch (*design*): the stock path already does the in-place overwrite and the source release; a
+Clip pad that is playing loses its file under the copy's `FUN_08072898` the way a Sample pad does (the sub-step ②
+case « a trim under a playing pad »). And the reload reads the new file, *inferred*: the load `0x080A0FE0` asks for
+(`FUN_0804c310` → `FUN_08070db0`, type `8 − 1` = 7) goes on the same ring, `+0x5808` / `+0x7C4C`, of the same host
+(`DAT_080a10b8` = `DAT_080a0cf0` = `0x2400A9C0`) right after the `0xB`, so in ring order it runs after the rename.
+§5 item 3's run proves it with the rest of the reload.
