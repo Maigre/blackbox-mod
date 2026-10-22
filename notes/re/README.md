@@ -35,6 +35,7 @@ doc has it whole, its §7 the Gate 3b run.
 | [`x1-recorder-arm-and-midi-notes.md`](x1-recorder-arm-and-midi-notes.md) | Arming a recording from code (`FUN_0809F2E8`, the Save), what a take sets on its pad (S-B3), Global-In Pad Record notes, record-over (S-B2), message delivery inside a tick. |
 | [`x2-sdram-and-memory.md`](x2-sdram-and-memory.md) | The SDRAM pool and allocators, free figures (upper bounds), the sample pool, where `cw_bank` and the Looper ring go, Patch RAM / backup SRAM maps. |
 | [`x3-region-data-path.md`](x3-region-data-path.md) | How pad params reach the engine (40 class-B ids, the class-H sibling), mode change, WAV load and `smpl`/`acid` import, `fw_src_len`, mismatched-length wraps, the Region Auto rule. |
+| [`x5-region-move.md`](x5-region-move.md) | Region Move's two posts: the app clamps neither Loop Start past Loop End nor the reverse (the safe order), each refresh sends the view to the edge it moved, a tick can fall between the posts (inferred) |
 
 ## 2. P2 hand-off — Clip Window v1 (Slip only)
 
