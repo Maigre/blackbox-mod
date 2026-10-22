@@ -3614,6 +3614,26 @@ for what, kw in (("as a region", REG4), ("as a whole file", dict(frames=VL4))):
           f"{on[4]:.3f}, a pass every bar ({on[5][:4]})",
           len(off[2]) >= 8 and abs(on[0] - 0.935) < 1e-4 and on[1] >= 8 and not on[2] and on[3] == 0 and on[4] <= 1 + 1e-6
           and on[5][:4] == [288000, 384000, 480000, 576000] and on[6] == 4, (off[:5], on))
+# Region Move under Fit 1 bar (TL Knob: Move, hub blackbox#t-042): the 3.74-beat region moved 24 000 frames forward
+# inside a pass (Loop End posted first, then Loop Start, at block 400). From the pass after next, it plays what the
+# unmoved region plays, 24 000 frames later in the file: frame for frame and gain for gain, at the rate Fit gave it
+# (89 760 / 96 000), with no jump at a joint
+mv_ = {}
+for name, pre in (("moved", lambda rr: (rr.param(0x92, RS4 + VL4 + 24000), rr.param(0x91, RS4 + 24000))
+                   if rr.block == 400 else None), ("unmoved", None)):
+    d = fit_audio(5, beats=0, blocks=2300, cell=0x102, pre=pre, **REG4)
+    a_ = 480300 - d["base"]
+    mv_[name] = (d["frame"][a_:len(d["gain"]) - N], d["gain"][a_:len(d["gain"]) - N], seamless(d, VL4, since=480300),
+                 pass_starts(d["rig"]))
+(fm, gm, sm_, pm), (fu_, gu, su, pu) = mv_["moved"], mv_["unmoved"]
+nan_same = np.array_equal(np.isnan(fm), np.isnan(fu_))
+shift = float(np.nanmax(np.abs(fm - fu_ - 24000))) if nan_same else None
+check(f"Region Move under Fit 1 bar: from sample 480 300 the moved region plays the unmoved one's frames + 24 000 "
+      f"(off by {shift:.4f} at most: float frames), gain for gain; rate {sm_[0]:.6f} (89 760 / 96 000, unmoved {su[0]:.6f}), no jump at its "
+      f"{sm_[1]} joints ({sm_[2]}), no zero-gain sample ({sm_[3]}), passes {pm[:5]}",
+      nan_same and shift < 0.02 and np.array_equal(gm, gu) and abs(sm_[0] - 0.935) < 1e-4 and abs(sm_[0] - su[0]) < 1e-6
+      and sm_[1] >= 3 and not sm_[2] and sm_[3] == 0 and pm == pu and pm[:4] == [288000, 384000, 480000, 576000],
+      (shift, sm_, su, pm[:5], pu[:5]))
 # a WAV's Beat Count over a one-bar region (Gate 3 finding 3): Beat Count 8 cuts it into 8 steps of an eighth of the bar,
 # each played for a beat - every step re-placed back half a beat. Fit Auto and Fit 1 bar make it the bar it is.
 res = {}
