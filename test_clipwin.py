@@ -2663,6 +2663,26 @@ for blk, W, when in ((100, 336000, "inside step 0"), (265, 384000, "inside step 
           same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
           and pk <= 1.0 + 1e-6 and lat and all(x == (6000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
 
+# Region Move (TL Knob: Move, hub blackbox#t-042, 12e): a region -> region change at the same length. The test above is
+# a move back (Loop Start posted first); moving forward clipwin_move posts Loop End first, and the pair between the two
+# posts, [24 000, 84 000), is a valid, longer region. [24 000, 72 000) -> [36 000, 84 000), Slip 480, inside step 0:
+# heard at the next wrap, its length and Slip kept (kw, ref_ and zr are the test above's)
+W = 336000
+cw = audio(pre=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000)) if rr.block == 100 else None, **kw)
+r = cw["rig"]
+up_to = (W - 287000) // N - 1
+same_before = all(np.array_equal(x, y) for x, y in zip(ref_["rig"].out[:up_to], r.out[:up_to]))
+out, z, pk = inside(cw, 36000, 48000, W + 300)
+zc = set(np.where(np.abs(cw["gain"]) < 1e-7)[0] + cw["base"])
+added = sorted(x for x in zc - zr if 290000 <= x < cw["base"] + len(cw["gain"]) - N)
+lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
+s_ = [x for x in starts(r) if x[0] >= W][:3]
+check(f"live, Region Move forward (Loop End posted first, then Loop Start), Slip 480, inside step 0: every output sample "
+      f"as without the move up to the wrap at {W}, from it the moved region (steps {s_}; latched {lat[:1]}), its length "
+      f"and Slip kept, nothing outside [36 000, 84 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
+      same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
+      and pk <= 1.0 + 1e-6 and lat and all(x == (36000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
+
 # a change that makes the clip longer moves stock's wrap grid (+0x230 = min(Quant, clip)): a pass that does not start on
 # it has its end snapped back into the past. Stock does that on a live Beat Count change (2 -> 4 beats, Quant 1 bar):
 # two passes start at once over the last step (gain 2), then the bar. The region waits for a wrap on its grid (H3').
