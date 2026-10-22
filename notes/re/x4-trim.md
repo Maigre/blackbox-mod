@@ -86,7 +86,7 @@ What follows for the patch (*inferred*, to prove in §5):
 2. ✓ *(§6 the meta and its chunks, §7 the audio bytes)* `FUN_080A0DD4` on a Clip pad with the meta patched at `0x080A0FD0`: the bytes the disk copy writes (FatFs served
    from memory) are `[LS − F, LE)` and the `smpl` loop reads back `[F, end)` — `dwEnd` as written (x3: `0x92` is
    written verbatim, read back verbatim).
-3. The reload with the fresh byte cleared after `0x080A0FE0`: Quant, Sync, Launch, Loop Mode, Beat Count kept;
+3. ✓ *(§9 the `0xE` link run on the trim's own store; the load is x3 t13, the non-fresh `0x1B` x3 t6)* The reload with the fresh byte cleared after `0x080A0FE0`: Quant, Sync, Launch, Loop Mode, Beat Count kept;
    `0x91` where the patch put it after `0xE` and `0x1B`. *Read so far (turn 4), from x3's two runs, not yet one run of
    the trim's case*: `FUN_0809D998` tests the byte at `app + 0x8A96 + row·0x78 + col·0x18` (= §4's `+0xE`); its
    `0xEA` branch (the MultiSam zone) returns before it, so it never fires on a Clip pad; not fresh, only Root (store
@@ -194,3 +194,36 @@ What follows for the patch (*design*): the Trim and the host-message pass run in
 the pass first. The `0x1B` that would read the reload's fresh byte is posted by the loader task and read only by a
 later `FUN_080A2258` pass, so clearing the byte right after `0x080A0FE0` returns, in the same drain, comes first by
 construction. Only the reload itself (§5 item 3) is still owed to a run.
+
+## 9. ✓ The `0xE` handler on the trim's own store (22/10, turn 5)
+
+**Run** (bare `Uc` as §6): stock `FUN_080A121C(app, asset, frames, 0)` whole, with stock's store getter `FUN_08093E9C`
+and setter `FUN_08093ECC` running for real on a store built in RAM (`+4` → entries `{u16 id; u16; i32 value}`,
+`+0xA` = count). Stubbed by address: the cell finder `FUN_0809A9C4` (row 1, col 2), the store lookup `FUN_08098D0C`,
+the engine post `FUN_0804C59C` and the UI post `FUN_080B5758` (both recorded), `FUN_080A10C4` (recorded, never hit).
+The store is a Clip pad right after `FUN_080A0AC8` (x3 t13: `0x8f`, `0x90`, `0x91` := 0, `0x92` and `0x8e` kept),
+then the patch's write `0x91` := F. LS 24000, LE 72000, F 4800, so the cut file has 52800 frames.
+
+| store before | frames | store after | posted to the engine |
+|---|---|---|---|
+| patched: `0x91` = F, Length 0 | 52800 | only `0x90` and `0x92` := 52800 | `0x8f` 0, `0x90` 52800, **`0x91` 4800**, `0x92` 52800 |
+| stock: `0x91` = 0, Length 0 | 52800 | the same | `0x91` 0 |
+| Length not 0 (30000) | 52800 | nothing | the store as it is |
+| any | 0 | nothing, nothing posted | — |
+
+Pad Mode `0x8b`, Loop Mode `0x8e`, Beat Count `0xd2`, the Clip Window rows `0x1C8..0x1CB`, Loop Fade `0xFA` and three
+sentinels were not touched. Both cases post UI messages `0x67` then `0x66`. `+0x20/+0x24` := frames.
+
+The disassembly agrees: the handler's only store writes are `+0x20/+0x24` (`0x080A12D0`) and, when the getter
+returns Length 0, `0x90` and `0x92` (`0x080A13A0`, `0x080A13AA`). It reads `0x91` (`0x080A132E`) and posts it
+(`0x080A133E`). So the patch writes Loop Start := F into the store next to the fresh-byte clear, and the next
+`0xE` sends it to the engine with Loop End = the cut length. The loop then plays `[F, end)`.
+
+**What closes item 3.** The links are each run on stock, in three runs and not as one chain:
+
+- the load `FUN_080A0AC8` (x3 t13);
+- the patch's two writes (fresh byte 0, `0x91` := F), which are plain stores;
+- this `0xE`;
+- the non-fresh `0x1B` on an `acid` + `smpl` file (x3 t6: only Root and an Auto Beat Count are written).
+
+The patch's own test runs the whole chain on the built firmware.
