@@ -1,4 +1,4 @@
-"""Clip Window: per-pad Slip and Region on Clip pads (see src/clipwin.c, notes/re/README.md sections 2
+"""Clip Window: per-pad Slip, Region and Loop Len on Clip pads (see src/clipwin.c, notes/re/README.md sections 2
 and 3).
 
 Rides with the `filter` set (patches/filter.py imports it), which already owns the clip reader's call and the pad
@@ -37,16 +37,16 @@ PATCHES = [
     hook(0x080B0E18, 0x080B0528, "clipwin_format"),
     # the type-1 turn's stepper call: Slip's acceleration
     hook(0x080B0DDE, 0x080B0B74, "clipwin_turn"),
-    # the Waveform screen in Clip mode (FUN_080a54a0): the bind block's last unbind (BR) binds three knobs, Loop Start /
-    # Loop End / Slip; the position knobs' step, range and value after every bind and zoom change (FUN_080a53a2's
-    # call); their range and value, Slip's value and the loop bracket at every Clip refresh
+    # the Waveform screen in Clip mode (FUN_080a54a0): the bind block's last unbind (BR) binds all four knobs, Loop Start /
+    # Loop End / Slip / Loop Len; the position knobs' step, range and value after every bind and zoom change
+    # (FUN_080a53a2's call); their range and value, the other two's value and the loop bracket at every Clip refresh
     hook(0x080A582A, 0x080A7EE0, "clipwin_bind"),
     hook(0x080A53B0, 0x080A52C4, "clipwin_zoom"),
     hook(0x080A5B0E, 0x080C6E8C, "clipwin_wave"),
     # the waveform's tick, after it placed the playhead line: no line while a Clip view holds on an edge
     hook(0x080C6DCA, 0x080C6ACC, "clipwin_line"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Region in slot 5, Slip in slot 6
-    (0x080EF998, struct.pack("<2H", 0, 0), struct.pack("<2H", 0x1C8, 0x1C9)),
-    (0x080EF290, struct.pack("<2H", 0, 0), struct.pack("<2H", 0x1C8, 0x1C9)),
+    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7
+    (0x080EF998, struct.pack("<3H", 0, 0, 0), struct.pack("<3H", 0x1C8, 0x1C9, 0x1CA)),
+    (0x080EF290, struct.pack("<3H", 0, 0, 0), struct.pack("<3H", 0x1C8, 0x1C9, 0x1CA)),
 ]

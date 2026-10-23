@@ -1,5 +1,5 @@
 /*
- * Clip Window: Slip and Region. Original 1010music Blackbox, firmware 3.1.9.
+ * Clip Window: Slip, Region and Loop Len. Original 1010music Blackbox, firmware 3.1.9.
  * The reverse engineering and the bench measurements behind it are in github.com/Maigre/blackbox-mod, branch
  * maigre: notes/re/ and notes/bench/ (cited below as notes/...).
  *
@@ -23,11 +23,11 @@
  *   H2  clipwin_read         the segment read (filter_thunk.S clip_read_b ends here; filter.c's clip_read next)
  *   H3  clipwin_len          Region: the clip's length where it shapes the clip (four bl FUN_080636f0, below)
  *   H3' clipwin_wrap         Region: the recompute at the two wraps (bl FUN_08064a94), where a new region starts
- *   clipwin_tick             duck_block, once per block: one pad's Slip from the app's store; on a
+ *   clipwin_tick             duck_block, once per block: one pad's Slip (and Loop Len) from the app's store; on a
  *                            change, mark the pad's pending segments done so stock re-makes them, and H1 re-latches, in
  *                            the same render
  * Stock's timing, crossfades, Sync re-grid, wrap, one-shot and launch logic are untouched, and with Slip 0 (and no
- * region) every hook passes through: bit-identical to stock. A Slip change is heard at the next Sync
+ * region, Loop Len Off) every hook passes through: bit-identical to stock. A Slip change is heard at the next Sync
  * step, through stock's crossfade.
  * A new file under a playing pad (a load, the browser's pre-listen into the pad, a take landing in it): stock does not
  * restart the voice; its segments read on at their positions in the new file. A segment latched for another file length
@@ -60,20 +60,36 @@
  * start < end <= length and they are not the whole file ([0, length - 1] or more: what a load leaves, x3 t13); Sample
  * mode's Loop Mode is not asked (a Clip pad never shows that row). File = stock.
  *
+ * Loop Len (notes/re/README.md section 3, a2 k_looplen): only a window of W ticks loops, on the clock, where the
+ * music was when it was engaged (the KP3's loop). Stock keeps making its steps on its grid; each segment H1 makes is
+ * latched to play the step of the window that lines up with its own: w = (origin + ((j x tps - origin) mod W)) / tps,
+ * content = (int)((float)w x fps) + slip_f, stock's own product, so a window plays the frames its steps would. origin
+ * = the phase of the frame the sounding segment that started last plays (its latch's, Slip taken out, so a window
+ * still sounding after Off is taken again; else stock's position), x tps / fps, rounded down to W; taken when Loop Len
+ * leaves Off and kept while it changes (the in-point stays), so the window holds the beat that was playing. A stopped
+ * pad sets it back to 0: its next launch loops from the clip's start, as after power-on. A W the steps do not divide
+ * (shorter than a Sync step) has the pad's Sync forced, as the app would set it (the class-B param-set, FUN_08067648
+ * with 0x94): the largest Sync up to the user's that divides W, the origin and the clip, so the user's comes back as
+ * soon as it divides them again (a longer W), and on Off, as the app's store has it. Stock re-grids the playing segment
+ * there (notes/re/a1), so the change lands on the new grid. Never while a launch waits for its Quant point (the
+ * re-grid would sound it at once); the poll tries again. Off: every new segment plays its own step again, in phase.
+ * Needs Quant and Sync (no grid, or no clock phase, without them); a W of the whole clip or more does nothing.
+ * Setting: "Loop Len:" Off | 1/16 | 1/8 | 1/4 | 1/2 | 1 bar | 2 bars | 4 bars after Slip, saved as "cliplooplen".
+ *
  * The Waveform screen in Clip mode (notes/re/a3, README section 3): stock unbinds all four knobs and draws no loop
  * bracket. TL = Loop Start, TR = Loop End (stock's 0x91 / 0x92, sample positions one zoom pixel a step, ranged as in
- * Sample mode), BL = Slip (BR stays unbound); the white bracket shows the loop Region plays, from the view's store, so
- * a playing pad catches up with it at its next wrap (clipwin_bind, clipwin_zoom, clipwin_wave). The view's own forward
- * stores them. A TL or TR turn takes the view to the edge it moves, as a tap on the overview does, and the view follows
- * the playhead again after a pause.
+ * Sample mode), BL = Slip, BR = Loop Len; the white bracket shows the loop Region plays, from the view's store, so a
+ * playing pad catches up with it at its next wrap (clipwin_bind, clipwin_zoom, clipwin_wave). The view's own forward
+ * stores them all. A TL or TR turn takes the view to the edge it moves, as a tap on the overview does, and the view
+ * follows the playhead again after a pause.
  *
  * Bank 2: the maths and the policy of every hook below are in flash bank 2, clipwin_b2.c (the cw_* functions: the
  * latch, the read's mapping and seam hint, Region's rule and its adoption, the lengths H3 tells, the wrap's hold, the
- * poll and its drop, the knob's tiers and detent, the Slip row's text, the bracket). This file keeps the hooks, every
- * stock call they make and the bank's set-up, which leaves room in the bank 1 cave. bank() asks b2_live() first:
- * without this build's payload up there every hook passes straight through to stock, so every Clip pad plays as stock
- * does, Slip and Region do nothing (their rows are kept, as stored), the Slip row shows stock's plain number and the
- * waveform no bracket.
+ * poll and its drop, Loop Len's take, its window and its Sync message, the knob's tiers and detent, the Slip row's
+ * text, the bracket). This file keeps the hooks, every stock call they make and the bank's set-up, which leaves room in
+ * the bank 1 cave. bank() asks b2_live() first: without this build's payload up there every hook passes straight
+ * through to stock, so every Clip pad plays as stock does, Slip, Region and Loop Len do nothing (their rows are kept,
+ * as stored), the Slip row shows stock's plain number and the waveform no bracket.
  */
 #include <stdint.h>
 
@@ -130,6 +146,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 
 #define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
 #define P_SLIP      0x1c9
+#define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
@@ -159,13 +176,18 @@ void clip_fetch(void *src, int stereo, float *l, float *r, int count, int32_t st
 void clipwin_register(void *table)
 {
     static const char *const region_names[3] = {"Auto", "File", "Loop"};
+    /* stock's own strings: "Off", then Quant Size's names (0x080ecb08) from 1/16 up to 4 bars */
+    static const char *const looplen_names[LOOPLEN_MAX + 1] = {
+        (const char *)0x080cd7a8, (const char *)0x080ce714, (const char *)0x080ce710, (const char *)0x080ce70c,
+        (const char *)0x080ce708, (const char *)0x080ce700, (const char *)0x080ce6f8, (const char *)0x080ce6f0};
     fw_register_list(table, P_REGION, "Region:", region_names, 3, "clipregion");
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
+    fw_register_list(table, P_LOOPLEN, "Loop Len:", looplen_names, LOOPLEN_MAX + 1, "cliplooplen");
 }
 
 void clipwin_defaults(void *store)
 {
-    for (int p = P_REGION; p <= P_SLIP; p++)   /* Region, Slip (0x1c8, 0x1c9), in that order */
+    for (int p = P_REGION; p <= P_LOOPLEN; p++)   /* Region, Slip, Loop Len (0x1c8 .. 0x1ca), in that order */
         fw_store_add(store, p, 0);   /* stock only overwrites ids already in a store: without these nothing saves */
 }
 
@@ -271,11 +293,11 @@ void clipwin_slice_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
 }
 
 /* duck_block calls this once per engine block, before the pads render, with the engine (the clock): one pad's Slip
-   per call (16 within 43 ms), cw_tick's; the segments the pad's file no longer reaches retired (cw_retire). A Sync
-   the pad must be sent again goes to it as the app would set it: the class-B param-set with {0x39, cell, 0x94, idx},
-   the clock and its context (the only caller, 0x080685d2, passes exactly these). It re-grids the playing segments from
-   their own positions and marks the pending ones done (notes/re/a1). Then, on a change, the guarded drop (cw_drop),
-   and the launches waiting for their Quant point latched again in place. */
+   and Loop Len per call (16 within 43 ms), cw_tick's; the segments the pad's file no longer reaches retired
+   (cw_retire). Loop Len's Sync, when it asks for one, goes to the pad as the app would set it: the class-B param-set
+   with {0x39, cell, 0x94, idx}, the clock and its context (the only caller, 0x080685d2, passes exactly these). It
+   re-grids the playing segments from their own positions and marks the pending ones done (notes/re/a1). Then, on a
+   change, the guarded drop (cw_drop), and the launches waiting for their Quant point latched again in place. */
 void clipwin_tick(uint8_t *engine)
 {
     struct cw_bank *b = bank();
@@ -284,8 +306,9 @@ void clipwin_tick(uint8_t *engine)
     unsigned q = b->scan++ & 15;
     const void *store = pad_store(q);
     int32_t slip = fw_setting(store, P_SLIP);
+    unsigned ll = (unsigned)fw_setting(store, P_LOOPLEN);
     uint32_t msg[6];
-    int r = cw_tick(b, q, slip);
+    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
     uint8_t *pad = b->pad[q];
     if (r & 4) {                         /* a segment its file no longer reaches (cw_retire) */
         int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
@@ -301,7 +324,7 @@ void clipwin_tick(uint8_t *engine)
         float was = *(const float *)(pad + PAD_FPS_WAS);
         uint32_t w = was > (float)len && was <= (float)SRC_BAD ? (uint32_t)(was + 0.5f) : 0;
         uint32_t n = w ? (SRC_BAD + w / 2) / w : 0;
-        if (engine && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] && n &&
+        if (engine && !(r & 2) && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] && n &&
             n * w + n >= SRC_BAD && n * w <= SRC_BAD + n) {
             int wait = 0;
             for (unsigned k = 0; k < 4; k++) {
@@ -440,11 +463,11 @@ void clipwin_turn(uint8_t *stepper, int counts)
 
 /* Stock unbinds all four knobs there and draws no loop bracket. This binds TL = Loop Start (0x91), TR = Loop End
    (0x92): stock's own Sample-mode rows, sample positions (type 0xd) one zoom pixel a step, ranged as stock ranges them
-   in Sample mode (Loop Start 0 .. Loop End, Loop End Loop Start .. the length); BL = Slip, the Pos page's row (with its
-   own text and turn, clipwin_format and clipwin_turn); BR stays unbound, as stock leaves it. The view's generic forward
-   stores every one of them (0x3d at 0x080a6c6c, a list's 0x3c at 0x080a6c10: SetCellParam), and the class-H object
-   takes Loop Start and End from the queue as in Sample mode, where Region reads them: no code. The white bracket shows
-   the loop when Region plays it.
+   in Sample mode (Loop Start 0 .. Loop End, Loop End Loop Start .. the length); BL = Slip, BR = Loop Len, the Pos
+   page's rows (Slip with its own text and turn, clipwin_format and clipwin_turn). The view's generic forward stores
+   every one of them (0x3d at 0x080a6c6c, a list's 0x3c at 0x080a6c10: SetCellParam), and the class-H object takes Loop
+   Start and End from the queue as in Sample mode, where Region reads them: no code. The white bracket shows the loop
+   when Region plays it.
    The view (FUN_080a54a0's): + 0x38 the waveform widget, + 0x1a0 its zoom (f32 frames per pixel), knobs TL + 0x670,
    BL + 0x950, TR + 0xc30, BR + 0xf10, + 0x2168 the overview strip, + 0x29c its pad's cell (row << 4 | col), + 0x2370
    its copy of the pad's store (FUN_0809a830 at each setup: its rows, then + 0x20 = the store's + 0x20, the app's file
@@ -481,25 +504,26 @@ typedef void (*len_fn)(uint8_t *widget, int32_t len);
 #define KNOB_STEP   0x28c            /* type 0xd: frames per step */
 
 /* the knob (its offset in the view << 16) and its row */
-static const uint32_t clip_knobs[3] = {0x670u << 16 | P_LOOP_START, 0xc30u << 16 | P_LOOP_END, 0x950u << 16 | P_SLIP};
+static const uint32_t clip_knobs[4] = {0x670u << 16 | P_LOOP_START, 0xc30u << 16 | P_LOOP_END, 0x950u << 16 | P_SLIP,
+                                       VIEW_BR << 16 | P_LOOPLEN};
 /* ...and its name on this screen. A knob shows "name value" in one line (FUN_080b0480's "%s %s"), 12 px a character
    (the 6 x 8 font at size 0x10), in a box of 151 px from x 6 (TL, BL: left-aligned) or ending at x 309 (TR, BR:
-   right-aligned): twelve characters stay in their box. The table's names ("Loop Start:", "Loop End:") ran the left
-   value under the right knob's text. Stock's Sample mode renames its four after binding too ("Str:", "Len:", "LpStr:",
-   "LpEnd:"). The two positions get three letters, so that eight digits still fit ("LpS 12345678": a file of up to 99
-   999 999 frames, 34 minutes at 48 kHz; "LpStr 1234567" would cross into its neighbour from 1 000 000 frames, 21 s);
-   the bottom row's value is short ("Slip -4.000"). */
-static const char clip_names[3][6] = {"LpS", "LpE", "Slip"};
+   right-aligned): twelve characters stay in their box. The table's names ("Loop Start:", "Loop End:", "Loop Len:") ran
+   the left value under the right knob's text. Stock's Sample mode renames its four after binding too ("Str:", "Len:",
+   "LpStr:", "LpEnd:"). The two positions get three letters, so that eight digits still fit ("LpS 12345678": a file of
+   up to 99 999 999 frames, 34 minutes at 48 kHz; "LpStr 1234567" would cross into its neighbour from 1 000 000 frames,
+   21 s); the bottom row's values are short ("Slip -4.000", "LpLen 4 bars"). */
+static const char clip_names[4][6] = {"LpS", "LpE", "Slip", "LpLen"};
 
 /* Replaces bl FUN_080a7ee0 @0x080a582a, the last of the Clip bind block's four unbinds (BR; r2 = view + 0xf10, the
-   other three have run): unbinds BR as stock does, then binds TL, TR and BL through the view's own binder, with the
-   values of the view's store, names them as above (the binder sets the table's name) and has each knob compose its
-   line again. */
+   other three have run): binds all four, through the view's own binder, with the values of the view's store, then
+   names them as above (the binder sets the table's name) and has each knob compose its line again. */
 void clipwin_bind(int param, int value, uint8_t *knob)
 {
-    fw_bind(param, value, knob);
+    (void)param;
+    (void)value;
     uint8_t *view = knob - VIEW_BR;
-    for (unsigned i = 0; i < 3; i++) {
+    for (unsigned i = 0; i < 4; i++) {
         unsigned id = clip_knobs[i] & 0xffff;
         uint8_t *k = view + (clip_knobs[i] >> 16);
         fw_bind((int)id, fw_setting(view + VIEW_STORE, id), k);
@@ -544,10 +568,10 @@ static void clip_view(uint8_t *view, int step, int was)
     fw_knob_value(tl, ls);
     fw_knob_range(tr, ls, len);
     fw_knob_value(tr, le);
-    /* Slip: re-valued only when the store has another value. Every turn comes back as a refresh, and a set value
-       parks the stepper mid-step: done each time, it would make the Slip knob twice as fast here as on the Pos page
-       (which does not re-value). */
-    for (unsigned i = 2; i < 3; i++) {
+    /* Slip and Loop Len: re-valued only when the store has another value. Every turn comes back as a refresh, and
+       a set value parks the stepper mid-step: done each time, it would make the Slip knob twice as fast here as on
+       the Pos page (which does not re-value). */
+    for (unsigned i = 2; i < 4; i++) {
         uint8_t *k = view + (clip_knobs[i] >> 16);
         unsigned id = clip_knobs[i] & 0xffff;
         int v = fw_setting(st, id);

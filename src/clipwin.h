@@ -61,6 +61,7 @@
 /* the settings */
 #define P_SYNC      0x94             /* stock's Sync: Slice, 1 bar, 1/2, 1/4, 1/8, 1/16, None (0 .. 6, unchecked) */
 #define SLIP_MAX    3840             /* Slip's range, +- one bar of ticks */
+#define LOOPLEN_MAX 7                /* Loop Len: Off, then 1/16 << (value - 1) up to 4 bars */
 
 struct cw_latch {
     int32_t rs, vlen, delta;         /* the region (or the whole file) and the shift, frames */
@@ -85,10 +86,14 @@ struct cw_bank {
     uint8_t wrap;                    /* 1 + the pad whose wrap is recomputing right now (clipwin_wrap), else 0 */
     struct cw_region region[16];
     int32_t good[16][2];             /* the last loop points from the app's store that made sense (the fallback) */
-    uint8_t spare_5c0[0x160];        /* room: no field after it moves */
+    int32_t origin[16];              /* Loop Len: the window's in-point, ticks into the clip */
+    uint8_t ll[16];                  /* Loop Len as taken (0 Off, else W = 240 << (ll - 1) ticks) */
+    uint8_t forced[16];              /* 1: Loop Len has forced the pad's Sync; Off gives the store's back */
+    int32_t sf[16][4];               /* Slip's part of latch[q][k].delta, frames (Loop Len's engage takes it out) */
     int16_t knob_counts;             /* the Slip knob's last turn event: its counts, */
     uint8_t knob_speed;              /* ...and the accelerator's speed for it (1 .. 6): a bench read */
-    uint8_t spare_723[0x20];         /* room: no field after it moves */
+    uint8_t llv[16];                 /* Loop Len as the poll last read it from the store, */
+    uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
     int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform's length */
     uint8_t spare_784[0xf4];         /* room: no field after it moves */
     uint8_t fin[16];                 /* bit k: slot k's segment starts inside the audio: its first read gives back the
@@ -135,11 +140,14 @@ int32_t cw_map(const struct cw_latch *l, int32_t pos);
 int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t real);
 /* H5: the frame slot k of pad q really reads at stock's position pos (cw_map's), for the playhead; -1 = stock's */
 int32_t cw_playhead(const struct cw_bank *b, unsigned q, unsigned k, int32_t pos, int32_t len);
-/* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 2 = the cached pad is
-   pad q's (cw_retire may look at its segments, len = fw_src_len of its source) */
-int cw_tick(struct cw_bank *b, unsigned q, int32_t slip);
+/* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg, bit 2 =
+   the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source) */
+int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg);
 unsigned cw_drop(const struct cw_bank *b, unsigned q, uint8_t *pad);
 void cw_retire(uint8_t *pad, int32_t len);
+/* Loop Len's take (from cw_tick) and its window (from cw_latch) */
+int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, uint32_t *msg);
+int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t clip);
 /* the Slip knob: 0 = no move, else *add for the stepper; its text (at most 13 bytes); the Waveform's bracket */
 int cw_turn(struct cw_bank *b, const uint8_t *stepper, int counts, unsigned m, uint32_t now, int32_t *add);
 void cw_text(char *t, int v);
@@ -153,6 +161,9 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                offsetof(struct cw_bank, h1) == 0x498 && offsetof(struct cw_bank, hinted) == 0x4a8 &&
                offsetof(struct cw_bank, wrap) == 0x4be && offsetof(struct cw_bank, region) == 0x4c0 &&
                sizeof(struct cw_region) == 8 && offsetof(struct cw_bank, good) == 0x540 &&
+               offsetof(struct cw_bank, origin) == 0x5c0 && offsetof(struct cw_bank, ll) == 0x600 &&
+               offsetof(struct cw_bank, forced) == 0x610 && offsetof(struct cw_bank, sf) == 0x620 &&
+               offsetof(struct cw_bank, llv) == 0x723 && offsetof(struct cw_bank, llc) == 0x733 &&
                offsetof(struct cw_bank, flen) == 0x744,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
@@ -169,10 +180,10 @@ _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC =
                "bank 2 (the cw_* functions) is compiled against these pad, class-H and segment offsets: changing one "
                "reprograms bank 2");
 _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START == 0x18 && WAVE_DIRTY == 0x32 &&
-               WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 &&
+               WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
                CW_SET_END == 2 && CW_SET_ROWS == 3 && CW_WAS_GRID == 2 && CW_WAS_CLIP == 3,
-               "bank 2 (cw_turn, cw_bracket, cw_tick, cw_len, cw_latch, cw_hold) is compiled against the "
+               "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch, cw_hold) is compiled against the "
                "knob's and the waveform's fields, these settings and values, clipwin_len's row order and "
                "clipwin_wrap's: changing one reprograms bank 2");
 

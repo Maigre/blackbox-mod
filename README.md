@@ -29,9 +29,12 @@ New since 3.1.n:
 - **Region on Clip pads**: a "Region" row before Slip: Auto, File or Loop. The pad plays its loop points (Sample
   mode's Loop Start and Loop End) in sync, as if they were the whole file: no destructive Trim. Auto plays them
   whenever they are not the whole file; File is stock. A change is heard from the pad's next pass.
-- **The Waveform screen on a Clip pad**: the top knobs are Loop Start and Loop End, the bottom-left one Slip; the loop
-  bracket shows what Region plays, and the playhead line the frame you hear. Turning Loop Start or Loop End takes the
-  view to that edge, and it follows the playhead again after a pause.
+- **The Waveform screen on a Clip pad**: the top knobs are Loop Start and Loop End, the bottom ones Slip and Loop Len;
+  the loop bracket shows what Region plays, and the playhead line the frame you hear. Turning Loop Start or Loop End
+  takes the view to that edge, and it follows the playhead again after a pause.
+- **Loop Len on Clip pads**: a "Loop Len" row after Slip: Off, 1/16 ... 4 bars. A beat repeat on the grid: the window
+  where the music is loops until you turn it Off, and the clip carries on in phase. It needs Quant and Sync; a window
+  shorter than a Sync step sets the pad's Sync for as long as it needs to.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -85,7 +88,7 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Slip and Region do nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
+- Slip, Region and Loop Len do nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 - USB on the power jack doesn't work on every unit. On some, that jack's USB data side is dead with any firmware,
