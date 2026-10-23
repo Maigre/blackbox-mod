@@ -1,4 +1,4 @@
-"""Clip Window: Slip, Region, Loop Len and Fit (src/clipwin.c, clipwin_b2.c, clipwin_thunk.S,
+"""Clip Window: Slip, Region, Loop Len, Fit and Loop Fade (src/clipwin.c, clipwin_b2.c, clipwin_thunk.S,
 patches/clipwin.py; notes/re/README.md sections 2, 3) under Unicorn.
 
 Real firmware runs for: the whole class-B pad block method (0x08068c64) block after block - process, voice start, the
@@ -49,6 +49,8 @@ starts a step on a whole frame), no zero-gain sample and no doubling, where stoc
 Count) does not - 3, 5, 6, 7 and 14 beats on Quant 1 bar, Sync 1/16 to 1 bar, Quant None (CW_FULL=1: at every Sync),
 a file and a region, a tempo change, Slip, Loop Len, Pitch, 44.1 kHz stereo, a one-shot, live changes and the wrap's
 hold - and a launch off the Sync grid pulled onto the beat at its first step as Fit Off and the stock image pull it; for
+Loop Fade, stock's Sample-mode formula (FUN_08056fd0: an equal-gain linear crossfade of the loop's last F frames into
+the F before Loop Start) frame by frame, and a mismatched sine's splice; for
 the reader, the stock reader on the file turned circular; for a machine-mode pad, filter.c's
 own clip_read on the file turned circular (at the seam, on the last blocks before it, near the start: bit for bit) and
 test_clip.py's drop-sample model off the seam; for the seam hint, notes/re/a2's provider (a hint covers the block of
@@ -60,7 +62,7 @@ negative value through preset save / load; how the waveform draws the bracket (o
 are checked: its draw gates the bracket on +0x239 alone, notes/re/a3), the zoom a pinch leaves pending until the
 waveform's tick applies it and posts 0xe5 (the message is sent here), the dead travel at the top of a type-0xd knob on
 the hardware (stock's, open question 16); SD streaming at
-the seam (the source is in RAM: the hints are checked - H1's, and H2's at rs per
+the seam (the source is in RAM: the hints are checked - H1's, and H2's at rs (and where a fade's copy starts) per
 crossing segment - not whether the
 unit's cache still holds the hinted blocks when the read gets there: the miss counter 0x24013930, on the unit); Fidelity
 machine modes inside the whole process (the reader alone is); relaunches at
@@ -96,7 +98,7 @@ img, stock = open(IMAGE, "rb").read(), open(STOCK, "rb").read()
 S = e.sym
 
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
-P_FIT = 0x1CB                                        # Fit
+P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
 FIT_NAMES = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
 FIT_BEATS = [None, None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (each Auto counts its own)
@@ -114,6 +116,7 @@ B_ZERO_SLOW = 0x4BD                                  # ...the arrival on 0 was s
 B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, and polls since it changed
 B_FLEN = 0x744                                       # fw_src_len at each pad's last recompute (the Waveform's length)
 B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0x7B4, 0x7D4, 0x814, 0x854   # Fit's
+B_FADE = 0x858                                       # Loop Fade as taken with the region
 B_FIN, B_WRAPPED = 0x878, 0x888                      # the slots that get their fade-in back, the wraps just made
 B_ABARS = 0x898                                      # 1: Auto's count is Auto (Bars)', 0: Auto (Beats)'
 B_SIZE = 0x8A8                                       # sizeof(struct cw_bank)
@@ -294,11 +297,11 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
       order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
-POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT)      # the Clip Pos page's slots 5 .. 8
+POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE)   # the Clip Pos page's slots 5 .. 9
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
     check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
-          f"(0x1ca), Fit (0x1cb), then {32 - len(POS_ROWS)} empty slots",
+          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), then {32 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
@@ -417,6 +420,11 @@ check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, 
       and cap == 96 and count < cap,
       (count, cap, ids[-4:]))
 
+fade_reg = [r for r in regs if r[0] == P_FADE]
+check(f"stock's Loop Fade row (0xfa), on the Clip Pos page's slot 9: registered as stock registers it ({fade_reg}), and in a new "
+      f"pad's store once (value {entries[ids.index(P_FADE)][2] if P_FADE in ids else None}), so a Clip pad's saves",
+      len(fade_reg) == 1 and fade_reg == [r for r in stock_regs if r[0] == P_FADE] and fade_reg[0][3:5] == (0, 1000)
+      and ids.count(P_FADE) == 1, (fade_reg, ids.count(P_FADE)))
 
 # ====================================================================================================== the poll (unit)
 sdram(e)
@@ -3318,15 +3326,16 @@ check(f"no bank 2 (its header wiped before the first poll): Loop Len 1/16 set an
 # ...and with all three set from the start (Slip +480, Region Loop over [24 000, 72 000) in the class-H object, Loop Len
 # 1/4) and a live Slip change: every read, fetch, prefetch, mixed sample and message as with every clipwin hook taken out
 kw = dict(frames=96000, cell=0x102, blocks=900, slip=480, points=(24000, 72000, 1), region=LOOP,
-          vals={P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1},
-          pre=lambda rr: store(rr.m, rr.q, {0x4: 500, P_SLIP: -30, P_REGION: LOOP, P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1})
+          vals={P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1, P_FADE: 50},
+          pre=lambda rr: store(rr.m, rr.q, {0x4: 500, P_SLIP: -30, P_REGION: LOOP, P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1,
+                                            P_FADE: 50})
           if rr.block == 300 else None)
 nb = scenario(bank2=False, **kw)
 by = scenario(bypass=True, **kw)
 wb = scenario(**kw)
 ok_, d_ = same(nb, by)
 differs = not same(wb, by)[0]
-check(f"no bank 2, with Slip +480 (then -30), Region Loop [24 000, 72 000), Loop Len 1/4 and Fit Auto set: every Clip pad plays "
+check(f"no bank 2, with Slip +480 (then -30), Region Loop [24 000, 72 000), Loop Len 1/4, Fit Auto and Loop Fade 5 % set: every Clip pad plays "
       f"stock, bit for bit the run with every clipwin hook taken out ({d_}), no bank-2 function entered "
       f"({len(nb.b2_entered)}), nothing latched (valid {bank_valid(nb.m, 6):#x}), no Sync forced ({nb.i64(nb.pad + 0x220)}); "
       f"with bank 2 the same run is not stock's ({differs}: latched {bank_valid(wb.m, 6):#x})",
@@ -3861,7 +3870,7 @@ w = []
 r = Rig(cell=0x102, h=True, frames=192000)
 r.uc.hook_add(UC_HOOK_MEM_WRITE, lambda u_, acc, addr, size_, v, d_: w.append((addr, size_)) if any(
     a_ <= u_.reg_read(UC_ARM_REG_PC) < b_ for a_, b_ in cw_code) else None, begin=BLOCK, end=BLOCK + 0x100000)
-store(r.m, 6, {0x4: 500, P_SLIP: 0, P_REGION: LOOP, P_FIT: 1})
+store(r.m, 6, {0x4: 500, P_SLIP: 0, P_REGION: LOOP, P_FIT: 1, P_FADE: 50})
 for _ in range(16):
     poll(r)
 r.pre_block = lambda rr: (poll(rr), rr.set_bpm(126.0) if rr.block == 400 else None)
@@ -3875,11 +3884,149 @@ r.note_on()
 r.run(700)
 hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (
     ("fit", B_FIT, B_PFIT), ("pfit", B_PFIT, B_FON), ("fon", B_FON, B_ABEATS), ("abeats", B_ABEATS, B_ALEN),
-    ("alen", B_ALEN, B_BPM), ("bpm", B_BPM, B_ENGINE), ("engine", B_ENGINE, B_ENGINE + 4),
+    ("alen", B_ALEN, B_BPM), ("bpm", B_BPM, B_ENGINE), ("engine", B_ENGINE, B_FADE), ("fade", B_FADE, B_FIN),
     ("abars", B_ABARS, B_SIZE))}
-check(f"in a fitted run, every write clipwin.c and clipwin_b2.c make into the SDRAM block lands in "
-      f"cw_bank's {B_SIZE:#x} bytes (Fit's fields written: {hit})", w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w),
+check(f"in a fitted run with Loop Fade, every write clipwin.c and clipwin_b2.c make into the SDRAM block lands in "
+      f"cw_bank's {B_SIZE:#x} bytes (Fit's and Loop Fade's fields written: {hit})", w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w),
       (sorted({hex(a_) for a_, s_ in w if not BANK <= a_ < BANK + B_SIZE})[:4], hit))
+
+# ====================================================================================================== 11c. Loop Fade
+# Loop Fade on a Region (without it the region's seam is a hard splice, a single-sample step at every wrap):
+# stock's own Sample-mode row (0xfa, 0 .. 1000) on the Clip Pos page, taken with the region; the region's last F =
+# (int)(vlen x row / 1000) frames (at most Loop Start) crossfade, equal-gain and linear as stock's Sample mode does, into
+# the F frames before Loop Start: y = x + g (x(j - vlen) - x(j)), g = (j - (le - F)) / F. The ramp source makes that
+# exact: a faded frame j decodes as j - g x vlen.
+FREG = dict(frames=192000, region=LOOP, points=(RS4, RS4 + VL4, 1), beats=0, cell=0x102)
+
+
+def fade_model(d0, d1, fade, rs=RS4, vlen=VL4):
+    """the faded run d1 against the Loop Fade 0 run d0 of the same scenario, sample by sample where one segment sounds
+    in both: (samples compared, of them inside the fade, max |d1 frame - (d0 frame - g x vlen)|), leaving out the
+    kernel's support (3 frames) round the fade's two kinks and the seam, and d0's frames that are not one rate step
+    from both neighbours"""
+    lo, w = window(d0, d1)
+    f0, f1 = w["frame"]
+    le = rs + vlen
+    F = min(int(np.float32(vlen) * (np.float32(fade) / np.float32(1000.0))), rs)
+    z = le - F
+    ok = ~np.isnan(f0) & ~np.isnan(f1) & (lo + np.arange(len(f0)) > 288300)
+    ok &= ~((np.abs(f0 - z) < 3) | (np.abs(f0 - le) < 3) | (np.abs(f0 - rs) < 3))
+    d_ = np.diff(f0)
+    rate = float(np.median(d_[np.abs(d_) < 50]))
+    smooth = np.abs(d_ - rate) < 0.05                       # (a frame decoded across the seam is a blend of both ends)
+    ok &= np.concatenate([[False], smooth]) & np.concatenate([smooth, [False]])
+    g = np.clip((f0 - z) / F, 0, 1) * (f0 < le)
+    e = np.abs(f1 - (f0 - g * vlen))[ok]
+    return int(ok.sum()), int((ok & (f0 >= z) & (f0 < le)).sum()), float(e.max()) if len(e) else 9e9
+
+
+rows = []
+for what, kw in (("48 kHz mono, rate 1", dict()), ("Fit Auto (rate 0.935)", dict(vals={P_FIT: 1})),
+                 ("44.1 kHz stereo (rate 0.91875)", dict(stereo=True, src_rate=44100)), ("Slip +480", dict(slip=480))):
+    vals = kw.pop("vals", {})
+    d0 = audio(blocks=2300, vals={P_FADE: 0, **vals}, **FREG, **kw)
+    d5 = audio(blocks=2300, vals={P_FADE: 50, **vals}, **FREG, **kw)
+    n_, nz, err = fade_model(d0, d5, 50)
+    rows.append((what, n_, nz, round(err, 4), d5["rig"].hints[:2]))
+F5 = int(VL4 * 0.05)
+check(f"Loop Fade 5 % on the 3.74-beat region [6 144, 95 904) ({F5} frames): every sample of the faded run plays the Loop "
+      f"Fade 0 run's frame j, crossfaded into j - 89 760 with gain (j - (95 904 - {F5})) / {F5} (stock's equal-gain linear "
+      f"formula): {[(w_, n_, nz, e_) for w_, n_, nz, e_, _ in rows]} (samples, inside the fade, max error in frames); the "
+      f"seam hinted where the copy starts ({6144 - F5}) and at rs ({RS4})",
+      all(n_ > 100000 and nz > 2 * F5 and e_ <= (0.01 if "rate 1" in w_ or "Slip" in w_ else 0.1) for w_, n_, nz, e_, _ in rows)
+      and all(h and {p for _, p, _ in h} == {RS4 - F5, RS4} for *_, h in rows), rows)
+d0 = audio(blocks=2300, vals={P_FADE: 0}, **{**FREG, "points": (1000, 1000 + VL4, 1)})
+d5 = audio(blocks=2300, vals={P_FADE: 50}, **{**FREG, "points": (1000, 1000 + VL4, 1)})
+n_, nz, err = fade_model(d0, d5, 50, rs=1000)
+check(f"  ...a region starting at 1 000 (5 % would be {F5} frames): the fade is Loop Start long, 1 000 frames, as stock's "
+      f"({n_} samples, {nz} in the fade, max error {err:.4f})", n_ > 100000 and nz > 2700 and err <= 0.01, (n_, nz, err))
+# the bench's measure: a zero-mean source whose seam does not match (a 441 Hz sine), the largest sample-to-sample step of
+# the output after the launch: the splice at Loop Fade 0, the sine's own (and the steps' crossfades) with it
+keep = Rig._data
+
+
+def sine(self, pos, n, right=False):
+    q_ = np.arange(pos, pos + n, dtype=np.int64)
+    v = 0.5 * np.sin(2 * np.pi * 441.0 * q_ / self.src_rate) * (-1.0 if right else 1.0)
+    return np.where((q_ >= 0) & (q_ < self.len), v, 0.0).astype(np.float32).tobytes()
+
+
+Rig._data = sine
+try:
+    steps = {}
+    for fade in (0, 10, 50):
+        for what, kw in (("rate 1", dict()), ("Fit Auto", dict(vals={P_FIT: 1}))):
+            vals = kw.pop("vals", {})
+            r = scenario(blocks=2300, vals={P_FADE: fade, **vals}, **FREG, **kw)
+            out = np.concatenate(r.out).astype(np.float64)[(288300 - 287000):]
+            steps[(fade, what)] = float(np.abs(np.diff(out)).max())
+finally:
+    Rig._data = keep
+check(f"a 441 Hz sine region, its seam mismatched: the largest sample step after the launch {steps} - a splice at Loop Fade 0 "
+      f"(0.3), none at 1 % and 5 % (the sine's own 0.029 a sample, and its steps' crossfades)",
+      steps[(0, "rate 1")] > 0.25 and steps[(0, "Fit Auto")] > 0.25
+      and all(steps[(f_, w_)] < 0.07 for f_ in (10, 50) for w_ in ("rate 1", "Fit Auto")), steps)
+# where it does nothing, bit for bit as Loop Fade 0: a one-shot (Launch Trigger: it never wraps), Loop Off, a region
+# under 2 048 frames, a rate above 3.9 (Pitch +24: the window and its copy no longer fit the scratch), a machine mode
+# (Fidelity SP1200: filter.c's reader), and Loop Fade 0 in the store against no Loop Fade row
+for what, kw in (("Launch Trigger", dict(launch=0)), ("Loop Off", dict(loop=0)),
+                 ("a region of 2 000 frames", dict(points=(RS4, RS4 + 2000, 1), beats=0)),
+                 ("Pitch +24 (rate 4)", dict(setup=lambda r: r.param(0x5C, 24000))),
+                 ("Fidelity SP1200", dict(vals={0xF1: 2})), ("Loop Fade 0 against no row", None)):
+    if kw is None:
+        a, b = scenario(blocks=1500, vals={P_FADE: 0}, **FREG), scenario(blocks=1500, **FREG)
+    else:
+        vals = kw.pop("vals", {})
+        base_ = {**FREG, **kw}
+        a = scenario(blocks=1500, vals={P_FADE: 50, **vals}, **base_)
+        b = scenario(blocks=1500, vals={P_FADE: 0, **vals}, **base_)
+    ok_, d_ = same(a, b)
+    check(f"Loop Fade 5 %, {what}: every read, fetch, prefetch, output sample and message as at Loop Fade 0 ({d_})", ok_, d_)
+
+
+# ...and while Loop Len is taken: a window goes back to its own start, never on into Loop Start, so it is not faded (on
+# the region's last beat each repetition would end on the audio before Loop Start). Loop Len 1/4 taken in the last beat
+# of a one-bar region [40 000, 136 000), Loop Fade 1 % (960 frames, inside that beat): as at Loop Fade 0. Loop Len is
+# written SETTLE_BLOCKS before block 574, so that it is taken at block 582 whatever the settle, before either run's seam
+# hint (Loop Fade's, at rs - F, comes about 8 blocks earlier than Loop Fade 0's at rs)
+def ll_fade(fade, block, ll=3):
+    """pre_block: the pad's store with Loop Fade `fade` throughout and Loop Len `ll` written at `block`; the block whose
+    poll took it in rr.took"""
+    def pre(rr):
+        if rr.block == block:
+            store(rr.m, rr.q, {0x4: 500, P_SLIP: 0, P_SYNC: 3, P_REGION: LOOP, P_FADE: fade, P_LOOPLEN: ll})
+        if getattr(rr, "took", None) is None and rr.m.r8(BANK + B_LL + rr.q) == ll:
+            rr.took = rr.block
+    return pre
+
+
+RL = dict(frames=192000, region=LOOP, points=(40000, 136000, 1), beats=0, cell=0x102)
+a, b = (scenario(blocks=1500, vals={P_FADE: f_, P_SYNC: 3}, pre=ll_fade(f_, 574 - SETTLE_BLOCKS), **RL) for f_ in (10, 0))
+ok_, d_ = same(a, b)
+took = (getattr(a, "took", None), getattr(b, "took", None))
+check(f"Loop Fade 1 % and Loop Len 1/4 taken in the region's last beat (block {took[0]}: sample "
+      f"{took[0] and 287000 + took[0] * N}, the beat from 360 000): every read, fetch, prefetch, output sample and "
+      f"message as at Loop Fade 0 ({d_})", ok_ and took[0] == took[1] and took[0] and 360000 <= 287000 + took[0] * N < 384000,
+      (took, d_))
+
+# the seam hint with a long fade on a slipped pad (Slip 480: the seam inside a segment, where H1's prefetch for the next
+# pass does not reach rs): Loop Fade 25 % of a 192 000-frame region at 40 000, clamped to Loop Start (40 000 frames).
+# The hint where the copy starts (0) reaches 3 blocks of 8 192 frames, not rs: rs is hinted as well, before the crossing
+RSH, VLH = 40000, 192000
+cov = lambda p: p // 8192 * 8192 <= RSH < (p // 8192 + 3) * 8192
+rows = {}
+for fade in (0, 250):
+    r = scenario(frames=RSH + VLH + 4000, cell=0x102, blocks=2000, beats=0, points=(RSH, RSH + VLH, 1), region=LOOP,
+                 slip=480, vals={P_FADE: fade, P_SYNC: 3})
+    seams = sorted({b_ for b_, pos, n in r.fetches if pos == RSH and b_ > 50})
+    prev, got = 50, []
+    for s_ in seams:
+        got.append((s_, [(b_, p) for b_, p in r.prefetches if prev < b_ <= s_ and cov(p)][:3]))
+        prev = s_
+    rows[fade] = (got, r.hints[:4])
+check(f"Loop Fade 25 %, Slip 480: before each seam crossing a prefetch covers rs = {RSH} (crossing block, those "
+      f"prefetches; the hints: {rows}), as at Loop Fade 0", all(g_ and all(c for _, c in g_) for g_, _ in rows.values())
+      and {p for _, p, _ in rows[250][1]} == {0, RSH}, rows)
 
 # ====================================================================================================== 11d. the playhead
 # H5 (clipwin_playhead at the render's post of msg 0x4a, 0x080668fc): stock posts each segment's own position, which

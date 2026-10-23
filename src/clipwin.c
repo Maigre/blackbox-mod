@@ -1,5 +1,5 @@
 /*
- * Clip Window: Slip, Region, Loop Len and Fit. Original 1010music Blackbox, firmware 3.1.9.
+ * Clip Window: Slip, Region, Loop Len, Fit and Loop Fade. Original 1010music Blackbox, firmware 3.1.9.
  * The reverse engineering and the bench measurements behind it are in github.com/Maigre/blackbox-mod, branch
  * maigre: notes/re/ and notes/bench/ (cited below as notes/...).
  *
@@ -86,6 +86,12 @@
  * Setting: "Fit:" Off | Auto (Bars) | Auto (Beats) | 1/4 | 1/2 | 3 beats | 1 bar | 6 beats | 2 bars | 4 bars |
  * 8 bars after Loop Len, saved as "clipfit".
  *
+ * Loop Fade on a Region (without it the seam is a hard splice): Sample mode's own row (0xfa), taken with the
+ * region; the region's last F = (int)(vlen x row / 1000) frames (at most Loop Start) crossfade, equal-gain and linear
+ * as Sample mode's, into the F before Loop Start: H2 reads such a window twice, the second time vlen earlier, and
+ * mixes them (cw_map, cw_fade). Not in a machine mode, nor above a rate of ~3.9, nor while Loop Len is taken. The
+ * seam hint then goes to where the copy starts and to Loop Start. Setting: stock's Loop Fade row, after Fit.
+ *
  * The Waveform screen in Clip mode (notes/re/a3, README section 3): stock unbinds all four knobs and draws no loop
  * bracket. TL = Loop Start, TR = Loop End (stock's 0x91 / 0x92, sample positions one zoom pixel a step, ranged as in
  * Sample mode), BL = Slip, BR = Loop Len; the white bracket shows the loop Region plays, from the view's store, so a
@@ -98,8 +104,8 @@
  * poll and its drop, Loop Len's take, its window and its Sync message, the knob's tiers and detent, the Slip row's
  * text, the bracket). This file keeps the hooks, every stock call they make and the bank's set-up, which leaves room in
  * the bank 1 cave. bank() asks b2_live() first: without this build's payload up there every hook passes straight
- * through to stock, so every Clip pad plays as stock does, Slip, Region, Loop Len and Fit do nothing (their rows are
- * kept, as stored), the Slip row shows stock's plain number and the waveform no bracket.
+ * through to stock, so every Clip pad plays as stock does, Slip, Region, Loop Len, Fit and Loop Fade do nothing (their
+ * rows are kept, as stored), the Slip row shows stock's plain number and the waveform no bracket.
  */
 #include <stdint.h>
 
@@ -161,6 +167,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
 #define P_LOOP_END  0x92
+#define P_LOOP_FADE 0xfa             /* stock's Sample-mode Loop Fade: 0 .. 1000 (clipwin_b2.c cw_map, cw_fade) */
 #define TYPE_INT    1
 #define APP_PADS    (0x24020088u + 0x1840u)   /* the app's pad stores: + row * 0xf0 + col * 0x30 */
 
@@ -247,9 +254,9 @@ static const void *pad_store(unsigned q)
    the real length, clipwin_read folds. A playing pad takes its region only at its wrap; a stopped one at its next
    recompute, which nothing triggers when only the Region row or the loop points change: at the latest the one before
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
-   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, and
-   Fit. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
-static const uint16_t region_rows[CW_SET_ROWS] = {P_REGION, P_LOOP_START, P_LOOP_END, P_FIT};   /* CW_SET_* order */
+   0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
+   and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
+static const uint16_t region_rows[CW_SET_ROWS] = {P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE};  /* CW_SET */
 
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
@@ -391,8 +398,10 @@ int clipwin_read(float rate, uint8_t *pad, uint8_t *filter, int32_t pos, int32_t
        the source pointer: the key map hands the freed asset entry out again, so a load often keeps it. */
     if (fw_src_len(src) != l->len)
         return clip_read(rate, pad, filter, pos, pos_hi, n, used, frac, scratch, out, result);
-    int32_t rs = l->rs, vlen = l->vlen;
-    int32_t real = cw_map(l, pos);       /* where it really reads */
+    int32_t rs = l->rs, vlen = l->vlen, at[2];
+    /* where it really reads (at[0]), and Loop Fade's frames (at[1], cw_map) */
+    cw_map(b, (unsigned)q, pad, l, pos, at);
+    int32_t real = at[0];
     int straight = rate == 1.0f && *frac == 0.0f;
     int cap = fw_buf_frames(scratch);
     int count = straight ? n : (int)((float)n * rate) + 8;
@@ -401,14 +410,21 @@ int clipwin_read(float rate, uint8_t *pad, uint8_t *filter, int32_t pos, int32_t
     /* A machine mode: filter.c's machine reader over the circular region, seam or not (it fetches from real - 3,
        n x rate + 8 frames even at rate 1). */
     int ring = clip_read_ring(rate, pad, filter, real, rs, vlen, n, used, frac, scratch, out, result);
-    /* the seam hint at rs, once a crossing segment is within its reach (cw_hint) */
-    if (cw_hint(b, (unsigned)q, l, real))
+    /* Loop Fade, not in a machine mode, and when the window and its copy both fit the scratch (a rate up to about
+       3.9): the reads reaching into the region's last F frames take the seam's path. The seam hint once a crossing
+       segment is within its reach (cw_hint): at rs; with a fade, where its copy starts and at rs as well (a hint
+       reaches 16 384 frames for sure, a fade can be longer, and on a slipped pad nothing else hints rs). */
+    int32_t fade = ring < 0 && 2 * count <= cap ? at[1] : 0, edge = rs + vlen - fade;
+    if (cw_hint(b, (unsigned)q, l, real, fade)) {
+        if (fade)
+            fw_prefetch(src, rs - fade);
         fw_prefetch(src, rs);
+    }
     if (ring >= 0)
         return ring;
     /* No seam in the window the read needs: stock's reader at the real position. Stock adds `used` to its own
        position, which stays the unslipped one: the next block maps it again. */
-    if (real + count <= rs + vlen)
+    if (real + count <= edge)
         return clip_read(rate, pad, filter, real, 0, n, used, frac, scratch, out, result);
     /* The read crosses the end of the region (once a pass): the stock reader's own work, with the fetch in two parts
        so the kernel interpolates across the seam as if the file were circular. */
@@ -419,6 +435,11 @@ int clipwin_read(float rate, uint8_t *pad, uint8_t *filter, int32_t pos, int32_t
     else
         sl = fw_buf_mono(scratch);
     clip_fetch(src, stereo, sl, sr, count, real, rs, vlen);
+    /* Loop Fade: the same window vlen earlier (before Loop Start), after it in the scratch, and the crossfade */
+    if (fade) {
+        clip_fetch(src, stereo, sl + count, stereo ? sr + count : 0, count, real - vlen, 0, 0);
+        cw_fade(sl, sr, count, real - edge, fade);
+    }
     if (straight) {
         *used = n;
         *result = scratch;
@@ -675,7 +696,7 @@ void clipwin_playhead(void *ui, uint8_t *msg, uint8_t *pad, unsigned k)
     struct cw_bank *b = pad_bank(pad, &q);
     if (b) {
         int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
-        int32_t real = cw_playhead(b, (unsigned)q, k, *(int32_t *)(msg + MSG_POS), len);
+        int32_t real = cw_playhead(b, (unsigned)q, pad, k, *(int32_t *)(msg + MSG_POS), len);
         if (real >= 0) {
             *(int32_t *)(msg + MSG_POS) = real;
             *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);

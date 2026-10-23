@@ -46,7 +46,8 @@ PATCHES = [
     # the waveform's tick, after it placed the playhead line: no line while a Clip view holds on an edge
     hook(0x080C6DCA, 0x080C6ACC, "clipwin_line"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8
-    (0x080EF998, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
-    (0x080EF290, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
+    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8, and
+    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9
+    (0x080EF998, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
+    (0x080EF290, struct.pack("<5H", 0, 0, 0, 0, 0), struct.pack("<5H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA)),
 ]
