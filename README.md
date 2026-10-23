@@ -21,6 +21,11 @@ again and put both files on the card the same way.
 
 New since 3.1.n:
 
+- **Slip on Clip pads**: a "Slip" row on a Clip pad's Pos tab, after Sync. It moves what the clip plays against the
+  clock, up to a bar either way, so a loop cut by ear sits where the groove wants it. Like a CDJ jog: clockwise pushes
+  the loop ahead, counter-clockwise drags it behind. The value is beats.ticks, 960 ticks to a beat (`-0.480` is half a
+  beat behind; one tick is about half a millisecond at 120 BPM). Turn slowly for single ticks, fast for 1/64 steps; a
+  turn stops on 0, pause to go past it. A change is heard at the next Sync step. Saved with the preset; 0 is stock.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -74,6 +79,8 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
+- Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
+  waveform shows the unslipped position.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 - USB on the power jack doesn't work on every unit. On some, that jack's USB data side is dead with any firmware,
