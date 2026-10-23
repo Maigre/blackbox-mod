@@ -35,6 +35,12 @@ New since 3.1.n:
 - **Loop Len on Clip pads**: a "Loop Len" row after Slip: Off, 1/16 ... 4 bars. A beat repeat on the grid: the window
   where the music is loops until you turn it Off, and the clip carries on in phase. It needs Quant and Sync; a window
   shorter than a Sync step sets the pad's Sync for as long as it needs to.
+- **Fit on Clip pads**: a "Fit" row after Loop Len: Off, Auto (Bars), Auto (Beats), 1/4 ... 8 bars. The loop the pad
+  plays lasts exactly that many beats at the tempo: a little faster or slower, the pitch with it (not a time-stretch),
+  so a loop cut by ear no longer stutters at every Sync step. Auto (Bars) picks the nearest whole number of bars
+  (under a bar: 1/4, 1/2 or 1 bar), so the loop stays on the metronome's bar; Auto (Beats) the nearest whole number of
+  beats, and a length that is no whole bar (3, 5, 14 beats...) plays as a polyrhythm, each pass in time. It follows
+  tempo changes.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -88,7 +94,7 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Slip, Region and Loop Len do nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
+- Slip, Region, Loop Len and Fit do nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 - USB on the power jack doesn't work on every unit. On some, that jack's USB data side is dead with any firmware,

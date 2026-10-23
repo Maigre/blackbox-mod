@@ -18,6 +18,7 @@
 #define PAD_ID      0x18             /* u32 row << 8 | col; bank << 16 (0 for the pads) */
 #define PAD_SOURCE  0x24
 #define PAD_ON      0x29             /* u8 Clip or Slicer mode active */
+#define PAD_RATE    0x1f0            /* f32 source rate / 48000 (no pitch term): every segment's rate (FUN_08065550) */
 #define PAD_LOOP    0x1f4            /* u8 Loop Mode (0x8d) on */
 #define PAD_SYNCED  0x1f5            /* u8 1: Quant and Sync are both not None (stock's, from the two) */
 #define PAD_LAUNCH  0x1f8            /* u8 Launch Mode + 1: 1 Trigger, 2 Gate, 3 Toggle */
@@ -27,8 +28,10 @@
 #define PAD_STEP_OUT 0x204           /* f32 output samples per step: a segment's countdown + 256 (FUN_08065550) */
 #define PAD_TPS     0x208            /* i64 ticks per step */
 #define PAD_STEPS   0x210            /* u32 steps n */
+#define PAD_QUANT   0x218            /* i64 the launch quantum, ticks (Quant; 0 = None) */
 #define PAD_SYNC    0x220            /* i64 sync step, ticks: SYNC_SLICE = Sync Slice */
 #define PAD_WRAP_GRID 0x230          /* i64 the wrap's grid, ticks: min(Quant, clip) */
+#define ENGINE_BPM  0x18             /* f32 the engine's (the clock's) tempo */
 #define PAD_SLICES  0x250            /* u32 slice markers */
 #define PAD_SLICER  0x254            /* u8 */
 #define LAYER0      0x260            /* two layers (voices) of 0x410: + 0 u8 active */
@@ -62,6 +65,10 @@
 #define P_SYNC      0x94             /* stock's Sync: Slice, 1 bar, 1/2, 1/4, 1/8, 1/16, None (0 .. 6, unchecked) */
 #define SLIP_MAX    3840             /* Slip's range, +- one bar of ticks */
 #define LOOPLEN_MAX 7                /* Loop Len: Off, then 1/16 << (value - 1) up to 4 bars */
+#define FIT_AUTO    1                /* Fit: Off, Auto (Bars), Auto (Beats), then 1/4, 1/2, 3 beats, 1 bar, 6 */
+#define FIT_BEATS   2                /* ...beats, 2, 4 and 8 bars */
+#define FIT_MAX     10
+#define FIT_AUTO_MAX 1024            /* Fit Auto's most beats (an 8.5-minute loop at 120 BPM; a whole number of bars) */
 
 struct cw_latch {
     int32_t rs, vlen, delta;         /* the region (or the whole file) and the shift, frames */
@@ -95,12 +102,21 @@ struct cw_bank {
     uint8_t llv[16];                 /* Loop Len as the poll last read it from the store, */
     uint8_t llc[16];                 /* ...and how many polls since it changed (it is taken at LL_SETTLE, cw_tick) */
     int32_t flen[16];                /* fw_src_len at the pad's last recompute (H3 site 1): the Waveform's length */
-    uint8_t spare_784[0xf4];         /* room: no field after it moves */
+    uint8_t fit[16];                 /* Fit as taken with the region (at the pad's wrap, or stopped): 0 Off, 1 Auto
+                                        (Bars), 2 Auto (Beats) */
+    uint8_t pfit[16];                /* ...the one it had before (cw_hold puts it back when it holds the wrap) */
+    uint8_t fon[16];                 /* 1: the pad's last recompute stored Fit's step fields (cw_fit) */
+    uint16_t abeats[16];             /* Fit Auto: the beats it counted ... */
+    int32_t alen[16];                /* ... for this length, frames (0: none counted) */
+    float bpm[16];                   /* the tempo a fitted pad's step fields were made at */
+    const uint8_t *engine;           /* the engine (the clock) as the poll last had it: cw_fit's tempo */
+    uint8_t spare_858[0x20];         /* room: no field after it moves */
     uint8_t fin[16];                 /* bit k: slot k's segment starts inside the audio: its first read gives back the
                                         fade-in stock takes from a hard start (cw_latch, cw_slot) */
     uint8_t wrapped[16];             /* 1: pad q's wrap has just been recomputed (cw_hold): its next segment is that
                                         pass's step 0, not a launch */
-    uint8_t spare_898[0x10];         /* room: the bank's size stays */
+    uint8_t abars[16];               /* 1: abeats is Auto (Bars)' count, 0: Auto (Beats)' (cw_fit counts again when the
+                                        other Auto is chosen) */
 };
 #define CW_MAGIC  0x43574e42u        /* "CWNB": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET (0x56800u + 0x2d100u)   /* master.c: PRISM_BYTES + 0x2d100, where this bank begins */
@@ -110,21 +126,28 @@ _Static_assert(CW_OFFSET == 0x56800u + 0x2d100u, "master.c: PRISM_BYTES + 0x2d10
 _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_bank, zero_dir) == 0x4bc &&
                offsetof(struct cw_bank, zero_slow) == 0x4bd &&
                offsetof(struct cw_bank, knob_counts) == 0x720 && offsetof(struct cw_bank, knob_speed) == 0x722 &&
-               offsetof(struct cw_bank, fin) == 0x878 && offsetof(struct cw_bank, wrapped) == 0x888 &&
+               offsetof(struct cw_bank, fit) == 0x784 && offsetof(struct cw_bank, fon) == 0x7a4 &&
+               offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
+               offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
+               offsetof(struct cw_bank, wrapped) == 0x888 && offsetof(struct cw_bank, abars) == 0x898 &&
                sizeof(struct cw_bank) == 0x8a8,
-               "test_clipwin.py reads the knob's fields here");
+               "test_clipwin.py reads the knob's and Fit's fields here");
 
 /*
  * clipwin_b2.c, in bank 2: the maths and the policy of every hook. Call only when b2_live() holds (clipwin.c's
  * bank() asks it); each is leaf code, and clipwin.c makes every stock call they need.
  */
 int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, else -1 */
-/* H3: the length stock is told at site 0 .. 3; set = the pad's store rows below, read for site 1 only */
+/* H3: the length stock is told at site 0 .. 3 (at site 3, a fitted pad's step fields stored again: cw_fit); set = the
+   pad's store rows below, read for site 1 only */
 #define CW_SET_REGION 0
 #define CW_SET_START  1
 #define CW_SET_END    2
-#define CW_SET_ROWS   3
+#define CW_SET_FIT    3
+#define CW_SET_ROWS   4
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set);
+/* ...cw_len's at site 3: a fitted pad's step fields over len (its region or its file); 1 = stored, 0 = not fitted */
+int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len);
 /* H3': after the wrap's recompute, 1 = the region before it (was: rs, vlen, then the wrap grid and the clip, ticks, the
    pad had) is back and the pad must recompute again */
 #define CW_WAS_GRID 2
@@ -141,7 +164,8 @@ int cw_hint(struct cw_bank *b, unsigned q, const struct cw_latch *l, int32_t rea
 /* H5: the frame slot k of pad q really reads at stock's position pos (cw_map's), for the playhead; -1 = stock's */
 int32_t cw_playhead(const struct cw_bank *b, unsigned q, unsigned k, int32_t pos, int32_t len);
 /* the poll: bit 0 = drop and remake the pending segments (cw_drop: the slots to latch again), bit 1 = send msg, bit 2 =
-   the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source) */
+   the cached pad is pad q's (cw_retire may look at its segments, len = fw_src_len of its source), bit 3 = recompute it
+   (Fit: its step fields were made at another tempo) */
 int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg);
 unsigned cw_drop(const struct cw_bank *b, unsigned q, uint8_t *pad);
 void cw_retire(uint8_t *pad, int32_t len);
@@ -164,12 +188,13 @@ _Static_assert(offsetof(struct cw_bank, slip) == 0x8 && offsetof(struct cw_bank,
                offsetof(struct cw_bank, origin) == 0x5c0 && offsetof(struct cw_bank, ll) == 0x600 &&
                offsetof(struct cw_bank, forced) == 0x610 && offsetof(struct cw_bank, sf) == 0x620 &&
                offsetof(struct cw_bank, llv) == 0x723 && offsetof(struct cw_bank, llc) == 0x733 &&
-               offsetof(struct cw_bank, flen) == 0x744,
+               offsetof(struct cw_bank, flen) == 0x744 && offsetof(struct cw_bank, pfit) == 0x794 &&
+               offsetof(struct cw_bank, engine) == 0x854,
                "bank 2 (the cw_* functions) is compiled against these cw_bank offsets: moving one reprograms bank 2");
 _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC == 0x1c && SEG_DELAY == 0x20 &&
                SEG_FADE_IN == 0x24 && FADE_IN == 256 &&
                SEG_STEP == 0x34 && SEG_FIRST == 0x3c && SEG_END == 0x10 && PAD_FPS == 0x1fc && PAD_TPS == 0x208 &&
-               PAD_STEPS == 0x210 &&
+               PAD_STEPS == 0x210 && PAD_RATE == 0x1f0 && PAD_QUANT == 0x218 && ENGINE_BPM == 0x18 &&
                PAD_SYNC == 0x220 && PAD_CLASS == 0x04 && PAD_SIBLING == 0x08 && PAD_ID == 0x18 && PAD_ON == 0x29 &&
                PAD_LOOP == 0x1f4 && PAD_SYNCED == 0x1f5 && PAD_LAUNCH == 0x1f8 && PAD_STEP_OUT == 0x204 &&
                PAD_HARD0 == 0xba1 &&
@@ -182,7 +207,8 @@ _Static_assert(SEG0 == 0x30 && SEG_SIZE == 0x70 && SEG_POS == 0x08 && SEG_FRAC =
 _Static_assert(STEPPER_STEP == 0x08 && STEPPER_INDEX == 0x0c && STEPPER_START == 0x18 && WAVE_DIRTY == 0x32 &&
                WAVE_LOOP == 0x22c && WAVE_LOOP_ON == 0x239 && P_SYNC == 0x94 && SLIP_MAX == 3840 && LOOPLEN_MAX == 7 &&
                SRC_BAD == 0x10000000 && SYNC_SLICE == 0xf0000 && CW_SET_REGION == 0 && CW_SET_START == 1 &&
-               CW_SET_END == 2 && CW_SET_ROWS == 3 && CW_WAS_GRID == 2 && CW_WAS_CLIP == 3,
+               CW_SET_END == 2 && CW_SET_FIT == 3 && CW_SET_ROWS == 4 && CW_WAS_GRID == 2 && CW_WAS_CLIP == 3 &&
+               FIT_AUTO == 1 && FIT_BEATS == 2 && FIT_MAX == 10 && FIT_AUTO_MAX == 1024,
                "bank 2 (cw_turn, cw_bracket, cw_tick, cw_looplen, cw_len, cw_latch, cw_hold) is compiled against the "
                "knob's and the waveform's fields, these settings and values, clipwin_len's row order and "
                "clipwin_wrap's: changing one reprograms bank 2");

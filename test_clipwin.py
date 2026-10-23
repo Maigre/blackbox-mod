@@ -1,4 +1,4 @@
-"""Clip Window: Slip, Region and Loop Len (src/clipwin.c, clipwin_b2.c, clipwin_thunk.S,
+"""Clip Window: Slip, Region, Loop Len and Fit (src/clipwin.c, clipwin_b2.c, clipwin_thunk.S,
 patches/clipwin.py; notes/re/README.md sections 2, 3) under Unicorn.
 
 Real firmware runs for: the whole class-B pad block method (0x08068c64) block after block - process, voice start, the
@@ -42,7 +42,13 @@ numbers (the in-point from the sounding segment's phase, a forced Sync re-griddi
 until it has sounded), the review's cases with absolute frames (a 44.1 kHz file whose re-indexed step runs ahead of its
 position, Off and on within a step, a stop and relaunch, Sync None) and every segment starting on (int)((float)w x
 fps) for the window's step w, then playing on, the gain of the run without it where Sync is not forced, no zero-gain
-sample added where it is; for
+sample added where it is; for Fit, the rule's own numbers (the nearest whole beat, the wrap grid gcd(Quant, clip), its
+steps gcd(Sync, clip), FUN_08070420's samples) at H3 site 3, and a model of what a fitted clip must sound like: every
+pass one clip after the one before, the audio carrying on at every joint (within half a frame, a frame where stock
+starts a step on a whole frame), no zero-gain sample and no doubling, where stock (Fit Off, the same files at their Beat
+Count) does not - 3, 5, 6, 7 and 14 beats on Quant 1 bar, Sync 1/16 to 1 bar, Quant None (CW_FULL=1: at every Sync),
+a file and a region, a tempo change, Slip, Loop Len, Pitch, 44.1 kHz stereo, a one-shot, live changes and the wrap's
+hold - and a launch off the Sync grid pulled onto the beat at its first step as Fit Off and the stock image pull it; for
 the reader, the stock reader on the file turned circular; for a machine-mode pad, filter.c's
 own clip_read on the file turned circular (at the seam, on the last blocks before it, near the start: bit for bit) and
 test_clip.py's drop-sample model off the seam; for the seam hint, notes/re/a2's provider (a hint covers the block of
@@ -63,7 +69,9 @@ with Pitch (rate != 1 is run once, a 44.1 kHz file), with a region change or a B
 and a Trigger / Gate relaunch while it is engaged; whether a preset load stops a pad (Loop Len's in-point resets on a
 stopped pad); the app's
 loader and Pad Mode change feeding the class-H object (posted here as the app posts them, x3); the knob's counts per
-revolution on the hardware (the acceleration's K); how it sounds; CPU on the chip.
+revolution on the hardware (the acceleration's K); Fit on a pad the app's Beat Count display then miscounts (the app is
+told stock's clip, msg 0x8d); whether the app's preset load closes a pad's file before its recompute (Fit Auto's
+count is forgotten only then); how it sounds; CPU on the chip.
 """
 import math
 import os
@@ -88,7 +96,11 @@ img, stock = open(IMAGE, "rb").read(), open(STOCK, "rb").read()
 S = e.sym
 
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
+P_FIT = 0x1CB                                        # Fit
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
+FIT_NAMES = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
+FIT_BEATS = [None, None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (each Auto counts its own)
+AUTO_BARS, AUTO_BEATS = 1, 2                         # Fit's two Autos
 APP = 0x24020088
 APP_PADS = APP + 0x1840
 GUI_MS = 0x2402EEE0
@@ -101,9 +113,11 @@ B_ZERO_AT, B_ZERO_DIR, B_KNOB_COUNTS, B_KNOB_SPEED = 0x4B8, 0x4BC, 0x720, 0x722 
 B_ZERO_SLOW = 0x4BD                                  # ...the arrival on 0 was slow (the long hold)
 B_LLV, B_LLC = 0x723, 0x733                          # Loop Len as last polled, and polls since it changed
 B_FLEN = 0x744                                       # fw_src_len at each pad's last recompute (the Waveform's length)
+B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0x7B4, 0x7D4, 0x814, 0x854   # Fit's
 B_FIN, B_WRAPPED = 0x878, 0x888                      # the slots that get their fade-in back, the wraps just made
+B_ABARS = 0x898                                      # 1: Auto's count is Auto (Bars)', 0: Auto (Beats)'
 B_SIZE = 0x8A8                                       # sizeof(struct cw_bank)
-B_BYTES = 0x1000                                     # what master.c's block gives it
+B_BYTES = 0x1000                                     # what master.c's block gives it (0x800 before Fit)
 CW_MAGIC = 0x43574E42
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
@@ -280,11 +294,11 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
       order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
-POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN)             # the Clip Pos page's slots 5 .. 7
+POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT)      # the Clip Pos page's slots 5 .. 8
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
     check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
-          f"(0x1ca), then {32 - len(POS_ROWS)} empty slots",
+          f"(0x1ca), Fit (0x1cb), then {32 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
@@ -365,18 +379,23 @@ check(f"... and 0x1ca once, after Slip: 'Loop Len:', a list of {lists.get(P_LOOP
       "'cliplooplen'", len(ll_reg) == 1 and ll_reg[0][2] == "Loop Len:" and ll_reg[0][5] == "cliplooplen"
       and {ll_reg[0][1]} == list_type and lists.get(P_LOOPLEN) == LL_NAMES and regs.index(ll_reg[0]) > regs.index(ours[0]),
       (ll_reg, lists.get(P_LOOPLEN)))
+fit_reg = [r for r in regs if r[0] == P_FIT]
+check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)} (stock's own strings but the two Autos, "
+      "'3 beats' and '6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
+      and {fit_reg[0][1]} == list_type and lists.get(P_FIT) == FIT_NAMES and regs.index(fit_reg[0]) > regs.index(ll_reg[0]),
+      (fit_reg, lists.get(P_FIT)))
 check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
-      and ll_reg and len(ll_reg[0][2]) <= 9)
-check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8, 0x1c9 and 0x1ca there",
+      and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9)
+check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8, 0x1c9, 0x1ca and 0x1cb there",
       not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF]
-      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN],
+      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT],
       [hex(r[0]) for r in regs if 0x1C8 <= r[0] <= 0x1CF])
 xmls = [r[5] for r in regs if r[5]]
 dups = sorted({x for x in xmls if xmls.count(x) > 1})
 stock_xmls = [r[5] for r in stock_regs if r[5]]
-check("'clipslip', 'clipregion' and 'cliplooplen' are unique among every registered xml name (and new to the image)",
-      all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
-          for x in ("clipslip", "clipregion", "cliplooplen")))
+check("'clipslip', 'clipregion', 'cliplooplen' and 'clipfit' are unique among every registered xml name (and new to the "
+      "image)", all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
+                    for x in ("clipslip", "clipregion", "cliplooplen", "clipfit")))
 if dups:
     info(f"xml names registered more than once (stock's own: {sorted({x for x in stock_xmls if stock_xmls.count(x) > 1})}): {dups}")
 check(f"the patched registrar still registers stock's {len(stock_regs)} ids under their stock xml names (JOEBOX relabels a few)",
@@ -392,9 +411,9 @@ del e.stubs[0x0804436C]
 count, cap = e.r16(PSTORE + 10), e.r16(PSTORE + 12)
 entries = [struct.unpack_from("<HHi", bytes(e.uc.mem_read(PARR + 8 * i, 8))) for i in range(count)]
 ids = [x[0] for x in entries]
-check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0 and Loop Len 0 (Off) once each "
+check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off) and Fit 0 (Off) once each "
       f"({count} of {cap} entries used)",
-      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN))
+      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT))
       and cap == 96 and count < cap,
       (count, cap, ids[-4:]))
 
@@ -3299,15 +3318,15 @@ check(f"no bank 2 (its header wiped before the first poll): Loop Len 1/16 set an
 # ...and with all three set from the start (Slip +480, Region Loop over [24 000, 72 000) in the class-H object, Loop Len
 # 1/4) and a live Slip change: every read, fetch, prefetch, mixed sample and message as with every clipwin hook taken out
 kw = dict(frames=96000, cell=0x102, blocks=900, slip=480, points=(24000, 72000, 1), region=LOOP,
-          vals={P_SYNC: 3, P_LOOPLEN: 3},
-          pre=lambda rr: store(rr.m, rr.q, {0x4: 500, P_SLIP: -30, P_REGION: LOOP, P_SYNC: 3, P_LOOPLEN: 3})
+          vals={P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1},
+          pre=lambda rr: store(rr.m, rr.q, {0x4: 500, P_SLIP: -30, P_REGION: LOOP, P_SYNC: 3, P_LOOPLEN: 3, P_FIT: 1})
           if rr.block == 300 else None)
 nb = scenario(bank2=False, **kw)
 by = scenario(bypass=True, **kw)
 wb = scenario(**kw)
 ok_, d_ = same(nb, by)
 differs = not same(wb, by)[0]
-check(f"no bank 2, with Slip +480 (then -30), Region Loop [24 000, 72 000) and Loop Len 1/4 set: every Clip pad plays "
+check(f"no bank 2, with Slip +480 (then -30), Region Loop [24 000, 72 000), Loop Len 1/4 and Fit Auto set: every Clip pad plays "
       f"stock, bit for bit the run with every clipwin hook taken out ({d_}), no bank-2 function entered "
       f"({len(nb.b2_entered)}), nothing latched (valid {bank_valid(nb.m, 6):#x}), no Sync forced ({nb.i64(nb.pad + 0x220)}); "
       f"with bank 2 the same run is not stock's ({differs}: latched {bank_valid(wb.m, 6):#x})",
@@ -3319,13 +3338,558 @@ b = scenario(frames=96000, cell=0x102, blocks=900, points=REG, image=STOCK)
 ok_, d_ = same(a, b)
 check(f"no bank 2: Slip 0, Region File and Loop Len Off over a loop play as the stock 3.1.9 image, bit for bit ({d_})", ok_, d_)
 
+# ====================================================================================================== 11b. Fit
+# Fit (README section 3; clipwin_b2.c's fit, at H3 site 3): a Clip pad's clip made a whole number of beats - Auto the
+# nearest, or a count from the list - and what the pad plays (its region, or the file) made to last exactly that long at
+# the tempo, through stock's own step fields stored again: +0x230 the wrap grid, +0x208 ticks per step, +0x210 steps,
+# +0x1fc frames per step, +0x204 output samples per step and +0x1f0 the rate every segment takes. A clip that is no
+# whole number of Quants cycles against them (polymetric): its wrap grid is gcd(Quant, clip), and its steps are
+# gcd(Sync, clip), on the clock's grid of their length as stock's are.
+
+
+def f32s(*xs):
+    return [float(np.float32(x)) for x in xs]
+
+
+def joints(d, vlen, rate=None, since=None):
+    """at each place where the sounding segment changes (a crossfade, a gap), how far the frame after it is from where
+    the frame before it would have got at the playing rate (0: the audio carries on), mod vlen; rate = the median slope
+    of the long single-segment runs unless given. Each side is read where its frames run smoothly (a frame decoded from
+    the ramp next to the region's seam is a blend of both ends: the kernel's support). (rate, [(first sample, jump,
+    zero-gain samples there)])"""
+    f, g, sid = d["frame"], d["gain"], d["sid"]
+    t = d["base"] + np.arange(len(f))
+    ok = ~np.isnan(f)
+    if rate is None:
+        runs, i = [], 0
+        while i < len(f):
+            j = i
+            while j + 1 < len(f) and ok[j + 1] and ok[i] and sid[j + 1] == sid[i] and abs(f[j + 1] - f[j]) < 50:
+                j += 1
+            if j - i > 2000:
+                runs.append((f[j] - f[i]) / (j - i))
+            i = j + 1
+        rate = float(np.median(runs)) if runs else 1.0
+    smooth = lambda k: 0 < k < len(f) and ok[k] and ok[k - 1] and abs(f[k] - f[k - 1] - rate) < 0.05
+    out, i, n = [], 0, len(f) - N
+    while i < n - 1:
+        if ok[i] and not ok[i + 1]:
+            j = i + 1
+            while j < n and not ok[j]:
+                j += 1
+            if j >= n:
+                break
+            a, b_ = i, j
+            while a > i - 16 and not smooth(a):
+                a -= 1
+            while b_ < j + 16 and not smooth(b_ + 1):
+                b_ += 1
+            jump = (f[b_] - (f[a] + (b_ - a) * rate) + vlen / 2) % vlen - vlen / 2
+            if since is None or t[i + 1] >= since:
+                out.append((int(t[i + 1]), float(jump), int((np.abs(g[i + 1:j]) < 1e-7).sum())))
+            i = j
+        else:
+            i += 1
+    return rate, out
+
+
+def pass_starts(r, after=0):
+    """the samples where a pass (step 0) starts sounding"""
+    return [a for a, st_, _ in starts(r) if st_ == 0 and a >= after]
+
+
+def fit_audio(fit, **kw):
+    """audio() with Fit `fit` in the pad's store (and kw's vals)"""
+    return audio(vals={P_FIT: fit, **kw.pop("vals", {})}, **kw)
+
+
+def seamless(d, vlen, since=288000 + 300, rate=None):
+    """(rate, joints, jumps over half a frame, zero-gain samples from `since` on, peak summed gain)"""
+    rate_, js = joints(d, vlen, rate=rate, since=since)
+    g = d["gain"][since - d["base"]:len(d["gain"]) - N]
+    return rate_, len(js), [(a, round(j, 2)) for a, j, _ in js if abs(j) > 0.5], int((np.abs(g) < 1e-7).sum()), float(g.max())
+
+
+# ---- unit: what site 3 stores (clipwin_len as the thunks call it: site 1 takes Fit from the store, the pad stopped)
+fu = Emu(IMAGE, "out/cave.elf")
+maps(fu)
+sdram(fu)
+fu.uc.mem_write(BANK, bytes(B_BYTES))
+fu.w32(BANK, CW_MAGIC)
+FQ, FL, FENG, FSRC = 6, 0x24060000, 0x24064000, 0x24062000
+flen_ = [96000]
+fu.stub(SRC_LEN, lambda: fu.ret(flen_[0]))
+fu.uc.mem_write(FL, bytes(0xC00))
+fu.uc.mem_write(FL + 4, b"\x4c")
+fu.w32(FL + 0x18, 0x102)
+fu.uc.mem_write(FL + 0x29, b"\x01")
+fu.uc.mem_write(FL + 0x1F4, bytes([1, 1, 0, 0, 3]))           # Loop On, synced; Launch Toggle
+fu.uc.mem_write(FENG, bytes(0x40))
+fu.w32(BANK + B_ENGINE, FENG)                                # the engine as the poll leaves it
+STOCKF = (1234.5, 5678.5, 77, 3, 99)                         # stock's +0x1fc, +0x204, +0x208, +0x210, +0x230 (any)
+
+
+def fit_at(length, fit, bpm=120.0, quant=3840, sync=960, synced=1, base=1.0, region=None, slicer=0, on=1):
+    """pad FQ, stopped, with Fit `fit` (and Region Loop over `region` = (ls, le), else File) in its store: its
+    recompute's two lengths at sites 1 and 3, stock's fields stored before site 3 (STOCKF). (site 3's answer, +0x230,
+    +0x208, +0x210, +0x1fc, +0x204, +0x1f0, fon, Auto's beats, Auto's length)"""
+    fu.uc.mem_write(FENG + 0x18, struct.pack("<f", bpm))
+    store(fu, FQ, {0x4: 500, P_FIT: fit, **({P_REGION: FILE} if region is None else
+                                            {P_REGION: LOOP, 0x91: region[0], 0x92: region[1]})})
+    fu.uc.mem_write(FL + 0x29, bytes([on]))
+    fu.uc.mem_write(FL + 0x254, bytes([slicer]))
+    fu.uc.mem_write(FL + 0x1F0, struct.pack("<f", base))
+    fu.uc.mem_write(FL + 0x1F5, bytes([synced]))
+    fu.uc.mem_write(FL + 0x218, struct.pack("<qq", quant, sync))
+    flen_[0] = length
+    fu.call("clipwin_len", FSRC, FL, 1)
+    fu.uc.mem_write(FL + 0x1FC, struct.pack("<f", STOCKF[0]))
+    fu.uc.mem_write(FL + 0x204, struct.pack("<fqI", STOCKF[1], STOCKF[2], STOCKF[3]))
+    fu.uc.mem_write(FL + 0x230, struct.pack("<q", STOCKF[4]))
+    fu.call("clipwin_len", FSRC, FL, 3, 0)
+    ret = fu.uc.reg_read(UC_ARM_REG_R0)
+    rd = lambda o, f_: struct.unpack(f_, bytes(fu.uc.mem_read(FL + o, struct.calcsize(f_))))[0]
+    return (ret, rd(0x230, "<q"), rd(0x208, "<q"), rd(0x210, "<I"), rd(0x1FC, "<f"), rd(0x204, "<f"), rd(0x1F0, "<f"),
+            fu.r8(BANK + B_FON + FQ), fu.r16(BANK + B_ABEATS + 2 * FQ), fu.r32(BANK + B_ALEN + 4 * FQ))
+
+
+def fit_want(length, beats, bpm=120.0, quant=3840, sync=960, synced=1):
+    """what Fit stores for a clip of `beats`, from the rule (clipwin_b2.c fit), in the M7's single precision"""
+    clip = beats * 960
+    grid = math.gcd(quant, clip) if quant > 0 else 0
+    step = math.gcd(sync, clip) if synced == 1 and sync > 0 and grid > 0 and clip // sync > 1 else clip
+    n = clip // step
+    samples = int(48000.0 * (clip / 960.0 / float(np.float32(bpm))) * 60.0 + 0.5)
+    fps, out, rate = (float(np.float32(length) / np.float32(n)), float(np.float32(samples) / np.float32(n)),
+                      float(np.float32(length) / np.float32(samples)))
+    return (length, grid, step, n, fps, out, rate, 1)
+
+
+def auto_beats(length, bpm=120.0, base=1.0):
+    x = np.float32(length) / (np.float32(base) * np.float32(48000.0)) * np.float32(bpm) / np.float32(60.0) + np.float32(0.5)
+    return max(1, min(1024, int(x)))
+
+
+rows = []
+for length, base, want_b, what in ((336359, 1.0, 14, "14.015 beats (a take cut by ear)"), (89760, 1.0, 4, "3.74 beats"),
+                                   (374400, 1.0, 16, "15.6 beats"), (348000, 1.0, 15, "14.5 beats (a tie: up)"),
+                                   (7200, 1.0, 1, "0.3 beat (at least one)"), (96000, 1.0, 4, "one bar"),
+                                   (82465, 0.91875, 4, "3.74 beats of a 44.1 kHz file (+0x1f0 0.91875)"),
+                                   (24000 * 2000, 1.0, 1024, "2 000 beats (at most 1 024)")):
+    got = fit_at(length, AUTO_BEATS, base=base)
+    want = fit_want(length, want_b)
+    rows.append((what, got[8], want_b, got[:8] == want and got[8] == want_b == auto_beats(length, base=base) and got[9] == length))
+check(f"Fit Auto (Beats) counts the nearest whole number of beats at the tempo, at least 1, at most 1 024 (len / (+0x1f0 "
+      f"x 48 000) x BPM / 60 + 0.5, truncated), and site 3 stores the step fields for that clip "
+      f"({[(w, g_) for w, g_, _, _ in rows]})", all(ok for *_, ok in rows), [r_ for r_ in rows if not r_[3]])
+# Auto (Bars) (the loop stays with the metronome's bar): under a bar the nearest of 1/4,
+# 1/2 and 1 bar, from a bar up the nearest whole number of bars - of the length itself, not of Auto (Beats)' count (5.9
+# beats is 6 to the beat but 1 bar to the bar) - ties up, as Auto (Beats)'
+rows = []
+for length, want_b, what in ((7200, 1, "0.3 beat"), (35999, 1, "1.49996 beats"), (36000, 2, "1.5 beats (a tie: up)"),
+                             (71999, 2, "2.99996 beats"), (72000, 4, "3 beats (a tie: up)"), (89760, 4, "3.74 beats"),
+                             (141600, 4, "5.9 beats"), (144000, 8, "6 beats (a tie: up)"),
+                             (336359, 16, "14.015 beats (pad 1's take)"), (374400, 16, "15.6 beats"),
+                             (24000 * 2000, 1024, "2 000 beats (at most 1 024: 256 bars)")):
+    got = fit_at(length, AUTO_BARS)
+    rows.append((what, got[8], got[:8] == fit_want(length, want_b) and got[8] == want_b and got[9] == length))
+check(f"Fit Auto (Bars) counts 1, 2 or 4 beats under a bar, a whole number of bars from a bar up, and site 3 stores the "
+      f"step fields for that clip ({[(w, g_) for w, g_, _ in rows]})", all(ok for *_, ok in rows),
+      [r_ for r_ in rows if not r_[2]])
+seq = [fit_at(336359, AUTO_BEATS)[8], fit_at(336359, AUTO_BARS)[8], fit_at(336359, AUTO_BEATS)[8],
+       fit_at(336359, AUTO_BARS, bpm=60.0)[8], fit_at(336359, AUTO_BARS)[8]]
+check(f"the other Auto chosen counts again, of the same length: 14.015 beats is {seq[0]} (Beats), {seq[1]} (Bars), "
+      f"{seq[2]} (Beats); Bars counted at 60 BPM is {seq[3]} beats, and still {seq[4]} at 120 (counted once per length)",
+      seq == [14, 16, 14, 8, 8], seq)
+rows = []
+for v in range(3, 11):
+    got = fit_at(96000, v)
+    rows.append((FIT_NAMES[v], got[1:4], got[:8] == fit_want(96000, FIT_BEATS[v]) and got[9] == 0))
+check(f"Fit's list from 1/4 to 8 bars forces 1, 2, 3, 4, 6, 8, 16 and 32 beats on a one-bar file (grid, ticks per step, "
+      f"steps at Quant 1 bar, Sync 1/4: {[(w, g_) for w, g_, _ in rows]}); Auto's count is cleared",
+      all(ok for *_, ok in rows), rows)
+cases = (("14 beats, Quant 1 bar, Sync 1/16", dict(sync=240), (1920, 240, 56)),
+         ("14 beats, Quant 1 bar, Sync 1/4", dict(), (1920, 960, 14)),
+         ("14 beats, Quant 1 bar, Sync 1 bar (stock: 3 steps of 4 480)", dict(sync=3840), (1920, 1920, 7)),
+         ("14 beats, Quant 4 bars, Sync 1 bar", dict(quant=15360, sync=3840), (1920, 1920, 7)),
+         ("14 beats, Quant 1/16, Sync 1/4 (steps on the beat, as Sync's)", dict(quant=240), (240, 960, 14)),
+         ("2 bars, Quant 1/4, Sync 1 bar (as stock: 2 steps of a bar)", dict(quant=960, sync=3840), (960, 3840, 2)),
+         ("14 beats, Quant None (synced 0)", dict(quant=0, synced=0), (0, 13440, 1)),
+         ("14 beats, Sync None (synced 0)", dict(sync=0, synced=0), (1920, 13440, 1)),
+         ("14 beats, Sync Slice without markers", dict(sync=0xF0000), (1920, 13440, 1)))
+rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 8, **kw)[1:4], want)
+        for w, kw, want in cases]
+check(f"the polymetric grid and steps: wrap grid gcd(Quant, clip), steps one when Sync is the clip or longer, else "
+      f"gcd(Sync, clip): {[(w, g_) for w, g_, _ in rows]}", all(g_ == w_ for _, g_, w_ in rows),
+      [r_ for r_ in rows if r_[1] != r_[2]])
+for what, kw, beats in (("3 beats, Sync 1 bar (one step)", dict(sync=3840), 3), ("6 beats, Sync 1 bar", dict(sync=3840), 6),
+                        ("5 beats, Quant 1 bar, Sync 1/4", dict(), 5)):
+    got = fit_at(beats * 24000 + 77, AUTO_BEATS, **kw)
+    check(f"  {what}: {got[1:4]}, as the rule gives", got[:8] == fit_want(beats * 24000 + 77, beats, **kw), (got, fit_want(beats * 24000 + 77, beats, **kw)))
+# counted once per length: a tempo change keeps Auto's count (the speed moves), a new length or Auto chosen again counts
+seq = [fit_at(336359, AUTO_BEATS)[8], fit_at(336359, AUTO_BEATS, bpm=60.0)[8], fit_at(336359, AUTO_BEATS, bpm=60.0)[6]]
+seq += [fit_at(336359, 0, bpm=60.0)[7], fit_at(336359, AUTO_BEATS, bpm=60.0)[8], fit_at(300000, AUTO_BEATS, bpm=60.0)[8]]
+check(f"Auto is counted once per length: 14 at 120 BPM, still 14 at 60 (rate {seq[2]:.6f}: the clip lasts twice as long); "
+      f"Off (fon {seq[3]}), then Auto again counts at 60 BPM ({seq[4]}), and so does another length ({seq[5]})",
+      seq[0] == 14 and seq[1] == 14 and abs(seq[2] - 336359 / 672000) < 1e-6 and seq[3] == 0 and seq[4] == 7 and seq[5] == 6, seq)
+# ...and forgotten when a recompute finds the file closed (0 frames, or the provider's 0x10000000): a file opened again
+# (a preset loaded with it) counts at the tempo then, as after a boot - not at the tempo of whatever played it before
+seq = [fit_at(336359, AUTO_BEATS, bpm=90.0)[8], fit_at(336359, AUTO_BEATS, bpm=120.0)[8]]
+for closed in (0, 0x10000000):
+    fit_at(336359, 0, bpm=90.0)                                  # Off, then Auto again: counted at 90 BPM
+    before = fit_at(336359, AUTO_BEATS, bpm=90.0)[8]
+    shut = fit_at(closed, AUTO_BEATS, bpm=120.0)
+    seq += [before, (shut[7], shut[9]), fit_at(336359, AUTO_BEATS, bpm=120.0)[8]]
+check(f"Auto's count made at 90 BPM ({seq[0]} beats) stays at 120 ({seq[1]}); counted at 90 again ({seq[2]}, {seq[5]}), "
+      f"a recompute with the file closed (0 frames: fon, the length counted {seq[3]}; the provider's 0 frames: "
+      f"{seq[6]}) forgets it, and the file opened again at 120 BPM counts {seq[4]} and {seq[7]}, as a fresh boot does",
+      seq == [11, 11, 11, (0, 0), 14, 11, (0, 0), 14], seq)
+rows = {what: fit_at(96000, 1, **kw) for what, kw in (("Fit Off", dict()), ("a Slicer pad", dict(slicer=1)),
+                                                       ("Clip / Slicer mode off", dict(on=0)), ("a tempo of 0", dict(bpm=0.0)))}
+rows["Fit Off"] = fit_at(96000, 0)
+fu.w32(BANK + B_ENGINE, 0)
+rows["no engine polled yet"] = fit_at(96000, 1)
+fu.w32(BANK + B_ENGINE, FENG)
+stock_f = (96000, STOCKF[4], STOCKF[2], STOCKF[3]) + tuple(f32s(STOCKF[0], STOCKF[1])) + (1.0, 0)
+check(f"not fitted - Fit Off, a Slicer pad, a pad out of Clip / Slicer mode, a tempo of 0, no engine polled yet: site 3 "
+      f"leaves stock's step fields and its rate as they are ({ {w: g_[:8] == stock_f for w, g_ in rows.items()} })",
+      all(g_[:8] == stock_f for g_ in rows.values()), {w: g_ for w, g_ in rows.items() if g_[:8] != stock_f})
+got = fit_at(192000, 1, region=(6144, 95904))
+check(f"a region: Fit counts the region (3.74 beats -> 4; site 3 answers its length, {got[0]}), rate {got[6]:.6f}",
+      got[:8] == fit_want(89760, 4) and got[8] == 4, got)
+
+# ---- the whole process: a 3.74-beat loop (89 760 frames at 120 BPM), as a region [6 144, 95 904) of a 192 000-frame
+# file and as a file of its own, Quant 1 bar, Sync 1/4. Stock (Fit Off) re-places it every step, a step being 22 440
+# frames of a 24 000-sample beat: -1 560 frames at each, and the file's last step leaves a gap before the bar.
+RS4, VL4 = 6144, 89760
+REG4 = dict(frames=192000, region=LOOP, points=(RS4, RS4 + VL4, 1))
+for what, kw in (("as a region", REG4), ("as a whole file", dict(frames=VL4))):
+    res = {}
+    for fit in (0, 1):
+        d = fit_audio(fit, beats=0, blocks=2300, cell=0x102, **kw)
+        res[fit] = seamless(d, VL4) + (pass_starts(d["rig"]), d["rig"].m.r16(BANK + B_ABEATS + 2 * 6))
+    off, on = res[0], res[1]
+    check(f"3.74 beats {what}, Beat Count Auto, Sync 1/4: Fit Off jumps at {len(off[2])} of {off[1]} joints "
+          f"({off[2][:2]}...), {off[3]} zero-gain samples; Fit Auto ({on[6]} beats) plays at {on[0]:.6f} (89 760 / 96 000) "
+          f"with no jump over half a frame at its {on[1]} joints ({on[2][:3]}), no zero-gain sample ({on[3]}), peak "
+          f"{on[4]:.3f}, a pass every bar ({on[5][:4]})",
+          len(off[2]) >= 8 and abs(on[0] - 0.935) < 1e-4 and on[1] >= 8 and not on[2] and on[3] == 0 and on[4] <= 1 + 1e-6
+          and on[5][:4] == [288000, 384000, 480000, 576000] and on[6] == 4, (off[:5], on))
+# a WAV's Beat Count over a one-bar region: Beat Count 8 cuts it into 8 steps of an eighth of the bar,
+# each played for a beat - every step re-placed back half a beat. Fit Auto and Fit 1 bar make it the bar it is.
+res = {}
+for fit in (0, 1, 6):
+    d = fit_audio(fit, beats=8, blocks=2300, cell=0x102, frames=96000)
+    res[fit] = seamless(d, 96000) + (u32(d["rig"].m, d["rig"].pad + 0x210), d["rig"].i64(d["rig"].pad + 0x208))
+check(f"a one-bar file at Beat Count 8: Fit Off {res[0][5]} steps of {res[0][6]} ticks, jumps at {len(res[0][2])} "
+      f"joints, {res[0][3]} zero-gain samples; Fit Auto and Fit 1 bar: {res[1][5]} and {res[6][5]} steps of "
+      f"{res[1][6]} ticks, rate {res[1][0]:.6f}, no jump ({res[1][2]}, {res[6][2]}), no zero-gain sample ({res[1][3]}, "
+      f"{res[6][3]})", len(res[0][2]) >= 8 and res[1][5:] == res[6][5:] == (4, 960) and not res[1][2] and not res[6][2]
+      and res[1][3] == res[6][3] == 0 and abs(res[1][0] - 1) < 1e-5, res)
+
+
+# tempo: 120 -> 126 BPM inside a pass (sample 414 000). The poll recomputes the fitted pad within 16 blocks (its clip
+# stays 4 beats, its rate becomes 89 760 / 91 429); the steps made before the change play out as stock's do at a tempo
+# change (one overlaps the next, gain 2, as Fit Off); from the next pass on the audio carries on round every joint
+def to126(r):
+    if r.S >= 414000 and not getattr(r, "t126", None):
+        r.t126 = r.block
+        r.set_bpm(126.0)
+    if getattr(r, "t126", None) and not getattr(r, "r126", None) and r.m.r32(r.pad + 0x1F0) != struct.unpack("<I", struct.pack("<f", 0.935))[0]:
+        r.r126 = r.block
+
+
+res = {}
+for fit in (0, 6):
+    d = fit_audio(fit, beats=0, blocks=3000, cell=0x102, pre=to126, **REG4)
+    r = d["rig"]
+    ps = pass_starts(r)
+    rate = struct.unpack("<f", bytes(r.uc.mem_read(r.pad + 0x1F0, 4)))[0]
+    res[fit] = (r.t126, getattr(r, "r126", None), rate, ps, seamless(d, VL4, since=ps[2], rate=rate if fit else 1.0))
+off, on = res[0], res[6]
+s126 = int(48000.0 * (3840 / 960.0 / 126.0) * 60.0 + 0.5)
+check(f"tempo 120 -> 126 BPM in a pass (block {on[0]}), Fit 1 bar on the 3.74-beat region: recomputed at block {on[1]} (the "
+      f"poll, within 16), rate {on[2]:.6f} (89 760 / {s126}), passes {on[3][:5]}; from the next pass on no jump over a "
+      f"frame ({on[4][2]}: steps of {s126 / 4} samples land on whole samples), no zero-gain sample, peak {on[4][4]:.2f} "
+      f"(Fit Off: jumps {off[4][2][:2]}...)", on[1] is not None and 0 <= on[1] - on[0] <= 16
+      and on[2] == float(np.float32(np.float32(VL4) / np.float32(s126))) and on[3][2:5] == off[3][2:5]
+      and all(abs(j) <= 1 for _, j in on[4][2]) and on[4][3] == 0 and on[4][4] <= 1 + 1e-6 and len(off[4][2]) >= 8, res)
+
+# Slip 480 on the fitted region: the same audio shifted by slip_f = floor(480 x 89 760 / 3 840) = 11 220 frames, every joint
+# carrying on; Loop Len 1/4 (taken at the launch): every beat plays the fitted first beat
+ds = {s_: fit_audio(1, beats=0, blocks=2300, cell=0x102, slip=s_, **REG4) for s_ in (0, 480)}
+lo, w = window(ds[0], ds[480])
+f0, f1 = w["frame"]
+run_ = lambda f: np.concatenate([[False], np.abs(np.diff(f) - 0.935) < 0.05])   # a frame one rate step after the last
+far = (lo + np.arange(len(f0)) > 289000) & run_(f0) & run_(f1) & np.roll(run_(f0), -1) & np.roll(run_(f1), -1)
+dif = np.mod(f1[far] - f0[far], VL4)
+sm = seamless(ds[480], VL4)
+check(f"Fit Auto and Slip 480 on the 3.74-beat region: every sample plays Slip 0's frame + {480 * VL4 // 3840} (mod the region; "
+      f"{int(far.sum())} samples, {dif.min():.3f} .. {dif.max():.3f}), no jump at its {sm[1]} joints ({sm[2]}), no zero-gain sample",
+      far.sum() > 100000 and np.abs(dif - 480 * VL4 // 3840).max() < 0.02 and not sm[2] and sm[3] == 0, (dif.min(), dif.max(), sm))
+d = fit_audio(1, beats=0, blocks=2300, cell=0x102, vals={P_LOOPLEN: 3}, **REG4)
+f_, b0 = d["frame"], d["base"]
+beat = [f_[t - b0] for t in range(289000, 289000 + 24000 * 9, 24000)]
+check(f"Fit Auto and Loop Len 1/4 on the 3.74-beat region: every beat plays the first fitted beat (the frame 1 000 samples "
+      f"into each: {[round(x, 2) for x in beat]})", all(abs(x - beat[0]) < 0.02 for x in beat) and abs(beat[0] - RS4 - 935) < 1.5,
+      beat)
+
+# a 44.1 kHz stereo loop of 3.74 beats (82 465 frames) at Sync 1/16, and Pitch +12 on the 48 kHz region
+d = fit_audio(1, beats=0, blocks=2300, cell=0x102, frames=82465, sync=5, src_rate=44100, stereo=True)
+sm, r = seamless(d, 82465), d["rig"]
+check(f"44.1 kHz stereo, 3.74 beats, Sync 1/16, Fit Auto: {u32(r.m, r.pad + 0x210)} steps of 5 154.06 frames, rate "
+      f"{sm[0]:.6f} (82 465 / 96 000), at its {sm[1]} joints nothing over a frame ({sm[2][:3]}: stock starts each step on a "
+      f"whole frame, (int)(j x fps)), no zero-gain sample ({sm[3]})",
+      u32(r.m, r.pad + 0x210) == 16 and abs(sm[0] - 82465 / 96000) < 1e-4 and sm[1] >= 40 and all(abs(j) < 1 for _, j in sm[2])
+      and sm[3] == 0, sm)
+d = fit_audio(1, beats=0, blocks=2300, cell=0x102, setup=lambda r: r.param(0x5C, 12000), **REG4)
+sm, r = seamless(d, VL4), d["rig"]
+st4 = [(m_["step"], m_["start"]) for m_ in r.made if m_["how"] == "H1"]
+check(f"Pitch +12 on the fitted region: read at {sm[0]:.4f} (2 x 0.935), each step still started where stock starts it "
+      f"((int)(j x 22 440): {st4[:5]}), as stock re-places a pitched clip at every step; no zero-gain sample ({sm[3]})",
+      abs(sm[0] - 2 * 0.935) < 2e-3 and len(st4) >= 12 and all(fr == int(j * 22440.0) for j, fr in st4) and sm[3] == 0, (sm, st4[:8]))
+
+# a one-shot (Launch Trigger, Loop Off): the fitted pass lasts the clip, the bar
+for fit, want in ((0, 94438), (1, 95999)):
+    d = fit_audio(fit, beats=0, blocks=1400, cell=0x102, launch=0, loop=0, **REG4)
+    nz = np.where(np.abs(d["gain"]) > 1e-6)[0]
+    res[fit] = (int(nz[-1] - nz[0] + 1), seamless(d, VL4)[2])
+check(f"a one-shot of the 3.74-beat region (Launch Trigger, Loop Off): Fit Off sounds {res[0][0]} samples, Fit Auto "
+      f"{res[1][0]} (the bar: 96 000) with no jump ({res[1][1]})", res[0][0] == 94438 and res[1][0] == 95999 and not res[1][1], res)
+
+# ---- polymetric: a clip that is no whole number of bars (Quant 1 bar), a File of B beats and a Region of B beats in a
+# longer file, Fit Auto (= B). Every pass starts B beats after the one before, the audio carries on at every joint, no
+# zero-gain sample, no doubling - at Sync 1/16, 1/4 and 1 bar (a Sync that does not divide the clip: stock cuts it into
+# clip / Sync steps of an off-grid length, or one step), and at Quant None (no grid: the pass is the clip exactly).
+# Stock, the same file at Beat Count B (Fit Off), for comparison: 14 beats at Sync 1/16 has every other pass's end
+# snapped half a bar back, into the past (step 0 at once over the last step, then a 1/16 of silence at the next wrap),
+# 7 beats at Sync 1/4 waits for the bar after (a beat of silence a pass), 5 at Sync 1/2 is cut into 2 steps of 2 400 ticks.
+SYNCS = {"1 bar": 1, "1/2": 2, "1/4": 3, "1/16": 5}
+
+
+def poly(beats, quant=3, sync="1/4", kind="File", image=IMAGE, fit=AUTO_BEATS, bc=0):
+    vlen = beats * 24000
+    kw = dict(frames=vlen) if kind == "File" else dict(frames=vlen + 2 * 6144 + 1000, region=LOOP, points=(6144, 6144 + vlen, 1))
+    d = fit_audio(fit, beats=bc, quant=quant, sync=SYNCS[sync], blocks=int((2.05 * vlen + 4000) / N), cell=0x102,
+                  image=image, **kw)
+    ps = pass_starts(d["rig"])
+    rate, nj, big, zeros, peak = seamless(d, vlen)
+    return ps, [b_ - a for a, b_ in zip(ps, ps[1:])], nj, big, zeros, peak
+
+
+# CW_FULL=1 runs the whole matrix (60 cases: Quant None at every Sync too, which changes nothing there - no grid, one
+# step - about three minutes more); by default Quant None is run at Sync 1/4 for 3 and 14 beats
+FULL = os.environ.get("CW_FULL") == "1"
+bad, seen = [], []
+for kind, b_, quant, sync in ([(k, b, 3, s_) for k in ("File", "Region") for b in (3, 5, 6, 7, 14) for s_ in ("1/16", "1/4", "1 bar")]
+                              + ([(k, b, 8, s_) for k in ("File", "Region") for b in (3, 5, 6, 7, 14) for s_ in ("1/16", "1/4", "1 bar")]
+                                 if FULL else [("File", 3, 8, "1/4"), ("File", 14, 8, "1/4"), ("Region", 14, 8, "1/4")])
+                              + [("File", 5, 3, "1/2")]):
+    ps, apart, nj, big, zeros, peak = poly(b_, quant=quant, sync=sync, kind=kind)
+    seen.append((kind, b_, f"{sync}{' Quant None' if quant == 8 else ''}", len(apart)))
+    if not (len(apart) >= 2 and set(apart) == {b_ * 24000} and not big and zeros == 0 and peak <= 1 + 1e-6
+            and (quant == 8 or ps[0] == 288000)):
+        bad.append((kind, b_, sync, quant, ps, big[:3], zeros, peak))
+check(f"polymetric, Fit Auto (Beats): {len(seen)} cases - a File and a Region of 3, 5, 6, 7 and 14 beats, Quant 1 bar, Sync 1/16, "
+      f"1/4 and 1 bar; {'every one at Quant None too' if FULL else '3 and 14 beats at Quant None'}; 5 at Sync 1/2 -: "
+      f"every pass B beats after the one before, no jump over half a frame at any joint, no zero-gain sample, gain at "
+      f"most 1", not bad, bad)
+st14 = poly(14, sync="1/16", image=STOCK, fit=0, bc=14)
+st7 = poly(7, sync="1/4", image=STOCK, fit=0, bc=7)
+st5 = poly(5, sync="1/2", image=STOCK, fit=0, bc=5)
+info(f"stock, a 14-beat file at Beat Count 14, Quant 1 bar, Sync 1/16: passes {st14[1]} samples apart (336 000 is 14 beats), "
+     f"{st14[4]} zero-gain samples, peak gain {st14[5]:.2f}; 7 beats at Sync 1/4: {st7[1]}, {st7[4]} zero-gain; 5 beats at "
+     f"Sync 1/2: {st5[1]}, jumps {st5[3][:3]}")
+check("  ...where stock, the same files at their Beat Count, does not keep them (passes off the clip, silence or doubling)",
+      set(st14[1]) != {336000} and st14[4] > 0 and st14[5] > 1.5 and set(st7[1]) != {168000} and st7[4] > 0
+      and (set(st5[1]) != {120000} or st5[3]), (st14, st7, st5))
+
+# ---- launched off the Sync grid (Quant 1/16 under Sync 1/4, Quant 1/4 under Sync 1 bar, 1/16 after the bar): the steps
+# lie on the clock's grid of their length, as stock's do, so the pad is pulled onto the beat (the bar) at its first step
+# - one jump, the one Fit Off and the stock image make there - and every pass after starts on that grid. (Steps of
+# gcd(Sync, gcd(Quant, clip)) left such a pad a 1/16 late for good, a whole-bar clip too.)
+def off_grid(beats, quant, sync, fit, kind="File", bc=0, image=IMAGE):
+    vlen = VL4 if kind == "Region" else beats * 24000
+    kw = dict(frames=vlen) if kind == "File" else REG4
+    d = fit_audio(fit, beats=bc, quant=quant, sync=SYNCS[sync], at=290000, blocks=int((3 * beats * 24000 + 15000) / N),
+                  cell=0x102, image=image, **kw)
+    rate, nj, big, zeros, peak = seamless(d, vlen)
+    return pass_starts(d["rig"])[:4], [(a, round(j)) for a, j in big], zeros
+
+
+rows, bad = {}, []
+for what, a, want_ps, want_big in (
+        ("a 1-bar file, Quant 1/16, Sync 1/4, Fit 1 bar", (4, 7, "1/4", 6), [294000, 384000, 480000, 576000], [(312001, 6000)]),
+        ("  ...Fit Off", (4, 7, "1/4", 0), [294000, 384000, 480000, 576000], [(312001, 6000)]),
+        ("  ...the stock image", (4, 7, "1/4", 0, "File", 0, STOCK), [294000, 384000, 480000, 576000], [(312001, 6000)]),
+        ("a 14-beat file, Quant 1/16, Sync 1/4, Fit Auto (Beats)", (14, 7, "1/4", AUTO_BEATS), [294000, 624000, 960000, 1296000],
+         [(312001, 6000)]),
+        ("the 3.74-beat region, Quant 1/16, Sync 1/4, Fit Auto", (4, 7, "1/4", 1, "Region"), [294000, 384000, 480000, 576000],
+         [(312001, 5610)]),
+        ("a 2-bar file, Quant 1/4, Sync 1 bar, Fit 2 bars", (8, 5, "1 bar", 8), [312000, 480000, 672000, 864000],
+         [(384001, 24000)]),
+        ("  ...Fit Off, Beat Count 8", (8, 5, "1 bar", 0, "File", 8), [312000, 480000, 672000, 864000], [(384001, 24000)])):
+    got = off_grid(*a)
+    rows[what] = got
+    if got[0] != want_ps or len(got[1]) != 1 or got[1][0][0] != want_big[0][0] or abs(got[1][0][1] - want_big[0][1]) > 1 \
+            or (a[3] and got[2]):
+        bad.append((what, got))
+check(f"launched 1/16 after the bar, off the Sync grid: Fit pulls the pad onto the beat at its first step, one jump, as "
+      f"Fit Off and stock do, and every pass after starts on the grid (passes, jumps over half a frame, zero-gain "
+      f"samples: {rows})", not bad, bad)
+
+# ---- live: Fit is taken with the region, at the pad's wrap: a change inside a pass is heard from the next one. One
+# that moves the wrap grid (Fit 1 bar -> 2 bars at Quant 4 bars: passes a bar apart, the new grid 2 bars) waits, with
+# the region, for a wrap on its grid (H3', cw_hold), where a launch would start it: no doubled pass.
+def fit_to(at, fit, quant_rows=None):
+    def pre(r):
+        if r.S >= at and not getattr(r, "fit_done", False):
+            r.fit_done = True
+            store(r.m, r.q, {0x4: 500, P_SLIP: 0, P_REGION: LOOP, P_FIT: fit, P_SYNC: 3})
+    return pre
+
+
+d = fit_audio(0, beats=0, blocks=2300, cell=0x102, vals={P_SYNC: 3}, pre=fit_to(418000, 1), **REG4)
+r = d["rig"]
+ps = pass_starts(r)
+rate = struct.unpack("<f", bytes(r.uc.mem_read(r.pad + 0x1F0, 4)))[0]
+sm_before, sm_after = seamless(d, VL4, since=ps[1] - 1000, rate=1.0), seamless(d, VL4, since=ps[2] + 300, rate=rate)
+check(f"live, Fit Off -> Auto inside the second pass (sample 418 000): that pass plays on unfitted (jumps {sm_before[2][:3]}...), "
+      f"the next ({ps[2]}) fitted: rate {rate:.6f}, no jump at its {sm_after[1]} joints ({sm_after[2]}), no zero-gain "
+      f"sample, passes {ps[:4]}",
+      ps[:4] == [288000, 384000, 480000, 576000] and len(sm_before[2]) >= 3 and abs(rate - 0.935) < 1e-6
+      and sm_after[1] >= 4 and not sm_after[2] and sm_after[3] == 0, (ps, sm_before[:3], sm_after))
+res = {}
+for quant, what in ((1, "Quant 4 bars"), (3, "Quant 1 bar")):
+    d = fit_audio(6, beats=0, quant=quant, blocks=6200, cell=0x102, vals={P_SYNC: 3}, pre=fit_to(418000, 8), **REG4)
+    r = d["rig"]
+    g = d["gain"][:len(d["gain"]) - N]
+    res[what] = (pass_starts(r), float(g.max()), int((np.abs(g[384300 - d["base"]:]) < 1e-7).sum()),
+                 seamless(d, VL4, since=pass_starts(r)[3] + 300)[2] if len(pass_starts(r)) > 3 else None)
+q4, q1 = res["Quant 4 bars"], res["Quant 1 bar"]
+check(f"live, Fit 1 bar -> 2 bars at sample 418 000: at Quant 4 bars (launched on bar 4, a pass a bar) the next wrap (bar 5) "
+      f"is off the 2-bar grid and the bar plays once more; the one after (bar 6) takes it: passes {q4[0][:5]}, peak gain "
+      f"{q4[1]:.2f}, {q4[2]} zero-gain samples; at Quant 1 bar (launched on bar 3; grid gcd(1 bar, 2 bars) = 1 bar) the "
+      f"next wrap takes it: {q1[0][:4]}; no jump in the 2-bar passes ({q4[3]}, {q1[3]})",
+      q4[0][:5] == [384000, 480000, 576000, 768000, 960000] and q4[1] <= 1 + 1e-6 and q4[2] == 0 and not q4[3]
+      and q1[0][:4] == [288000, 384000, 480000, 672000] and q1[1] <= 1 + 1e-6 and not q1[3], res)
+
+# the wrap-grid hold and a polymetric clip: a 14-beat region at Fit Auto (Beats) (grid gcd(1 bar, 14 beats) = half a
+# bar: its passes start on the bar and on the half bar in turn) made 16 beats (grid 1 bar) while it plays waits for a
+# pass that starts on the bar, one pass at most; made 13 beats (grid a beat) it is taken at the next wrap, wherever it
+# falls. (Auto (Bars) makes the same region 4 bars, every pass on the bar: nothing to wait for.)
+def loop_end(at, le):
+    def pre(r):
+        if r.S >= at and not getattr(r, "le_done", False):
+            r.le_done = True
+            r.param(0x92, le)
+    return pre
+
+
+res = {}
+for beats_, at in ((16, 300000), (16, 700000), (13, 300000)):
+    d = fit_audio(AUTO_BEATS, beats=0, blocks=int((1360000 - 287000) / N), cell=0x102, vals={P_SYNC: 3}, frames=400000,
+                  region=LOOP, points=(6144, 6144 + 336000, 1), pre=loop_end(at, 6144 + beats_ * 24000))
+    g = d["gain"][:len(d["gain"]) - N]
+    res[(beats_, at)] = (pass_starts(d["rig"]), float(g.max()), int((np.abs(g[288300 - d["base"]:]) < 1e-7).sum()),
+                         seamless(d, beats_ * 24000, since=pass_starts(d["rig"])[-2] + 300)[2])
+a, b_, c_ = res[(16, 300000)], res[(16, 700000)], res[(13, 300000)]
+check(f"a fitted 14-beat region made 16 beats inside its first pass: the next wrap is on the half bar, so the second pass "
+      f"plays 14 more and the third (on the bar) takes it - {a[0][:4]}; made 16 inside the second pass, the next wrap is on "
+      f"the bar and takes it - {b_[0][:4]}; made 13 beats: the next wrap, on the half bar - {c_[0][:4]}; peak gain "
+      f"{max(a[1], b_[1], c_[1]):.2f}, zero-gain samples {a[2]}, {b_[2]}, {c_[2]}, no jump in the last pass "
+      f"({a[3]}, {b_[3]}, {c_[3]})",
+      a[0][:4] == [288000, 624000, 960000, 1344000] and b_[0][:3] == [288000, 624000, 960000] and b_[0][3] == 1344000
+      and c_[0][:4] == [288000, 624000, 936000, 1248000] and max(a[1], b_[1], c_[1]) <= 1 + 1e-6
+      and a[2] == b_[2] == c_[2] == 0 and not a[3] and not b_[3] and not c_[3], res)
+
+# Fit Off is stock's step fields, bit for bit: an explicit Off in the store against no Fit row at all, over a region with
+# Slip, and over a file with Slip (the whole file then is no region)
+for what, kw in (("a region, Slip 480", dict(points=REG, slip=480)), ("a file, Slip -30", dict(slip=-30, frames=88615))):
+    a = scenario(cell=0x102, blocks=900, vals={P_FIT: 0}, **kw)
+    b = scenario(cell=0x102, blocks=900, **kw)
+    ok_, d_ = same(a, b)
+    check(f"Fit Off in the store, {what}: every read, fetch, prefetch, output sample and message as with no Fit row ({d_}), "
+          f"nothing fitted (fon {a.m.r8(BANK + B_FON + 6)})", ok_ and a.m.r8(BANK + B_FON + 6) == 0, d_)
+
+# ---- unit: the wrap's hold with Fit (clipwin_wrap, the recompute stubbed as one that adopts at this pad's wrap: Fit
+# from `old` to `new`, the region kept, and leaves +0x230 = grid). A Fit taken with the region waits with it when it moves
+# the wrap grid off this pass and a wrap on the new grid can come; a polymetric fitted clip is on its own grid
+HT = 0x24063800
+
+
+def hold_fit(t, grid, old, new, was_grid=3840, was_tps=960, was_n=4):
+    rec = []
+    fu.uc.mem_write(BANK + B_REGION + 8 * FQ, struct.pack("<2i", 24000, 48000))
+    fu.uc.mem_write(BANK + B_FIT + FQ, bytes([old]))
+    fu.uc.mem_write(FL + 0x230, struct.pack("<q", was_grid))
+    fu.uc.mem_write(FL + 0x208, struct.pack("<qI", was_tps, was_n))
+    fu.uc.mem_write(FL + 0x260, b"\x01")
+
+    def fake():
+        w_ = fu.r8(BANK + B_WRAP)
+        rec.append(w_)
+        if w_ == FQ + 1:                                     # adopt at this pad's wrap: pfit = fit, fit = the store's
+            fu.uc.mem_write(BANK + B_PFIT + FQ, bytes([fu.r8(BANK + B_FIT + FQ)]))
+            fu.uc.mem_write(BANK + B_FIT + FQ, bytes([new]))
+        fu.uc.mem_write(FL + 0x230, struct.pack("<q", grid))
+    fu.stub(RECOMPUTE, fake)
+    fu.uc.mem_write(HT, struct.pack("<q", t))
+    fu.call("clipwin_wrap", FL, 0x12345678, HT)
+    del fu.stubs[RECOMPUTE]
+    fu.uc.mem_write(FL + 0x260, b"\x00")
+    return fu.r8(BANK + B_FIT + FQ), fu.r8(BANK + B_PFIT + FQ), tuple(rec)
+
+
+rows = {what: hold_fit(*a) for what, a in (
+    ("1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)", (19200, 7680, 6, 8)),
+    ("1 bar -> 2 bars, the pass on bar 6 (on it)", (23040, 7680, 6, 8)),
+    ("Fit unchanged, region unchanged, the grid moved by stock", (19200, 7680, 6, 6)),
+    ("14 beats Auto unchanged, the pass on a half bar (its grid: half a bar)", (24960, 1920, 1, 1)),
+    ("Auto -> 2 bars from 14 beats (grid half a bar), a pass on a half bar that the 2-bar grid can meet", (24960, 7680, 1, 8, 1920, 960, 14)))}
+check(f"H3' and Fit: a Fit change that moves the wrap grid off this pass waits (Fit put back, the recompute run again) when "
+      f"a wrap on the new grid can come, else it is taken; a pass on a polymetric clip's own grid takes it: {rows}",
+      rows == {"1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)": (6, 6, (FQ + 1, 0)),
+               "1 bar -> 2 bars, the pass on bar 6 (on it)": (8, 8, (FQ + 1,)),
+               "Fit unchanged, region unchanged, the grid moved by stock": (6, 6, (FQ + 1,)),
+               "14 beats Auto unchanged, the pass on a half bar (its grid: half a bar)": (1, 1, (FQ + 1,)),
+               "Auto -> 2 bars from 14 beats (grid half a bar), a pass on a half bar that the 2-bar grid can meet":
+                   (1, 1, (FQ + 1, 0))}, rows)
+
+# every write into the SDRAM block in a fitted run (a tempo change in it) lands in the bank, Fit's fields among them
+w = []
+r = Rig(cell=0x102, h=True, frames=192000)
+r.uc.hook_add(UC_HOOK_MEM_WRITE, lambda u_, acc, addr, size_, v, d_: w.append((addr, size_)) if any(
+    a_ <= u_.reg_read(UC_ARM_REG_PC) < b_ for a_, b_ in cw_code) else None, begin=BLOCK, end=BLOCK + 0x100000)
+store(r.m, 6, {0x4: 500, P_SLIP: 0, P_REGION: LOOP, P_FIT: 1})
+for _ in range(16):
+    poll(r)
+r.pre_block = lambda rr: (poll(rr), rr.set_bpm(126.0) if rr.block == 400 else None)
+r.params(beats=0)
+r.goto(287000 - N)
+for pid, v in zip((0x91, 0x92, 0x8E), (RS4, RS4 + VL4, 1)):
+    r.param(pid, v)
+r.step_block()
+r.goto(287000)
+r.note_on()
+r.run(700)
+hit = {name: any(lo <= a_ - BANK < hi for a_, s_ in w) for name, lo, hi in (
+    ("fit", B_FIT, B_PFIT), ("pfit", B_PFIT, B_FON), ("fon", B_FON, B_ABEATS), ("abeats", B_ABEATS, B_ALEN),
+    ("alen", B_ALEN, B_BPM), ("bpm", B_BPM, B_ENGINE), ("engine", B_ENGINE, B_ENGINE + 4),
+    ("abars", B_ABARS, B_SIZE))}
+check(f"in a fitted run, every write clipwin.c and clipwin_b2.c make into the SDRAM block lands in "
+      f"cw_bank's {B_SIZE:#x} bytes (Fit's fields written: {hit})", w and all(hit.values()) and all(BANK <= a_ and a_ + s_ <= BANK + B_SIZE for a_, s_ in w),
+      (sorted({hex(a_) for a_, s_ in w if not BANK <= a_ < BANK + B_SIZE})[:4], hit))
+
 # ====================================================================================================== 11d. the playhead
 # H5 (clipwin_playhead at the render's post of msg 0x4a, 0x080668fc): stock posts each segment's own position, which
 # the reader never shows: counted from the region's start, unslipped, never in Loop Len's window. Now the frame heard:
 # cw_map's mapping of the slot's latch (the reader's own), per mille as stock reckons it ((float)pos x 1000 / file).
 # Checked against the audio: in every block that one segment plays from start to end (no crossfade, which posts the
 # fading segment's tail as stock does), the position posted is the frame after the block's last sample (to the frame
-# at rate 1, the decoded frame's float error aside). Without bank 2 the messages are the stock image's.
+# at rate 1, the decoded frame's float error aside; at Fit's 0.935 the posted whole frame is 1 to 2.1 behind the
+# decoded one plus the rate: the kernel reads about a frame behind the position, and the fraction is cut). Without bank 2 the
+# messages are the stock image's.
 def heads(d, frames, rs=0, vlen=None, rate=1.0, at=287000):
     """per block with one 0x4a post and one segment sounding throughout: (block, posted, per mille, frame heard + rate)"""
     r_, vlen = d["rig"], vlen or frames
@@ -3353,7 +3917,8 @@ PH = {"a region from 6 072 (B's [6 072, 102 072) of 192 000 frames)": dict(frame
       "...with Slip +0.060 (1 500 frames ahead)": dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1), slip=60),
       "...with Slip -0.120 (3 000 behind: the line wraps at Loop End)": dict(frames=192000, beats=0, region=LOOP, points=(6072, 102072, 1), slip=-120),
       "a whole file with Slip +0.480": dict(frames=96000, beats=4, slip=480),
-      "Loop Len 1/4 on a whole file (each step replays the window's beat)": dict(frames=96000, beats=4, vals={P_SYNC: 3, P_LOOPLEN: 3})}
+      "Loop Len 1/4 on a whole file (each step replays the window's beat)": dict(frames=96000, beats=4, vals={P_SYNC: 3, P_LOOPLEN: 3}),
+      "Fit Auto on a 3.74-beat file (rate 0.935)": dict(frames=89760, beats=0, vals={P_FIT: 1})}
 for what, kw in PH.items():
     d = audio(blocks=900, **kw)
     rate = struct.unpack("<f", bytes(d["rig"].m.uc.mem_read(d["rig"].pad + 0x1F0, 4)))[0]
@@ -3992,16 +4557,16 @@ for mode in (4, 5):
           before == after and after["TL"]["step"] == 256 and after["wave"]["on"] == 0, (before["TL"], after["TL"], after["wave"]))
 
 # ====================================================================================================== 12d. a step 0 inside the audio
-# Traced on a unit: pad 1, a whole file, Slip -645, Sync 1/16. Every ordinary step's segment starts with a fade-in of
-# 256 and a countdown of 5 744; the step 0 of each pass with 0 and 6 000: at Attack 0 (param 0x3c -> pad + 0xBA1 = 1,
-# stock's default; both pads on the unit) stock starts every step 0 hard (0x08065790: after H1 it moves the fade-in into
-# the countdown), right where the file starts, after the last step's fade-out. Moved into the audio (Slip, a region from
-# past frame 0, Loop Len's window) or on a seamless wrap (a region, Loop On, not Trigger: the last step crossfades into
-# it), that step 0 clicks out of the notch, or sounds the audio twice under the crossfade (the bench's doubled 180
-# samples). Every run until here had 0xBA1 = 0, the step-0 fade-in on, which is why none of them saw it. cw_latch marks
-# such a segment and its first read (cw_slot) gives it back stock's fade-in, (0, c + 256) -> (256, c). Measured here on
-# DC sources (each segment's gain, sample by sample), against the same runs with the marks cleared before every read (no
-# marks) and with 0xBA1 = 0.
+# Traced on a unit: pad 1, a whole file, Fit Auto, Slip -645, Sync 1/16. Every ordinary step's segment starts with a
+# fade-in of 256 and a countdown of 5 744; the step 0 of each pass with 0 and 6 000: at Attack 0 (param 0x3c -> pad +
+# 0xBA1 = 1, stock's default; both pads on the unit) stock starts every step 0 hard (0x08065790: after H1 it moves the
+# fade-in into the countdown), right where the file starts, after the last step's fade-out. Moved into the audio (Slip,
+# a region from past frame 0, Loop Len's window) or on a seamless wrap (a region or Fit, Loop On, not Trigger: the last
+# step crossfades into it), that step 0 clicks out of the notch, or sounds the audio twice under the crossfade (the
+# bench's doubled 180 samples). Every run until here had 0xBA1 = 0, the step-0 fade-in on, which is why none of them saw
+# it. cw_latch marks such a segment and its first read (cw_slot) gives it back stock's fade-in, (0, c + 256) -> (256,
+# c). Measured here on DC sources (each segment's gain, sample by sample), against the same runs with the marks cleared
+# before every read (no marks) and with 0xBA1 = 0.
 
 
 def attack0(r):
@@ -4051,8 +4616,11 @@ def fa_segs(r):
 
 
 FADE = 256
-fa_cases = [("the matched file (96 000), Slip -645, Sync 1/16", dict(frames=96000, slip=-645, sync=5), False),
-            ("the matched file, Slip +60, Sync 1/4", dict(frames=96000, slip=60, sync=3), False),
+fa_cases = [("Fit Auto, a 3.74-beat file (89 760), Slip -645, Sync 1/16", dict(frames=89760, beats=0, slip=-645, sync=5,
+                                                                             vals={P_FIT: 1}), True),
+            ("Fit Auto, Slip +60, Sync 1/4", dict(frames=89760, beats=0, slip=60, sync=3, vals={P_FIT: 1}), True),
+            ("Fit Off, the matched file (96 000), Slip -645, Sync 1/16", dict(frames=96000, slip=-645, sync=5), False),
+            ("Fit Off, Slip +60, Sync 1/4", dict(frames=96000, slip=60, sync=3), False),
             ("a Region from 6 072 (Loop, [6 072, 102 072) of 192 000), Slip 0, Sync 1/4",
              dict(frames=192000, beats=4, points=(6072, 102072, 1), region=LOOP, cell=0x102, sync=3), True)]
 for name, kw, seamless_ in fa_cases:
@@ -4087,7 +4655,8 @@ for name, kw, seamless_ in fa_cases:
           "step-0 fade-in)", wn and n_ > 96000 and np.array_equal(gn[lo - bn:lo - bn + n_], gr[lo - br:lo - br + n_]),
           float(np.abs(gn[lo - bn:lo - bn + n_] - gr[lo - br:lo - br + n_]).max()) if wn and n_ > 0 else None)
 
-# the launch: inside the audio (Slip) it fades in too
+# the launch: inside the audio (Slip) it fades in too; at the file's own start it stays hard, as stock has it, even
+# where the wraps after it are seamless (Fit Auto at Slip 0) and get their fade-in
 kw = dict(frames=96000, slip=-645, sync=5, blocks=900)
 lon, loff = fa_segs(fa_run(**kw))[0], fa_segs(fa_run(off=True, **kw))[0]
 la_on = [d for d in lon.values() if d["launch"]]
@@ -4096,13 +4665,20 @@ check(f"step 0, the launch at Slip -645 (Attack 0): stock's hard start ({[d['g0'
       f"first sample with the marks ({[round(d['g0'], 4) for d in la_on]}), on the same sample",
       la_on and la_off and la_off[0]["g0"] > 0.999 and la_on[0]["g0"] < 0.02 and la_on[0]["at"] == la_off[0]["at"] == 288000
       and la_on[0]["end"] == la_off[0]["end"], (la_on, la_off))
+kw = dict(frames=89760, beats=0, slip=0, sync=3, vals={P_FIT: 1}, blocks=1700)
+fs = fa_segs(fa_run(**kw))[0]
+fl_ = [d for d in fs.values() if d["launch"]]
+fw = [d for d in fs.values() if d["step"] == 0 and not d["launch"]]
+check(f"  ...Fit Auto at Slip 0 (a seamless wrap, step 0 on the file's frame 0): the launch still starts at full gain "
+      f"({[d['g0'] for d in fl_]}), each wrap's step 0 fades in ({[round(d['g0'], 4) for d in fw]})",
+      fl_ and fl_[0]["g0"] > 0.999 and len(fw) >= 2 and all(d["g0"] < 0.02 for d in fw), (fl_, fw))
 
 # unchanged: an Attack (0xBA1 = 0), a pad the hooks leave alone, no bank 2
-kw = dict(frames=96000, slip=-645, sync=5, blocks=1700)
+kw = dict(frames=89760, beats=0, slip=-645, sync=5, vals={P_FIT: 1}, blocks=1700)
 ok, d = same(fa_run(attack=None, **kw), fa_run(attack=None, off=True, **kw))
-check("step 0: with an Attack (0xBA1 = 0: stock fades every step 0 in itself) nothing is marked: Slip -645, each read, "
-      "prefetch, mixed sample and message identical with the marks cleared", ok, d)
-for name, kw in (("Slip 0, the whole file (no latch)", dict(frames=96000, slip=0, sync=5, blocks=1700)),
+check("step 0: with an Attack (0xBA1 = 0: stock fades every step 0 in itself) nothing is marked: Fit Auto, Slip -645, each "
+      "read, prefetch, mixed sample and message identical with the marks cleared", ok, d)
+for name, kw in (("Slip 0, the whole file, Fit Off (no latch)", dict(frames=96000, slip=0, sync=5, blocks=1700)),
                  ("Slip -645 without this build's bank 2", dict(frames=96000, slip=-645, sync=5, blocks=1700, bank2=False))):
     a = scenario(setup=attack0, **kw)
     b = scenario(setup=attack0, bypass=True, **{k: v for k, v in kw.items() if k != "bank2"})

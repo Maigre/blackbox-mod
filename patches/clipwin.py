@@ -1,4 +1,4 @@
-"""Clip Window: per-pad Slip, Region and Loop Len on Clip pads (see src/clipwin.c, notes/re/README.md sections 2
+"""Clip Window: per-pad Slip, Region, Loop Len and Fit on Clip pads (see src/clipwin.c, notes/re/README.md sections 2
 and 3).
 
 Rides with the `filter` set (patches/filter.py imports it), which already owns the clip reader's call and the pad
@@ -22,8 +22,8 @@ PATCHES = [
     hook(0x0806578C, 0x0806375C, "clipwin_seg_start_b"),
     hook(0x0806541A, 0x0806375C, "clipwin_slice_start_b"),
     # Region: the clip's length where it shapes the clip (H3: the recompute's two - the second also times a clip of one
-    # step by the clip -, FUN_08065550's > 0 check and the last step's end; never the reader's bound at 0x080662F6),
-    # and the recompute at the two wraps (H3')
+    # step by the clip, and stores a fitted pad's step fields again (Fit) -, FUN_08065550's > 0 check and the last
+    # step's end; never the reader's bound at 0x080662F6), and the recompute at the two wraps (H3')
     hook(0x08064B2C, 0x080636F0, "clipwin_len_recompute_b"),
     hook(0x08064C5A, 0x080636F0, "clipwin_len_steps_b"),
     hook(0x0806561E, 0x080636F0, "clipwin_len_b"),
@@ -46,7 +46,7 @@ PATCHES = [
     # the waveform's tick, after it placed the playhead line: no line while a Clip view holds on an edge
     hook(0x080C6DCA, 0x080C6ACC, "clipwin_line"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7
-    (0x080EF998, struct.pack("<3H", 0, 0, 0), struct.pack("<3H", 0x1C8, 0x1C9, 0x1CA)),
-    (0x080EF290, struct.pack("<3H", 0, 0, 0), struct.pack("<3H", 0x1C8, 0x1C9, 0x1CA)),
+    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8
+    (0x080EF998, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
+    (0x080EF290, struct.pack("<4H", 0, 0, 0, 0), struct.pack("<4H", 0x1C8, 0x1C9, 0x1CA, 0x1CB)),
 ]
