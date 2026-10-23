@@ -100,9 +100,9 @@ S = e.sym
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
 P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
-FIT_NAMES = ["Off", "Auto (Bars)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars", "Auto (Beats)"]
-FIT_BEATS = [None, None, 1, 2, 3, 4, 6, 8, 16, 32, None]   # Fit's list: its beats (each Auto counts its own)
-AUTO_BARS, AUTO_BEATS = 1, 10                        # #t-029: a saved Auto (1) loads as Auto (Bars)
+FIT_NAMES = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
+FIT_BEATS = [None, None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (each Auto counts its own)
+AUTO_BARS, AUTO_BEATS = 1, 2                         # #t-029: a saved Auto (1) loads as Auto (Bars); #t-033 order
 APP = 0x24020088
 APP_PADS = APP + 0x1840
 GUI_MS = 0x2402EEE0
@@ -3515,7 +3515,7 @@ check(f"the other Auto chosen counts again, of the same length: 14.015 beats is 
       f"{seq[2]} (Beats); Bars counted at 60 BPM is {seq[3]} beats, and still {seq[4]} at 120 (counted once per length)",
       seq == [14, 16, 14, 8, 8], seq)
 rows = []
-for v in range(2, 10):
+for v in range(3, 11):
     got = fit_at(96000, v)
     rows.append((FIT_NAMES[v], got[1:4], got[:8] == fit_want(96000, FIT_BEATS[v]) and got[9] == 0))
 check(f"Fit's list from 1/4 to 8 bars forces 1, 2, 3, 4, 6, 8, 16 and 32 beats on a one-bar file (grid, ticks per step, "
@@ -3530,7 +3530,7 @@ cases = (("14 beats, Quant 1 bar, Sync 1/16", dict(sync=240), (1920, 240, 56)),
          ("14 beats, Quant None (synced 0)", dict(quant=0, synced=0), (0, 13440, 1)),
          ("14 beats, Sync None (synced 0)", dict(sync=0, synced=0), (1920, 13440, 1)),
          ("14 beats, Sync Slice without markers", dict(sync=0xF0000), (1920, 13440, 1)))
-rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 7, **kw)[1:4], want)
+rows = [(w, fit_at(336359 if w.startswith("14") else 192000, AUTO_BEATS if w.startswith("14") else 8, **kw)[1:4], want)
         for w, kw, want in cases]
 check(f"the polymetric grid and steps: wrap grid gcd(Quant, clip), steps one when Sync is the clip or longer, else "
       f"gcd(Sync, clip): {[(w, g_) for w, g_, _ in rows]}", all(g_ == w_ for _, g_, w_ in rows),
@@ -3591,14 +3591,14 @@ for what, kw in (("as a region", REG4), ("as a whole file", dict(frames=VL4))):
 # a WAV's Beat Count over a one-bar region (Gate 3 finding 3): Beat Count 8 cuts it into 8 steps of an eighth of the bar,
 # each played for a beat - every step re-placed back half a beat. Fit Auto and Fit 1 bar make it the bar it is.
 res = {}
-for fit in (0, 1, 5):
+for fit in (0, 1, 6):
     d = fit_audio(fit, beats=8, blocks=2300, cell=0x102, frames=96000)
     res[fit] = seamless(d, 96000) + (u32(d["rig"].m, d["rig"].pad + 0x210), d["rig"].i64(d["rig"].pad + 0x208))
 check(f"a one-bar file at Beat Count 8 (finding 3): Fit Off {res[0][5]} steps of {res[0][6]} ticks, jumps at {len(res[0][2])} "
-      f"joints, {res[0][3]} zero-gain samples; Fit Auto and Fit 1 bar: {res[1][5]} and {res[5][5]} steps of "
-      f"{res[1][6]} ticks, rate {res[1][0]:.6f}, no jump ({res[1][2]}, {res[5][2]}), no zero-gain sample ({res[1][3]}, "
-      f"{res[5][3]})", len(res[0][2]) >= 8 and res[1][5:] == res[5][5:] == (4, 960) and not res[1][2] and not res[5][2]
-      and res[1][3] == res[5][3] == 0 and abs(res[1][0] - 1) < 1e-5, res)
+      f"joints, {res[0][3]} zero-gain samples; Fit Auto and Fit 1 bar: {res[1][5]} and {res[6][5]} steps of "
+      f"{res[1][6]} ticks, rate {res[1][0]:.6f}, no jump ({res[1][2]}, {res[6][2]}), no zero-gain sample ({res[1][3]}, "
+      f"{res[6][3]})", len(res[0][2]) >= 8 and res[1][5:] == res[6][5:] == (4, 960) and not res[1][2] and not res[6][2]
+      and res[1][3] == res[6][3] == 0 and abs(res[1][0] - 1) < 1e-5, res)
 
 
 # tempo: 120 -> 126 BPM inside a pass (sample 414 000). The poll recomputes the fitted pad within 16 blocks (its clip
@@ -3613,13 +3613,13 @@ def to126(r):
 
 
 res = {}
-for fit in (0, 5):
+for fit in (0, 6):
     d = fit_audio(fit, beats=0, blocks=3000, cell=0x102, pre=to126, **REG4)
     r = d["rig"]
     ps = pass_starts(r)
     rate = struct.unpack("<f", bytes(r.uc.mem_read(r.pad + 0x1F0, 4)))[0]
     res[fit] = (r.t126, getattr(r, "r126", None), rate, ps, seamless(d, VL4, since=ps[2], rate=rate if fit else 1.0))
-off, on = res[0], res[5]
+off, on = res[0], res[6]
 s126 = int(48000.0 * (3840 / 960.0 / 126.0) * 60.0 + 0.5)
 check(f"tempo 120 -> 126 BPM in a pass (block {on[0]}), Fit 1 bar on the 3.74-beat region: recomputed at block {on[1]} (the "
       f"poll, within 16), rate {on[2]:.6f} (89 760 / {s126}), passes {on[3][:5]}; from the next pass on no jump over a "
@@ -3732,14 +3732,14 @@ def off_grid(beats, quant, sync, fit, kind="File", bc=0, image=IMAGE):
 
 rows, bad = {}, []
 for what, a, want_ps, want_big in (
-        ("a 1-bar file, Quant 1/16, Sync 1/4, Fit 1 bar", (4, 7, "1/4", 5), [294000, 384000, 480000, 576000], [(312001, 6000)]),
+        ("a 1-bar file, Quant 1/16, Sync 1/4, Fit 1 bar", (4, 7, "1/4", 6), [294000, 384000, 480000, 576000], [(312001, 6000)]),
         ("  ...Fit Off", (4, 7, "1/4", 0), [294000, 384000, 480000, 576000], [(312001, 6000)]),
         ("  ...the stock image", (4, 7, "1/4", 0, "File", 0, STOCK), [294000, 384000, 480000, 576000], [(312001, 6000)]),
         ("a 14-beat file, Quant 1/16, Sync 1/4, Fit Auto (Beats)", (14, 7, "1/4", AUTO_BEATS), [294000, 624000, 960000, 1296000],
          [(312001, 6000)]),
         ("the 3.74-beat region, Quant 1/16, Sync 1/4, Fit Auto", (4, 7, "1/4", 1, "Region"), [294000, 384000, 480000, 576000],
          [(312001, 5610)]),
-        ("a 2-bar file, Quant 1/4, Sync 1 bar, Fit 2 bars", (8, 5, "1 bar", 7), [312000, 480000, 672000, 864000],
+        ("a 2-bar file, Quant 1/4, Sync 1 bar, Fit 2 bars", (8, 5, "1 bar", 8), [312000, 480000, 672000, 864000],
          [(384001, 24000)]),
         ("  ...Fit Off, Beat Count 8", (8, 5, "1 bar", 0, "File", 8), [312000, 480000, 672000, 864000], [(384001, 24000)])):
     got = off_grid(*a)
@@ -3774,7 +3774,7 @@ check(f"live, Fit Off -> Auto inside the second pass (sample 418 000): that pass
       and sm_after[1] >= 4 and not sm_after[2] and sm_after[3] == 0, (ps, sm_before[:3], sm_after))
 res = {}
 for quant, what in ((1, "Quant 4 bars"), (3, "Quant 1 bar")):
-    d = fit_audio(5, beats=0, quant=quant, blocks=6200, cell=0x102, vals={P_SYNC: 3}, pre=fit_to(418000, 7), **REG4)
+    d = fit_audio(6, beats=0, quant=quant, blocks=6200, cell=0x102, vals={P_SYNC: 3}, pre=fit_to(418000, 8), **REG4)
     r = d["rig"]
     g = d["gain"][:len(d["gain"]) - N]
     res[what] = (pass_starts(r), float(g.max()), int((np.abs(g[384300 - d["base"]:]) < 1e-7).sum()),
@@ -3855,16 +3855,16 @@ def hold_fit(t, grid, old, new, was_grid=3840, was_tps=960, was_n=4):
 
 
 rows = {what: hold_fit(*a) for what, a in (
-    ("1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)", (19200, 7680, 5, 7)),
-    ("1 bar -> 2 bars, the pass on bar 6 (on it)", (23040, 7680, 5, 7)),
-    ("Fit unchanged, region unchanged, the grid moved by stock", (19200, 7680, 5, 5)),
+    ("1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)", (19200, 7680, 6, 8)),
+    ("1 bar -> 2 bars, the pass on bar 6 (on it)", (23040, 7680, 6, 8)),
+    ("Fit unchanged, region unchanged, the grid moved by stock", (19200, 7680, 6, 6)),
     ("14 beats Auto unchanged, the pass on a half bar (its grid: half a bar)", (24960, 1920, 1, 1)),
-    ("Auto -> 2 bars from 14 beats (grid half a bar), a pass on a half bar that the 2-bar grid can meet", (24960, 7680, 1, 7, 1920, 960, 14)))}
+    ("Auto -> 2 bars from 14 beats (grid half a bar), a pass on a half bar that the 2-bar grid can meet", (24960, 7680, 1, 8, 1920, 960, 14)))}
 check(f"H3' and Fit: a Fit change that moves the wrap grid off this pass waits (Fit put back, the recompute run again) when "
       f"a wrap on the new grid can come, else it is taken; a pass on a polymetric clip's own grid takes it: {rows}",
-      rows == {"1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)": (5, 5, (FQ + 1, 0)),
-               "1 bar -> 2 bars, the pass on bar 6 (on it)": (7, 7, (FQ + 1,)),
-               "Fit unchanged, region unchanged, the grid moved by stock": (5, 5, (FQ + 1,)),
+      rows == {"1 bar -> 2 bars, the pass on bar 5 (off the 2-bar grid)": (6, 6, (FQ + 1, 0)),
+               "1 bar -> 2 bars, the pass on bar 6 (on it)": (8, 8, (FQ + 1,)),
+               "Fit unchanged, region unchanged, the grid moved by stock": (6, 6, (FQ + 1,)),
                "14 beats Auto unchanged, the pass on a half bar (its grid: half a bar)": (1, 1, (FQ + 1,)),
                "Auto -> 2 bars from 14 beats (grid half a bar), a pass on a half bar that the 2-bar grid can meet":
                    (1, 1, (FQ + 1, 0))}, rows)

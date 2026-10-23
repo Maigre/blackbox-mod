@@ -32,6 +32,11 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-033 (2026-10-21) — Fit's order: `Off, Auto (Bars), Auto (Beats), 1/4 … 8 bars`** (hub #t-033). Thomas at the
+  37.4.1d bench (21/10): both Autos together after Off. It reverses D-031's order only (Auto (Beats) was last), not
+  what either Auto counts. No preset migration, his call: a preset stores the list's index, so one saved with a length
+  or with Auto (Beats) before loads one place off: a length as the row before it (1/4 as Auto (Beats), 1 bar as 3
+  beats, 8 bars as 4 bars), Auto (Beats) as 8 bars; Off and Auto (Bars) load as they were. He re-saves his. `FIT_BEATS` 10 → 2; the lengths are rows 3 … 10; cw_bank's layout is unchanged.
 - **D-032 (2026-10-21) — The Clip Window goes upstream as one PR of five commits** (hub #t-039). Thomas, the night
   Gate 3 closed: « one PR with five-commits ». One branch, `feat/clip-window`, from upstream `main`: slip, region (+
   the Clip-mode Waveform knobs and the playhead), looplen, fit, loopfade, each commit building and passing
