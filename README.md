@@ -26,6 +26,12 @@ New since 3.1.n:
   the loop ahead, counter-clockwise drags it behind. The value is beats.ticks, 960 ticks to a beat (`-0.480` is half a
   beat behind; one tick is about half a millisecond at 120 BPM). Turn slowly for single ticks, fast for 1/64 steps; a
   turn stops on 0, pause to go past it. A change is heard at the next Sync step. Saved with the preset; 0 is stock.
+- **Region on Clip pads**: a "Region" row before Slip: Auto, File or Loop. The pad plays its loop points (Sample
+  mode's Loop Start and Loop End) in sync, as if they were the whole file: no destructive Trim. Auto plays them
+  whenever they are not the whole file; File is stock. A change is heard from the pad's next pass.
+- **The Waveform screen on a Clip pad**: the top knobs are Loop Start and Loop End, the bottom-left one Slip; the loop
+  bracket shows what Region plays, and the playhead line the frame you hear. Turning Loop Start or Loop End takes the
+  view to that edge, and it follows the playhead again after a pause.
 - **Live input on a pad**: an "Input" row on a pad's Conf tab (Off, In 1, In 2, In 1+2). The audio input plays
   through that pad, so it gets the pad's insert, its reverb and delay sends, its level and pan, and the master FX.
   Muting the pad mutes it.
@@ -79,8 +85,7 @@ From 3.1.n and earlier:
 - LFO 2 / 3, ENV, the insert and Input are not on Granular pads.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
-- Slip does nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers. The playhead line on the
-  waveform shows the unslipped position.
+- Slip and Region do nothing on Slicer pads, or on a Clip pad set to Sync Slice with slice markers.
 - Presets saved on an older mod build can come back with a neighbouring Fidelity or delay Type, because those
   lists gained entries. Set them again and save.
 - USB on the power jack doesn't work on every unit. On some, that jack's USB data side is dead with any firmware,
