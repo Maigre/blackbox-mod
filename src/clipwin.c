@@ -167,7 +167,7 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
 #define P_SLIP      0x1c9
 #define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
-#define P_FIT       0x1cb            /* Off, Auto (Bars), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats), Auto (Beats) */
+#define P_FIT       0x1cb            /* Off, Auto (Bars), Auto (Beats), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats) */
 #define P_TLKNOB    0x1cc            /* the Waveform's TL knob in Clip mode: Loop Start, Move (clipwin_move) */
 #define TLKNOB_MOVE 1
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
@@ -206,9 +206,9 @@ void clipwin_register(void *table)
         (const char *)0x080ce708, (const char *)0x080ce700, (const char *)0x080ce6f8, (const char *)0x080ce6f0};
     /* stock's "Off", Quant Size's names for 1 beat .. 8 bars, and our own: the two Autos and two lengths between */
     static const char *const fit_names[FIT_MAX + 1] = {
-        (const char *)0x080cd7a8, "Auto (Bars)", (const char *)0x080ce70c, (const char *)0x080ce708,
+        (const char *)0x080cd7a8, "Auto (Bars)", "Auto (Beats)", (const char *)0x080ce70c, (const char *)0x080ce708,
         "3 beats", (const char *)0x080ce700, "6 beats", (const char *)0x080ce6f8, (const char *)0x080ce6f0,
-        (const char *)0x080ce6e8, "Auto (Beats)"};
+        (const char *)0x080ce6e8};
     fw_register_list(table, P_REGION, "Region:", region_names, 3, "clipregion");
     fw_register_num(table, P_SLIP, TYPE_INT, "Slip:", -SLIP_MAX, SLIP_MAX, "clipslip");
     fw_register_list(table, P_LOOPLEN, "Loop Len:", looplen_names, LOOPLEN_MAX + 1, "cliplooplen");
@@ -722,6 +722,28 @@ int clipwin_move(uint8_t *view, uint8_t *msg)
     if (b)
         b->moving[q] = 0;
     return 1;
+}
+
+/* Replaces bl FUN_080c6acc @0x080c6dca, in the waveform's tick FUN_080c6c34 (the view's, 0x080a6f70: wave = view +
+   0x38), every tick, just after it set the playhead line's pixel (+ 0x23c). In Clip mode the bind block pins that line
+   to the view's anchor pixel (+ 0x240) and scrolls the waveform under it (FUN_080c6f44 @0x080a55e4: + 0x248 = 1, as
+   for Slicer), so while the view holds on a frame (follow mode + 0x1e0 = 2: a TL or TR turn, clip_view, or a tap on
+   the overview) the line marks that frame, the edge being set, not the playhead (Thomas at the 37.4.1d bench). It goes
+   then, to the pixel left of the waveform's box, which the draw skips (FUN_080c6338 @0x080c68f2), and the tick puts it
+   back once the view follows the playhead again. A stopped pad's view holds until it plays, and so does the line.
+   Every other mode keeps stock's line. */
+#define WAVE_X      0x4
+#define WAVE_FOLLOW 0x1e0
+#define WAVE_LINE   0x23c
+#define WAVE_FIXED  0x248
+#define fw_wave_tiles ((len_fn)FN(0x080c6acc))
+
+void clipwin_line(uint8_t *wave, int32_t anchor)
+{
+    if (wave[WAVE_FOLLOW] == 2 && wave[WAVE_FIXED] &&
+        fw_setting(wave - VIEW_WAVE + VIEW_STORE, P_PAD_MODE) == PAD_MODE_CLIP)
+        *(int32_t *)(wave + WAVE_LINE) = *(int32_t *)(wave + WAVE_X) - 1;
+    fw_wave_tiles(wave, anchor);
 }
 
 /* ---- the playhead ---- */

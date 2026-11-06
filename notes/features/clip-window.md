@@ -60,7 +60,7 @@ and Known issues. The research model of the hooks is outside the repo, in `/srv/
 | Clip pad, Pos tab, row 5 | `Region:` | `0x1c8` | Auto, File, Loop | Auto | `clipregion` |
 | Clip pad, Pos tab, row 6; Clip Waveform BL (`Slip`) | `Slip:` | `0x1c9` | −4.000 … +4.000 (−3840 … +3840 ticks) | +0.000 | `clipslip` |
 | Clip pad, Pos tab, row 7; Clip Waveform BR (`LpLen`) | `Loop Len:` | `0x1ca` | Off, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Off | `cliplooplen` |
-| Clip pad, Pos tab, row 8 | `Fit:` | `0x1cb` | Off, Auto (Bars), 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars, Auto (Beats) | Off | `clipfit` |
+| Clip pad, Pos tab, row 8 | `Fit:` | `0x1cb` | Off, Auto (Bars), Auto (Beats), 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars | Off | `clipfit` |
 | Clip pad, Pos tab, row 9 | stock's Loop Fade | stock `0xfa` | 0 … 100 % (0 … 1000) | 0 | stock's |
 | Clip Waveform TL | `LpS` | stock `0x91` | 0 … Loop End, frames | stock's | stock's |
 | Clip Waveform TR | `LpE` | stock `0x92` | Loop Start … the file's length, frames | stock's | stock's |
@@ -225,10 +225,12 @@ At their defaults the pad plays exactly as stock (bit for bit, under emulation).
   at the tempo then. The list's other values force a length. Thomas at Gate 3 (16/10, ~13:00), of pad 1's 14.015-beat
   take: « that weird length is intended as polyrhythmic loop and should be handled properly », so Auto is not stock's
   Beat Count Auto (the power of two nearest the length, which makes that take 16 beats). That Auto is **Auto (Beats)**
-  since D-031 (#t-029), last in the list; **Auto (Bars)**, second, keeps a loop cut by ear on the bar (Thomas, 20/10:
+  since D-031 (#t-029), third in the list since D-033 (#t-033); **Auto (Bars)**, second, keeps a loop cut by ear on the bar (Thomas, 20/10:
   « fit auto doesnt make the loop metronome syncable »): under a bar the nearest of 1/4, 1/2 and 1 bar, from a bar up
   the nearest whole number of bars, both of the length itself, ties up (5.9 beats → 1 bar, 6 → 2 bars, 14.015 → 4
-  bars). A preset saved with Auto loads as Auto (Bars); its lengths load as they were.
+  bars). A preset saved with Auto loads as Auto (Bars). Since D-033 (both Autos after Off) a preset saved with a length
+  or with Auto (Beats) loads one place off (a length as the row before it, Auto (Beats) as 8 bars): no migration,
+  Thomas's call (21/10).
 - **Polymetric.** A length that is no whole number of Quants (3, 5, 6, 7, 14 beats on Quant 1 bar) comes round every
   so many beats against the bar. Each pass starts one loop after the one before, seamlessly. Under emulation stock does
   not keep such a clip (§5, 11b): it snaps each pass's end to its wrap grid min(Quant, clip), so a 14-beat clip on
@@ -305,6 +307,12 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   that moved one edge of a bracket shown before and after (`cw_bracket`'s return): not a bind, a zoom, a load or
   a preset (both ends at once), a Region change, Region File (no bracket), nor without bank 2. 300 ticks in
   seconds is a bench measure.
+- **No playhead line while the view holds** (Thomas at the 37.4.1d bench). Clip mode pins the white line to the
+  view's anchor pixel and scrolls the waveform under it (the bind block's `FUN_080C6F44`, `+0x248` = 1, as for
+  Slicer), so during the hold the line sat on the edge being set. While the waveform's follow mode is 2 (a TL
+  or TR turn, or a tap on the overview) `clipwin_line` puts the line's pixel (`+0x23C`) left of the waveform's
+  box, which the draw skips (`FUN_080C6338` at `0x080C68F2`); the tick puts it back when the view follows the
+  playhead again. A stopped pad's view holds until it plays, and so does the line. Sample mode's line is stock's.
 - **BL Slip and BR Loop Len.** These are the Pos tab's rows, with the same text and feel.
 - **The names.** A knob there draws one line, "name value", 12 px a character (the 6 × 8 font at double size), in a
   151-px box: left-aligned from x 6 on the left, right-aligned to x 309 on the right. Twelve characters stay in the
@@ -417,6 +425,7 @@ set, which imports it. The thunks are in `src/clipwin_thunk.S` and the C is in `
 | W bind | `0x080A582A` (`FUN_080A54A0`, the Clip bind block's last unbind, BR) | `bl 0x080A7EE0` binder | `clipwin_bind` | bind TL `0x91`, TR `0x92`, BL Slip, BR Loop Len through the stock binder with the view store's values; name them `LpS`, `LpE`, `Slip`, `LpLen` (`FUN_080B03C0`) and recompose each line (`FUN_080B0480`) |
 | W zoom | `0x080A53B0` (`FUN_080A53A2`, every bind and zoom change) | `bl 0x080A52C4` | `clipwin_zoom(view, zoom)` | Clip only: the waveform's `+0x254` and the overview strip (`FUN_080C4DF0`) given the pad's file length; TL/TR step = max(1, zoom), then range, then value; the bracket |
 | W refresh | `0x080A5B0E` (the Waveform refresh's Clip case) | `bl 0x080C6E8C` slice markers | `clipwin_wave(wave, slices)` | stock first, then range/value of TL/TR, re-value BL/BR when the store differs, the bracket |
+| W line | `0x080C6DCA` (the waveform's tick `FUN_080C6C34`, after it set the line's pixel `+0x23C`) | `bl 0x080C6ACC` tiles | `clipwin_line(wave, anchor)` | Clip mode, follow mode `+0x1E0` = 2 and the line pinned (`+0x248`): the line's pixel left of the box (`+0x4` − 1), not drawn; then stock |
 | L | `0x080A660A`, `0x080A6612`, `0x080A661A`, `0x080A6622` (`FUN_080A5B90`, the Waveform view's constructor: TL, BL, TR, BR) | `bl 0x080B02E6` the knob's colour (9) | `clipwin_label(knob, colour)` | stock's colour, then the knob's line (`+0xF4`) given `label_vt`, stock's label vtable with `label_draw` / `label_clip`: nine passes of stock's draw (`FUN_080C3D2C`, `FUN_080C3FC6`), black around, white on top, in the box inset by a pixel, while `b2_live()`; stock's draw otherwise |
 | P | `0x080EF998` and `0x080EF290` (both copies of the Clip Pos page) | u16 `0, 0, 0, 0, 0` | `0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA` | the five rows in slots 5–9 (stock's own Loop Fade `0xFA` in slot 9) |
 | tick | `duck_block` (`src/duck.c`, JOEBOX's hook of `0x0804CE74`), after `insert_tick()` | — | `clipwin_tick(engine)` | one pad a block: Slip and Loop Len from the app's store (`cw_tick`); the segments its file no longer reaches retired (`cw_retire`, with the source's `fw_src_len`); Loop Len's take (`cw_looplen`) and its Sync; the guarded drop (`cw_drop`) |
@@ -469,7 +478,7 @@ exclusive access anywhere (D-013).
 | `0x723` | `u8 llv[16]` | Loop Len as the poll last read it from the store (the settle, finding 8) |
 | `0x733` | `u8 llc[16]` | the polls since it changed: taken at `LL_SETTLE` (7; 4 until 37.3.0) |
 | `0x744` | `i32 flen[16]` | `fw_src_len` at the pad's last recompute (H3 site 1): the Clip Waveform's file length (finding 12) |
-| `0x784` | `u8 fit[16]` | Fit as taken with the region (0 Off, 1 Auto (Bars), 2 … 9 = 1/4 … 8 bars, 10 Auto (Beats)) |
+| `0x784` | `u8 fit[16]` | Fit as taken with the region (0 Off, 1 Auto (Bars), 2 Auto (Beats), 3 … 10 = 1/4 … 8 bars; D-033) |
 | `0x794` | `u8 pfit[16]` | the Fit the pad had before its wrap's adoption: `cw_hold` puts it back |
 | `0x7A4` | `u8 fon[16]` | 1: the pad's last recompute stored Fit's step fields (the poll's tempo check, the whole file's seamless end and latch) |
 | `0x7B4` | `u16 abeats[16]` | Fit Auto's count … |
