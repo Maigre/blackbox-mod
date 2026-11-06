@@ -32,6 +32,15 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
+  #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
+  forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving
+  back), because `SetCellParam` clamps neither point against the other (notes/re/x5 1), so every pair between the
+  posts is a valid region holding both the old and the new one. An audio tick can fall between the posts (x5 3); the
+  pad is marked `cw_bank.moving` across them and a wrap that finds the mark keeps the region it had (`adopt`), so no
+  pass plays the longer intermediate region. cw_bank grows to `0x8B8`, magic `CWNC`. A second knob event never reads
+  a half-moved pair: both posts complete inside the first event's handler and the view's copy is refilled whole
+  (x5 x2). The view goes to Loop Start after the second post in both directions.
 - **D-033 (2026-10-21) — Fit's order: `Off, Auto (Bars), Auto (Beats), 1/4 … 8 bars`** (hub #t-033). Thomas at the
   37.4.1d bench (21/10): both Autos together after Off. It reverses D-031's order only (Auto (Beats) was last), not
   what either Auto counts. No preset migration, his call: a preset stores the list's index, so one saved with a length
