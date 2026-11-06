@@ -62,3 +62,12 @@ a scratch script that `exec`s `test_clipwin.py` lines 1–906 and 4105–4246 (t
 then (1) calls `0x0809FA50` on a pad store set up as §12's « what the forward sends » block does, reading back with
 `0x08093E9C`; (2) `sc.open(CLIP12)`, then `sc.stored(_92=…)` / `sc.stored(_91=…)` with a `UC_HOOK_CODE` on
 `0x080C6E68` recording `r1`. Each runs in seconds.
+
+## x2 — a knob event between a move's two refreshes (hub blackbox#t-042 turn 6, static)
+
+clipwin_move reads Loop Start and Loop End from the view's copy of the pad store (`view+0x2370`), and that copy is
+filled whole by `FUN_0809A830` from the app's store on each refresh (notes/re/a3). Both `SetCellParam`s of a move run
+inside the knob event's own handler, in the GUI task, so the app's store holds the whole moved pair before any later
+message runs: a refresh handled after the move copies both edges, never one. A second knob event queued ahead of
+the move's refreshes reads the whole old pair: its delta is taken from that pair and its two posts keep that length,
+so the region lands where the second turn says, at the same length. No half pair reaches clipwin_move.
