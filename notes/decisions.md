@@ -32,6 +32,12 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-033 (2026-11-07) — Trim on a Clip pad: three stateless hooks, riding with the `filter` set** (hub #t-040, plan
+  #t-031 rev 1). The cave discards `.data`/`.bss`, so nothing carries state between the File menu's enable, the write
+  request and the reload: each hook reads the pad's store itself, and two asm thunks pass the caller's cell and trim
+  flag in as arguments. The patch list rides with `filter`, as Clip Window's does, so the image keeps the name every
+  suite opens (a separate `trim` set renamed it under all 31). Trim is refused while another cell of the preset names
+  the same file — stock's trim reloads those too — compared by the name in each store, as stock's own loop does.
 - **D-032 (2026-10-21) — The Clip Window goes upstream as one PR of five commits** (hub #t-039). Thomas, the night
   Gate 3 closed: « one PR with five-commits ». One branch, `feat/clip-window`, from upstream `main`: slip, region (+
   the Clip-mode Waveform knobs and the playhead), looplen, fit, loopfade, each commit building and passing
