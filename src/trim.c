@@ -1,5 +1,5 @@
 /*
- * Trim to Region on a Clip pad (blackbox#t-040, notes/re/x4-trim.md). DRAFT: built, not yet run (test_trim.py owed).
+ * Trim to Region on a Clip pad (blackbox#t-040, notes/re/x4-trim.md). DRAFT: built and run under Unicorn, test_trim.py owed.
  *
  * Stock offers the File menu's Trim only on a Sample pad (x4 §8), and FUN_080A0DD4 fills the save's loop and crop only
  * in Pad Mode 0 / 3 (x4 §3). The disk copy crops by the meta whatever the mode (x4 §7). Three hooks open it for a Clip
@@ -20,7 +20,10 @@
  * keeps it so Loop Fade sounds the same and a second Trim cuts nothing more. Region, Slip, Loop Len, Fit and Loop Fade
  * are rows stock's reload does not write (x4 §4); they stay.
  *
- * Owed: Trim refused while another pad of the preset names the same file (stock reloads those too: plan rev 1, Risks).
+ * Trim is refused while another pad of the preset names the same file: stock's trim reloads those too (plan rev 1,
+ * Risks). Stock finds them in FUN_080A0DD4 @0x080A0F3A..0x080A0F92 - every cell, rows 0-3 x cols 0-4, but the trimmed
+ * one, its path printed from the name its store holds at +0x18 (FUN_08098D0C, FUN_080460BA) and strncmp'd, 0xff, to the
+ * trim's path. The format is the same for every cell, so the same name is the same path: trim_ok compares the names.
  */
 #include <stdint.h>
 
@@ -33,6 +36,7 @@ typedef void (*reload_fn)(uint8_t *app, const char *path, const void *cell, int 
 typedef void (*request_fn)(void *host, void *asset, void *meta, const char *path);
 typedef void (*smpl_fn)(void *meta, unsigned index, const void *loop);
 typedef void (*crop_fn)(void *meta, int32_t start, int32_t length);
+typedef int (*strncmp_fn)(const char *a, const char *b, unsigned n);
 
 #define fw_setting      ((setting_fn)FN(0x08093e9c))
 #define fw_setting_set  ((setting_set_fn)FN(0x08093ecc))
@@ -41,9 +45,12 @@ typedef void (*crop_fn)(void *meta, int32_t start, int32_t length);
 #define fw_request      ((request_fn)FN(0x0804ca88))
 #define fw_smpl         ((smpl_fn)FN(0x08077738))
 #define fw_crop         ((crop_fn)FN(0x0807775c))
+#define fw_strncmp      ((strncmp_fn)FN(0x080c8b48))
 
 #define APP             0x24020088u
 #define APP_PADS        (APP + 0x1840u)          /* the app's pad stores: + row * 0xf0 + col * 0x30 */
+#define PAD_STORE(r, c) ((const uint8_t *)(APP_PADS + (r) * 0xf0u + (c) * 0x30u))   /* FUN_08098D0C, cols 0-4 */
+#define PAD_NAME(r, c)  (*(const char *const *)(PAD_STORE(r, c) + 0x18))   /* FUN_080460BA: the file name, 0xff max */
 #define APP_FRESH(r, c) (*(volatile uint8_t *)(APP + 0x8a96u + (r) * 0x78u + (c) * 0x18u))   /* x4 §4 */
 #define P_PAD_MODE      0x8b
 #define PAD_MODE_CLIP   1
@@ -60,6 +67,21 @@ int32_t clipwin_flen(unsigned q);   /* clipwin.c: the engine's length of pad q's
 struct cell { uint32_t tag; uint16_t code, _r; };   /* a pad cell: code = row << 4 | col (x3 §1) */
 struct cut { int32_t ls, le, f; unsigned row, col; };
 
+/* Another cell of the preset names pad (row, col)'s file - or the pad names none: stock's own loop, by name. */
+static int shared(unsigned row, unsigned col)
+{
+    const char *own = PAD_NAME(row, col);
+    if (!own || !*own)
+        return 1;
+    for (unsigned r = 0; r < 4; r++)
+        for (unsigned c = 0; c < 5; c++) {
+            const char *name = PAD_NAME(r, c);
+            if ((r != row || c != col) && name && !fw_strncmp(name, own, 0xff))
+                return 1;
+        }
+    return 0;
+}
+
 /* The pad's region, when Trim may cut it: a Clip pad whose Region plays a loop (is_loop, clipwin_b2.c). */
 static int trim_ok(const struct cell *cell, struct cut *t)
 {
@@ -73,6 +95,8 @@ static int trim_ok(const struct cell *cell, struct cut *t)
     if (len <= 0)
         len = fw_setting(st, P_LENGTH);
     if (fw_setting(st, P_REGION) == REGION_FILE || ls < 0 || ls >= le || le > len || (!ls && le >= len - 1))
+        return 0;
+    if (shared(row, col))
         return 0;
     int32_t fade = fw_setting(st, P_LOOP_FADE);
     /* clipwin_b2.c's F, the same float maths, so the pre-roll kept is the one Loop Fade reads */
