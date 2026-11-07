@@ -1,5 +1,7 @@
 """Trim to Region on a Clip pad: the File menu's Trim, the save's loop and crop, the reload's rows kept (see src/trim.c).
-Apply with `cave`."""
+
+Rides with the `filter` set (patches/filter.py imports it), as clipwin.py does, so the patched image keeps the name
+every suite opens."""
 import os
 
 from thumb import ROOT, bl, symbols

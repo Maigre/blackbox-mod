@@ -57,3 +57,8 @@ PATCHES = [
 from clipwin import PATCHES as CLIPWIN  # noqa: E402
 
 PATCHES += CLIPWIN
+
+# Trim on a Clip pad (src/trim.c) rides here for the same reason: the image keeps its name. patches/trim.py holds them.
+from trim import PATCHES as TRIM  # noqa: E402
+
+PATCHES += TRIM
