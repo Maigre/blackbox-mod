@@ -31,7 +31,7 @@ JOEBOX):
   the whole file.
 - **Loop Len** Off, 1/16 … 4 bars — a beat repeat on the grid: the window where the music is, looped, until you turn
   it Off and the loop carries on in phase.
-- **Fit** Off, Auto (Bars), 1/4 … 8 bars, Auto (Beats) — the loop lasts exactly that many beats at the tempo (a
+- **Fit** Off, Auto (Bars), Auto (Beats), 1/4 … 8 bars — the loop lasts exactly that many beats at the tempo (a
   little faster or slower, pitch with it; not a time-stretch). Auto (Bars) picks the nearest whole number of bars (under
   a bar: 1/4, 1/2 or 1 bar), so a loop cut by ear stays on the metronome's bar; Auto (Beats) picks the nearest whole
   number of beats, and a length that is no whole bar (3, 5, 14 beats…) plays as a polyrhythm, each pass in time. It follows

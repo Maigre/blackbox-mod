@@ -1,6 +1,6 @@
 # Trim on a Clip pad
 
-Hub task #t-040 (plan #t-031 rev 1). Reverse engineering: `notes/re/x4-trim.md`. Decision: D-033. **Status: dev
+Hub task #t-040 (plan #t-031 rev 1). Reverse engineering: `notes/re/x4-trim.md`. Decision: D-035. **Status: dev
 build, Unicorn-tested; the unit proof is hub #t-041.**
 
 ## 1. What it does on the unit
