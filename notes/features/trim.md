@@ -8,11 +8,13 @@ build, Unicorn-tested; the unit proof is hub #t-041.**
 On a **Clip** pad whose **Region** plays a loop (Auto or Loop, with loop points that are not the whole file), the
 browser's File menu offers **Trim**, which stock offers only on a Sample pad. Stock's « Trim and Save? » follows; on
 yes the pad's own file is overwritten with `[Loop Start − F, Loop End)` and an `smpl` loop `[F, end)`, where F is Loop
-Fade's pre-roll (`(Loop End − Loop Start) × Loop Fade / 1000`, at most Loop Start). The pad reloads with its rows
+Fade's pre-roll (`(Loop End − Loop Start) × Loop Fade / 1000`, at most Loop Start, at least one frame: a cut
+loop that were its whole file would play as File, not as the region it was). The pad reloads with its rows
 kept — Region, Slip, Loop Len, Fit and Loop Fade untouched — and Loop Start := F, so it plays and fades as before and a
 second Trim cuts nothing more.
 
-Trim stays off when: Region is File; the region is the whole file or empty; Loop End is past the file; the highlighted
+Trim stays off when: Region is File; the region starts at the file's start (the cut's loop would be its whole
+file) or is empty; Loop End is past the file; the highlighted
 file is not the pad's own; MultiSam is on; Pad Mode 3; or **another pad of the preset names the same file** (stock's
 trim would reload that pad onto the cut file).
 
@@ -38,7 +40,20 @@ from `clipwin_flen` (else Length), F as `clipwin_b2.c` computes it, and the same
 - `notes/re/x4-trim.md`: stock's disk copy run under Unicorn cutting exactly `[LS − F, LE)` (§7), the reload's `0xE`
   on the trimmed store (§9), the menu's enables (§8).
 
-## 4. Not yet checked
+## 4. Render check (Rig, hub #t-040 turn 8)
 
-A trimmed pad's render equal to the untrimmed region's with Slip and Fit on; a Trim under a playing pad; the whole
-chain on the unit (hub #t-041: a real take, Loop Fade a few %, listen before and after).
+Each case runs twice on test_clipwin.py's Rig (lines 1–904 + its defs, exec'd in a scratch): the uncut pad (a
+192 000-frame file, region [6 144, 95 904) Loop Forward, Beat Count Auto, Sync 1/4, 1 500 blocks) and its cut
+(`[LS − F, LE)`, loop `[F, end)`), then frame for frame and gain for gain from the launch on, the cut's frames +
+`LS − F`. Loop Fade 0 (F = 1), 5 % (F = 4 488) and 10 % (F = 6 144, the clamp), each with nothing else, Slip +480 and
+Fit Auto, plus Slip and Fit together and Region Auto: 0 frames off by more than 0.05, 0 samples whose gain differs,
+max frame error 0.0056 (float32).
+
+Without the one frame (F = 0 at Loop Fade 0) the cut's loop is its whole file. Clip Window then plays it as File, and
+with Fit Off the last beat step runs off the file's end: a ~257-frame tail and 1 563 silent samples once per pass,
+where the uncut region wrapped into its start. Fit on hid it. Hence the floor and the LS = 0 refusal.
+
+## 5. Not yet checked
+
+A Trim under a playing pad (the Rig has no file layer: its source is a stubbed read, so a file swapped mid-play can't
+be modelled there); the whole chain on the unit (hub #t-041: a real take, Loop Fade a few %, listen before and after).

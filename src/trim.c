@@ -94,7 +94,9 @@ static int trim_ok(const struct cell *cell, struct cut *t)
     int32_t ls = fw_setting(st, P_LOOP_START), le = fw_setting(st, P_LOOP_END), len = clipwin_flen(row * 4 + col);
     if (len <= 0)
         len = fw_setting(st, P_LENGTH);
-    if (fw_setting(st, P_REGION) == REGION_FILE || ls < 0 || ls >= le || le > len || (!ls && le >= len - 1))
+    /* ls 0 refused too: the cut's loop would be its whole file, which the Clip Window plays as File (stock's pass,
+     * a tail and a gap where a beat step overruns it) instead of as the region it was (#t-040 turn 8, Rig) */
+    if (fw_setting(st, P_REGION) == REGION_FILE || ls <= 0 || ls >= le || le > len)
         return 0;
     if (shared(row, col))
         return 0;
@@ -103,6 +105,8 @@ static int trim_ok(const struct cell *cell, struct cut *t)
     int32_t f = fade > 0 && fade <= LOOP_FADE_MAX ? (int32_t)((float)(le - ls) * ((float)fade / 1000.0f)) : 0;
     t->ls = ls;
     t->le = le;
+    /* at least one frame kept before Loop Start, so the cut's loop [F, end) is never the whole file (ls >= 1 here) */
+    f = f < 1 ? 1 : f;
     t->f = f < ls ? f : ls;
     t->row = row;
     t->col = col;

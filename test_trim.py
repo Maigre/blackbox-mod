@@ -145,6 +145,8 @@ for label, vals, kw, want in [
         ("a Clip pad, Region Loop: Trim on", clip(region=2), {}, 1),
         ("a Clip pad, Region File: Trim off", clip(region=1), {}, 0),
         ("a Clip pad whose region is the whole file: Trim off", clip(ls=0, le=LEN), {}, 0),
+        ("a Clip pad whose region starts at the file's start (LS = 0): Trim off, the cut's loop would be its whole file",
+         clip(ls=0), {}, 0),
         ("a Clip pad with an empty region (LS = LE): Trim off", clip(ls=24000, le=24000), {}, 0),
         ("a Clip pad whose Loop End is past the file: Trim off", clip(le=LEN + 5), {}, 0),
         ("a Clip pad, another file highlighted: stock's off", clip(), {"own": False}, 0),
@@ -177,7 +179,8 @@ for label, others, own, want in [
 for label, vals, trim, others, loop, crop in [
         ("Trim, Loop Fade 100: smpl {24000, 72000, forward}, crop (19200, 52800) - F = 4800 kept",
          clip(), 1, [], (24000, 72000, 0), (19200, 52800)),
-        ("Trim, Loop Fade 0: crop (24000, 48000), no pre-roll", clip(fade=0), 1, [], (24000, 72000, 0), (24000, 48000)),
+        ("Trim, Loop Fade 0: crop (23999, 48001), one frame kept so the loop is not the whole file", clip(fade=0), 1, [],
+         (24000, 72000, 0), (23999, 48001)),
         ("Trim, Loop Start 2000 under Loop Fade 100: F clamps to Loop Start, crop (0, 72000)",
          clip(ls=2000), 1, [], (2000, 72000, 0), (0, 72000)),
         ("Save (trim 0) on a Clip pad: no loop, no crop", clip(), 0, [], None, None),
@@ -199,6 +202,7 @@ check("the loop and the crop are in the meta before the request is posted", got.
 # --- 5. the reload: the pad's rows kept, Loop Start := F
 for label, vals, fresh, ls in [("a Clip pad, Loop Fade 100: fresh byte 0, Loop Start := F = 4800", clip(), 0, 4800),
                                ("a Clip pad, the clamp: Loop Start := 2000", clip(ls=2000), 0, 2000),
+                               ("a Clip pad, Loop Fade 0: Loop Start := 1, the frame kept", clip(fade=0), 0, 1),
                                ("a Sample pad: stock's reload, untouched", clip(mode=0), 1, 0)]:
     reset()
     pad(vals)
