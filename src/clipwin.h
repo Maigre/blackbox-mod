@@ -182,6 +182,10 @@ void cw_poll(struct cw_bank *b, uint8_t *engine);
 /* H3's and H3''s bodies, from bank 1's clipwin_len and clipwin_wrap behind their gates (stage 3) */
 int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip);
 void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uint32_t *t);
+/* H1's and H5's bodies, from bank 1's clipwin_seg_start and clipwin_playhead behind their gates (stage 3): the
+   prefetch point (cw_latch's, src = the pad's source), and the playhead message rewritten in place (msg 0x4a) */
+int32_t cw_segstart(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, void *src, int32_t pos);
+void cw_playmsg(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, uint8_t *msg);
 /* Loop Len's take (from cw_tick) and its window (from cw_latch) */
 int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, uint32_t *msg);
 int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t clip);

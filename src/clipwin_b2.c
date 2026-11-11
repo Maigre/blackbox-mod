@@ -866,3 +866,25 @@ void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uin
     if (cw_hold(b, q, pad, t, was))
         fw_recompute(pad, clock);
 }
+
+/* H1: the segment's prefetch point (clipwin.c's clipwin_seg_start keeps the gate and stock's prefetch) */
+int32_t cw_segstart(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, void *src, int32_t pos)
+{
+    return cw_latch(b, q, k, pad, fw_src_len(src), pos);
+}
+
+/* H5: the playhead message (msg 0x4a: + 0x10 the position, + 0x14 its per mille of the file) shows the frame heard
+   (cw_playhead), its per mille as stock reckons it; -1 leaves stock's (clipwin.c's clipwin_playhead keeps the gate and
+   stock's post) */
+#define MSG_POS     0x10
+#define MSG_MILLE   0x14
+
+void cw_playmsg(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, uint8_t *msg)
+{
+    int32_t len = fw_src_len(*(void *const *)(pad + PAD_SOURCE));
+    int32_t real = cw_playhead(b, q, pad, k, *(int32_t *)(msg + MSG_POS), len);
+    if (real >= 0) {
+        *(int32_t *)(msg + MSG_POS) = real;
+        *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
+    }
+}

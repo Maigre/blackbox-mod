@@ -293,7 +293,7 @@ void clipwin_seg_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     if (b)
-        pos = cw_latch(b, (unsigned)q, k, pad, fw_src_len(src), pos);
+        pos = cw_segstart(b, (unsigned)q, k, pad, src, pos);   /* clipwin_b2.c: the body (stage 3) */
     fw_prefetch(src, pos);
 }
 
@@ -692,8 +692,6 @@ void clipwin_line(uint8_t *wave, int32_t anchor)
    Len's window, so on a region from 6 072 the line ran 6 072 frames behind the audio and wrapped before Loop End
    (Gate 3b). The line shows the frame heard instead (cw_playhead), its per mille as stock reckons it. The render keeps
    stock's position for itself (pad + 0x248), to post only a change; without bank 2 the message is stock's. */
-#define MSG_POS     0x10
-#define MSG_MILLE   0x14
 typedef void (*post_fn)(void *ui, void *msg);
 #define fw_post     ((post_fn)FN(0x0804f504))
 
@@ -701,14 +699,8 @@ void clipwin_playhead(void *ui, uint8_t *msg, uint8_t *pad, unsigned k)
 {
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (b) {
-        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
-        int32_t real = cw_playhead(b, (unsigned)q, pad, k, *(int32_t *)(msg + MSG_POS), len);
-        if (real >= 0) {
-            *(int32_t *)(msg + MSG_POS) = real;
-            *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
-        }
-    }
+    if (b)
+        cw_playmsg(b, (unsigned)q, pad, k, msg);   /* clipwin_b2.c: the body (stage 3) */
     fw_post(ui, msg);
 }
 
