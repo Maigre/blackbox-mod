@@ -97,9 +97,9 @@ e = Emu(IMAGE, "out/cave.elf")
 img, stock = open(IMAGE, "rb").read(), open(STOCK, "rb").read()
 S = e.sym
 
-P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
-P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
-P_TLKNOB = 0x1CC                                      # TL Knob: Loop Start, Move (the Waveform's TL in Clip mode)
+P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x151, 0x150, 0x152, 0x94
+P_FIT, P_FADE = 0x153, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
+P_TLKNOB = 0x154                                      # TL Knob: Loop Start, Move (the Waveform's TL in Clip mode)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
 FIT_NAMES = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
 FIT_BEATS = [None, None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (each Auto counts its own)
@@ -304,8 +304,8 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
 POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 5 .. 10
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
-    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
-          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), TL Knob (0x1cc), then {32 - len(POS_ROWS)} empty slots",
+    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x150), Slip (0x151), Loop Len "
+          f"(0x152), Fit (0x153), stock's Loop Fade (0xfa), TL Knob (0x154), then {32 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
@@ -372,36 +372,36 @@ st_m = Emu(STOCK, "out/cave.elf")
 maps(st_m)
 stock_regs = registrar(st_m, TABLE)
 ours = [r for r in regs if r[0] == P_SLIP]
-check("the patched registrar registers 0x1c9 once: 'Slip:', type 1 (int), -3840 .. 3840, saved as 'clipslip'",
+check("the patched registrar registers 0x151 once: 'Slip:', type 1 (int), -3840 .. 3840, saved as 'clipslip'",
       ours == [(P_SLIP, 1, "Slip:", -3840, 3840, "clipslip")], ours)
 region_reg = [r for r in regs if r[0] == P_REGION]
 list_type = {r[1] for r in regs if r[0] == 0xF1}                # Fidelity, a stock-registrar list (filter.c)
-check(f"... and 0x1c8 once, before it: 'Region:', a list (type {region_reg[0][1] if region_reg else None}, as Fidelity's) of "
+check(f"... and 0x150 once, before it: 'Region:', a list (type {region_reg[0][1] if region_reg else None}, as Fidelity's) of "
       f"{lists.get(P_REGION)}, saved as 'clipregion'", len(region_reg) == 1 and region_reg[0][2] == "Region:"
       and region_reg[0][5] == "clipregion" and {region_reg[0][1]} == list_type and lists.get(P_REGION) == ["Auto", "File", "Loop"]
       and regs.index(region_reg[0]) < regs.index(ours[0]), (region_reg, list_type, lists.get(P_REGION)))
 ll_reg = [r for r in regs if r[0] == P_LOOPLEN]
 LL_NAMES = ["Off", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
-check(f"... and 0x1ca once, after Slip: 'Loop Len:', a list of {lists.get(P_LOOPLEN)} (stock's own strings), saved as "
+check(f"... and 0x152 once, after Slip: 'Loop Len:', a list of {lists.get(P_LOOPLEN)} (stock's own strings), saved as "
       "'cliplooplen'", len(ll_reg) == 1 and ll_reg[0][2] == "Loop Len:" and ll_reg[0][5] == "cliplooplen"
       and {ll_reg[0][1]} == list_type and lists.get(P_LOOPLEN) == LL_NAMES and regs.index(ll_reg[0]) > regs.index(ours[0]),
       (ll_reg, lists.get(P_LOOPLEN)))
 fit_reg = [r for r in regs if r[0] == P_FIT]
-check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)} (stock's own strings but the two Autos, "
+check(f"... and 0x153 once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)} (stock's own strings but the two Autos, "
       "'3 beats' and '6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
       and {fit_reg[0][1]} == list_type and lists.get(P_FIT) == FIT_NAMES and regs.index(fit_reg[0]) > regs.index(ll_reg[0]),
       (fit_reg, lists.get(P_FIT)))
 tlk_reg = [r for r in regs if r[0] == P_TLKNOB]
-check(f"... and 0x1cc once, after Fit: 'TL Knob:', a list of {lists.get(P_TLKNOB)}, saved as 'cliptlknob'",
+check(f"... and 0x154 once, after Fit: 'TL Knob:', a list of {lists.get(P_TLKNOB)}, saved as 'cliptlknob'",
       len(tlk_reg) == 1 and tlk_reg[0][2] == "TL Knob:" and tlk_reg[0][5] == "cliptlknob" and {tlk_reg[0][1]} == list_type
       and lists.get(P_TLKNOB) == ["Loop Start", "Move"] and regs.index(tlk_reg[0]) > regs.index(fit_reg[0]),
       (tlk_reg, lists.get(P_TLKNOB)))
 check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
       and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9 and tlk_reg and len(tlk_reg[0][2]) <= 9)
-check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8 .. 0x1cc there",
-      not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF]
-      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB],
-      [hex(r[0]) for r in regs if 0x1C8 <= r[0] <= 0x1CF])
+check("stock registers nothing in 0x14e .. 0x15b; the patched image only 0x150 .. 0x154 there",
+      not [r for r in stock_regs if 0x14E <= r[0] <= 0x15B]
+      and sorted(r[0] for r in regs if 0x14E <= r[0] <= 0x15B) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB],
+      [hex(r[0]) for r in regs if 0x14E <= r[0] <= 0x15B])
 xmls = [r[5] for r in regs if r[5]]
 dups = sorted({x for x in xmls if xmls.count(x) > 1})
 stock_xmls = [r[5] for r in stock_regs if r[5]]
@@ -1857,7 +1857,7 @@ e.w32(KN + 0x14, P_SLIP)
 e.call(0x080B04C8, KN)
 texts.clear()
 e.call(0x080B0790, KN, 1240)
-check("a reset knob that kept the stale id 0x1c9 (type 0) prints what stock prints there: ''", vtext() == [""], vtext())
+check("a reset knob that kept the stale id 0x151 (type 0) prints what stock prints there: ''", vtext() == [""], vtext())
 fresh()
 e.call(0x080A7EE0, P_SLIP, 1240, KN)
 e.uc.mem_write(KN + 0x2D8, b"\x01")
@@ -2008,7 +2008,7 @@ for path in ("list", "turn"):
           f"it does not ({snaps[2]} from +25)", snaps[:2] == [top_run(LOG_MEDIAN[TOP], 3, 25), top_run(-LOG_MEDIAN[TOP], 3, -25)]
           and all(x % GRID == 0 for x in snaps[:2]) and snaps[2] % GRID and snaps[2] > 25, snaps)
     v, _, _ = turn(path, 12, events=80)
-    check("  fast up stops at +3840; the text follows, and the app is sent 0x1c9 = the value",
+    check("  fast up stops at +3840; the text follows, and the app is sent 0x151 = the value",
           v == 3840 and vtext()[-1:] == ["+4.000"] and posts and posts[-1] == (0x3D, 3840, P_SLIP), (v, vtext()[-1:], posts[-1:]))
     v, _, _ = turn(path, 12, events=80, sign=-1)
     check("  fast down stops at -3840 too", v == -3840 and vtext()[-1:] == ["-4.000"], (v, vtext()[-1:]))
@@ -4469,7 +4469,7 @@ sc.m.uc.mem_write(WV + 0x32, b"\x00")
 sc.stored()
 check(f"a refresh that changes nothing leaves the waveform clean (dirty {sc.wave()['dirty']})", sc.wave()["dirty"] == 0)
 own, fwd = sc.turn(3, -800, t=20_300)
-check(f"BR Loop Len two list steps down: 1/16 (index 1), sent as a list change (0x3c) and forwarded as 0x6e 0x1ca "
+check(f"BR Loop Len two list steps down: 1/16 (index 1), sent as a list change (0x3c) and forwarded as 0x6e 0x152 "
       f"({own}, {fwd}); text {sc.text('BR')}", own == [(0x3C, 1, P_LOOPLEN)] and fwd == [(0x6E, P_LOOPLEN, 1)]
       and sc.text("BR") == "1/16" and sc.shown("BR") == 1, (own, fwd, sc.text("BR")))
 
@@ -4766,7 +4766,7 @@ check(f"no bank 2: the Waveform's Slip knob (BL) is stock's - its text ({nb2.tex
       f"(their posts and forwards, the value {runs[0][4]}) and every other knob, text and bind as with the knob's two hooks "
       f"taken out; the four rows bound ({[hex(runs[0][0][n]['id']) for n in KN12]})",
       runs[0] == runs[1] and nb2.text("BL") is not None and "." not in nb2.text("BL")
-      and [runs[0][0][n]["id"] for n in KN12] == [0x91, 0x1C9, 0x92, 0x1CA],
+      and [runs[0][0][n]["id"] for n in KN12] == [0x91, 0x151, 0x92, 0x152],
       {i: (runs[0][i], runs[1][i]) for i in range(5) if runs[0][i] != runs[1][i]})
 check(f"  ...no bracket where Region Auto plays [24 000, 72 000) with bank 2 (shown without it {w_nb['on']}, with it "
       f"{w_ref['on']}), and no bank-2 function entered ({len(nb2.b2_entered)})",
@@ -5341,7 +5341,7 @@ check("  ...a load with no Sync set inside it sends nothing: the pad plays on th
 
 
 # ====================================================================================================== 12e. Region Move
-# TL Knob: Move (0x1cc, hub blackbox#t-042, notes/re/x5): on a Clip pad's Waveform TL still sets Loop Start, ranged 0 ..
+# TL Knob: Move (0x154, hub blackbox#t-042, notes/re/x5): on a Clip pad's Waveform TL still sets Loop Start, ranged 0 ..
 # file - (Loop End - Loop Start), and Loop End follows it by the same amount. The view's forward (slice_forward ->
 # clipwin_move) posts the pair itself, the edge ahead first (SetCellParam clamps neither, x5 (a)); the app stores each
 # and posts its own 0x66 (done here one refresh per post, as the app does it); the view ends on Loop Start (x5 (b)).

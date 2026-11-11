@@ -917,7 +917,7 @@ __asm__(".global mbox_knob_scan, mbox_app_msg, mbox_param_min, mbox_param_max, m
 
 /* Pad Mode, Loop Mode, Quant Size, Loop Start, Loop End, Launch Mode, Sync, Beat Count, Loop Fade, Region, Slip, Loop
    Len, Fit */
-static const uint16_t MBOX_IDS[] = {0x8b, 0x8d, 0x47, 0x91, 0x92, 0x93, 0x94, 0xd2, 0xfa, 0x1c8, 0x1c9, 0x1ca, 0x1cb};
+static const uint16_t MBOX_IDS[] = {0x8b, 0x8d, 0x47, 0x91, 0x92, 0x93, 0x94, 0xd2, 0xfa, 0x150, 0x151, 0x152, 0x153};
 
 /* Replaces bl FUN_08040724 @0x080a2cd6 (dev builds only: patches/cpu.py), the app pass's knob scan */
 void usbdev_mailbox_scan(void *hw)

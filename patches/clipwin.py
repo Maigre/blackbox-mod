@@ -55,6 +55,6 @@ PATCHES = [
     # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8, and
     # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9,
     # TL Knob (the Waveform's TL in Clip mode: Loop Start or Move) in slot 10
-    (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
-    (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
+    (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
+    (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
 ]

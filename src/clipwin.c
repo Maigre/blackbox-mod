@@ -164,11 +164,11 @@ typedef void (*pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *c
 #define fw_stepper_add  ((stepper_fn)FN(0x080b0b74))
 #define GUI_MS          (*(volatile uint32_t *)0x2402eee0u)
 
-#define P_REGION    0x1c8            /* ours: 0x1c8..0x1cf are unused by stock (notes/re/a0) */
-#define P_SLIP      0x1c9
-#define P_LOOPLEN   0x1ca            /* Off, then 1/16 << (value - 1) */
-#define P_FIT       0x1cb            /* Off, Auto (Bars), Auto (Beats), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats) */
-#define P_TLKNOB    0x1cc            /* the Waveform's TL knob in Clip mode: Loop Start, Move (clipwin_move) */
+#define P_REGION    0x150            /* ours: 0x14e..0x15b, no stock registration (0x13c..0x17b); 0x1c8..0x1cf are TapeScam's since JOEBOX 2 */
+#define P_SLIP      0x151
+#define P_LOOPLEN   0x152            /* Off, then 1/16 << (value - 1) */
+#define P_FIT       0x153            /* Off, Auto (Bars), Auto (Beats), then 1/4 .. 8 bars (clipwin_b2.c's fit_beats) */
+#define P_TLKNOB    0x154            /* the Waveform's TL knob in Clip mode: Loop Start, Move (clipwin_move) */
 #define TLKNOB_MOVE 1
 #define CLOCK_CTX   0x128e0          /* the modules' context, from the engine (= the clock, notes/re/a4) */
 #define P_LOOP_START 0x91            /* stock's Sample-mode loop: Loop Start, Loop End, frames */
@@ -219,7 +219,7 @@ void clipwin_register(void *table)
 
 void clipwin_defaults(void *store)
 {
-    for (int p = P_REGION; p <= P_TLKNOB; p++)   /* Region, Slip, Loop Len, Fit, TL Knob (0x1c8 .. 0x1cc), in order */
+    for (int p = P_REGION; p <= P_TLKNOB; p++)   /* Region, Slip, Loop Len, Fit, TL Knob (0x150 .. 0x154), in order */
         fw_store_add(store, p, 0);   /* stock only overwrites ids already in a store: without these nothing saves */
 }
 

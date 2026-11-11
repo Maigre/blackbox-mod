@@ -149,7 +149,7 @@ def cw_bank():
 MBOX_MAGIC = 0x3158424D          # "MBX1"
 MBOX_ROWS = {"padmode": 0x8B, "loopmode": 0x8D, "quant": 0x47, "lps": 0x91, "loopstart": 0x91, "lpe": 0x92,
              "loopend": 0x92, "launch": 0x93, "sync": 0x94, "beats": 0xD2, "beatcount": 0xD2, "fade": 0xFA,
-             "loopfade": 0xFA, "region": 0x1C8, "slip": 0x1C9, "looplen": 0x1CA, "fit": 0x1CB}
+             "loopfade": 0xFA, "region": 0x150, "slip": 0x151, "looplen": 0x152, "fit": 0x153}
 MBOX_RESULT = {0: "done", -1: "unknown op", -2: "not a pad", -3: "not a row the mailbox sets", -4: "out of range"}
 PARAM_TABLE = 0x2401F4FC         # the parameter table's pointer: 0x1c bytes an id (type, label, names, count, min, max)
 
@@ -195,7 +195,7 @@ def show(pid, v):
     label, typ, lst, lo, hi = param(pid)
     if lst and 0 <= v < len(lst):
         return f"{label} {lst[v]} ({v})"
-    if pid == 0x1C9:
+    if pid == 0x151:
         return f"{label} {'-' if v < 0 else '+'}{abs(v) // 960}.{abs(v) % 960:03d} ({v} ticks)"
     return f"{label} {v}"
 
@@ -411,7 +411,7 @@ def main(argv):
             names = [n.lower() for n in lst] if lst else []
             if text.lower() in names:
                 v = names.index(text.lower())
-            elif pid == 0x1C9 and "." in text:               # Slip as beats.ticks: "-0.645" = 645 ticks behind
+            elif pid == 0x151 and "." in text:               # Slip as beats.ticks: "-0.645" = 645 ticks behind
                 b_, t_ = text.lstrip("+-").split(".")
                 v = (int(b_) * 960 + int(t_)) * (-1 if text.startswith("-") else 1)
             else:

@@ -71,8 +71,8 @@ check("pad defaults: stock's last entry, then LFO 2 = Sine, 1 bar, Free; LFO 3 =
 check("...then the pad's insert: Off, Pebble, Electra, the six shared knobs, the Gate's five, Input Off, and Region Auto, "
       "Slip 0, Loop Len Off, Fit Off, TL Knob Loop Start (clipwin.c)",
       added[9:] == [(0x1B6, 0), (0x1B7, 0), (0x1B8, 0), (0x1B9, 330), (0x1BA, 750), (0x1BB, 500), (0x1BC, 350), (0x1BD, 250), (0x1BE, 500),
-                    (0x1C2, 800), (0x1C3, 0), (0x1C4, 0), (0x1C5, 200), (0x1C6, 0), (0x1C7, 0), (0x1C8, 0), (0x1C9, 0), (0x1CA, 0),
-                    (0x1CB, 0), (0x1CC, 0)], added[9:])
+                    (0x1C2, 800), (0x1C3, 0), (0x1C4, 0), (0x1C5, 200), (0x1C6, 0), (0x1C7, 0), (0x150, 0), (0x151, 0), (0x152, 0),
+                    (0x153, 0), (0x154, 0)], added[9:])
 check("a pad's settings store holds 96 entries (stock 64, of which 59 used; ours make 87): both places that size one",
       img[0x08093F26 - BASE:0x08093F28 - BASE] == bytes.fromhex("6021") and img[0x080949F0 - BASE:0x080949F2 - BASE] == bytes.fromhex("6021"))
 check("page 3 of the Sample and Multisample pad pages lists the eight knobs",

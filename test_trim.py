@@ -90,7 +90,7 @@ def get(k, row=ROW, col=COL):
 
 def clip(mode=1, region=0, ls=24000, le=72000, fade=100):
     # Pad Mode, 0x8F, Length, Loop Start, Loop End, Loop Fade, Region (0 Auto, 1 File, 2 Loop), Slip, Loop Len, Fit
-    return {0x8B: mode, 0x8F: 0, 0x90: LEN, 0x91: ls, 0x92: le, 0xFA: fade, 0x1C8: region, 0x1C9: 7, 0x1CA: 0, 0x1CB: 1}
+    return {0x8B: mode, 0x8F: 0, 0x90: LEN, 0x91: ls, 0x92: le, 0xFA: fade, 0x150: region, 0x151: 7, 0x152: 0, 0x153: 1}
 
 
 got = {}
@@ -207,7 +207,7 @@ for label, vals, fresh, ls in [("a Clip pad, Loop Fade 100: fresh byte 0, Loop S
     reset()
     pad(vals)
     e.call("trim_reload", APP, PATH, CELL, 0)
-    kept = all(get(k) == vals[k] for k in (0x8B, 0x92, 0xFA, 0x1C8, 0x1C9, 0x1CA, 0x1CB))
+    kept = all(get(k) == vals[k] for k in (0x8B, 0x92, 0xFA, 0x150, 0x151, 0x152, 0x153))
     check(label, e.r8(fresh_of(ROW, COL)) == fresh and get(0x91) == ls and kept,
           (e.r8(fresh_of(ROW, COL)), get(0x91), {hex(k): get(k) for k in vals}))
     check(f"  {label.split(':')[0]}: stock's reload gets the same arguments", got.get("reload") == (APP, PATH, CELL, 0),

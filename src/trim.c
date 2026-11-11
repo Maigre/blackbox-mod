@@ -59,7 +59,7 @@ typedef int (*strncmp_fn)(const char *a, const char *b, unsigned n);
 #define P_LOOP_END      0x92
 #define P_LOOP_FADE     0xfa
 #define LOOP_FADE_MAX   1000
-#define P_REGION        0x1c8
+#define P_REGION        0x150
 #define REGION_FILE     1
 
 int32_t clipwin_flen(unsigned q);   /* clipwin.c: the engine's length of pad q's file, 0 when it has none */
