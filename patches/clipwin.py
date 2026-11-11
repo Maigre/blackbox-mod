@@ -58,3 +58,8 @@ PATCHES = [
     (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
     (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
 ]
+
+# Call sites JOEBOX 2's Clip selection (slice.py: sel_len_b, sel_zoom, sel_bind_bpm, sel_wave) hooks too. On a Clip
+# pad the Waveform screen and its four knobs are the Clip Window's; with no selection set, the selection is stock to
+# the bit (clipsel.c), so its setup trampoline and the rest of slice.py stay. patch.py skips slice.py's entry here.
+TAKES = (0x08064B2C, 0x08064C5A, 0x080A53B0, 0x080A582A, 0x080A5B0E)

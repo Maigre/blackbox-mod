@@ -4,6 +4,8 @@
 
 Each patchset in patches/ is a module defining PATCHES = [(addr, old_bytes, new_bytes), ...].
 Every patch verifies the stock bytes before writing, so a patch built for the wrong firmware fails loudly.
+A module may also define TAKES = (addr, ...): call sites another module patches too (a BL takes one target).
+At those addresses only the module that takes them writes; the other's entry is skipped and printed.
 """
 import hashlib
 import importlib
@@ -20,8 +22,13 @@ assert hashlib.sha256(data).hexdigest() == STOCK_SHA256, "stock firmware hash mi
 
 sys.path.insert(0, os.path.join(ROOT, "patches"))
 names = sys.argv[1:]
-for name in names:
-    for addr, old, new in importlib.import_module(name).PATCHES:
+mods = [(name, importlib.import_module(name)) for name in names]
+taken = {addr: name for name, mod in mods for addr in getattr(mod, "TAKES", ())}
+for name, mod in mods:
+    for addr, old, new in mod.PATCHES:
+        if taken.get(addr, name) != name:
+            print(f"{name}: {addr:#010x} left to {taken[addr]}")
+            continue
         o = addr - BASE
         if o == len(data):
             assert old == b"", f"{name}: append at {addr:#x} must have empty old bytes"
