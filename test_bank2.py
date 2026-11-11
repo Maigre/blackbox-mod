@@ -75,7 +75,7 @@ md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
 mapsyms = sorted((int(p[0], 16), p[-1]) for p in (l.split() for l in subprocess.run(
     ["arm-none-eabi-nm", "-n", "--special-syms", "out/cave.elf"], capture_output=True, text=True, check=True).stdout.splitlines())
     if len(p) >= 3 and p[-1] in ("$t", "$d") and B2 <= int(p[0], 16) < B2 + len(deployed))
-mid, swept, code_bytes = set(), 0, 0
+mid, swept, code_bytes, decoded = set(), 0, 0, set()
 for i, (a, kind) in enumerate(mapsyms):
     if kind != "$t":
         continue
@@ -83,6 +83,7 @@ for i, (a, kind) in enumerate(mapsyms):
     code_bytes += end - a
     for ins in md.disasm(deployed[a - B2:end - B2], a):
         swept += ins.size
+        decoded.update(range(ins.address, ins.address + ins.size))
         if ins.size == 4:
             mid.add(ins.address + 2)
 check(f"the mapping symbols mark bank 2's code, and the sweep decodes all of it ({swept} of {code_bytes} bytes)",
@@ -162,8 +163,20 @@ check("...one planted on the cave's first byte is still a cave call, and one int
       (lines[CAVE_LO][0], lines[STOCK_LO - 0x100][1]))
 check("the reverb is in bank 2 beside its two callers", B2 <= funcs_all.get("rev4_step", 0) < B2 + len(deployed), hex(funcs_all.get("rev4_step", 0)))
 check("the old pinned jump is gone from the cave", "rev4_step_impl" not in funcs_all and funcs.get(OLD_PIN) != "rev4_step", funcs.get(OLD_PIN))
-lits = [struct.unpack_from("<I", deployed, o)[0] for o in range(16, len(deployed) - 3, 4)]
-check("bank 2 holds no data pointers into the cave", not [v for v in lits if CAVE_LO <= (v & ~1) < CAVE_HI])
+# A word the sweep decoded as instructions is code, not a pointer: `and.w r8, r3, #15` is f003 080f, the word 0x080ff003,
+# which the cave's range takes (cw_poll, stage 3). Literal pools ($d), and anything the sweep did not decode, are still read.
+def cave_words(payload):
+    return {hex(B2 + o): hex(v) for o in range(16, len(payload) - 3, 4)
+            for v in [struct.unpack_from("<I", payload, o)[0]]
+            if CAVE_LO <= (v & ~1) < CAVE_HI and not all(B2 + o + i in decoded for i in range(4))}
+
+
+check("bank 2 holds no data pointers into the cave", not cave_words(deployed), cave_words(deployed))
+pool = next(a for a, kind in mapsyms if kind == "$d" and a % 4 == 0 and B2 + 16 <= a and a + 4 <= B2 + len(deployed))
+planted = bytearray(deployed)
+planted[pool - B2:pool - B2 + 4] = struct.pack("<I", CAVE_LO + 0x101)
+check(f"...and one planted in a literal pool ({pool:#010x}) is still found", cave_words(bytes(planted)) == {hex(pool): hex(CAVE_LO + 0x101)},
+      cave_words(bytes(planted)))
 
 # --- 2b. AND THE OTHER WAY ROUND: the firmware only ever reaches the cave. A patched call site or vtable entry that
 # pointed into bank 2 would run whatever is up there before anything had checked it - a missing or stale payload

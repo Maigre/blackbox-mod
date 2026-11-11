@@ -177,6 +177,8 @@ void cw_fade(float *l, float *r, int count, int32_t i0, int32_t fade);
 int cw_tick(struct cw_bank *b, unsigned q, int32_t slip, unsigned ll, uint32_t sync, const void *engine, uint32_t *msg);
 unsigned cw_drop(const struct cw_bank *b, unsigned q, uint8_t *pad);
 void cw_retire(uint8_t *pad, int32_t len);
+/* the whole poll, from bank 1's clipwin_tick behind its gate (stage 3: bank 2 may call stock) */
+void cw_poll(struct cw_bank *b, uint8_t *engine);
 /* Loop Len's take (from cw_tick) and its window (from cw_latch) */
 int cw_looplen(struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned ll, uint32_t sync, uint32_t *msg);
 int32_t cw_window(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, int32_t clip);

@@ -334,59 +334,8 @@ void clipwin_slice_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
 void clipwin_tick(uint8_t *engine)
 {
     struct cw_bank *b = bank();
-    if (!b)
-        return;
-    unsigned q = b->scan++ & 15;
-    const void *store = pad_store(q);
-    int32_t slip = fw_setting(store, P_SLIP);
-    unsigned ll = (unsigned)fw_setting(store, P_LOOPLEN);
-    uint32_t msg[6];
-    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
-    uint8_t *pad = b->pad[q];
-    if (r & 8)                           /* Fit: a fitted pad made at another tempo */
-        fw_recompute(pad, engine);
-    if (r & 4) {                         /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
-        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
-        cw_retire(pad, len);
-        /* F-p: a Sync or Quant set while the slot was closed re-gridded the playing segments onto a step of the
-           closed slot's 2^28-frame clip (+0x200 keeps the frames per step it re-gridded from), and the recompute at
-           the open re-grids nothing, so the pad sounds no segment for millions of samples. Its own Sync, sent again,
-           re-grids them from the open file (the class-B param-set has no same-value check, notes/re/a2). Only a
-           step of the closed slot (SRC_BAD / n, to a frame a step) longer than the whole file: a shorter take
-           under a pad synced the ordinary way (+0x200 the old file's step) stays stock's. The param-set stores the
-           new step, so it is sent once. Never while a launch waits for its Quant point: any Sync message sounds it
-           at once (droplaunch). */
-        float was = *(const float *)(pad + PAD_FPS_WAS);
-        uint32_t w = was > (float)len && was <= (float)SRC_BAD ? (uint32_t)(was + 0.5f) : 0;
-        uint32_t n = w ? (SRC_BAD + w / 2) / w : 0;
-        if (engine && !(r & 2) && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] && n &&
-            n * w + n >= SRC_BAD && n * w <= SRC_BAD + n) {
-            int wait = 0;
-            for (unsigned k = 0; k < 4; k++) {
-                const uint8_t *seg = pad + SEG0 + k * SEG_SIZE;
-                wait |= seg[0] && !seg[1] && seg[SEG_FIRST];
-            }
-            if (!wait) {
-                msg[0] = 0x39;
-                msg[1] = 0;
-                msg[2] = *(const uint32_t *)(pad + PAD_ID);
-                msg[3] = P_SYNC;
-                msg[4] = (uint32_t)fw_setting(store, P_SYNC);
-                msg[5] = 0;
-                r |= 2;
-            }
-        }
-    }
-    if (r & 2)
-        fw_pad_param(pad, engine, msg, engine + CLOCK_CTX);
-    if (!(r & 1))
-        return;
-    unsigned again = cw_drop(b, q, pad);
-    for (unsigned k = 0; k < 4; k++)
-        if (again & (1u << k)) {
-            void *src = *(void **)(pad + PAD_SOURCE);
-            fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
-        }
+    if (b)
+        cw_poll(b, engine);              /* clipwin_b2.c: the body (stage 3), stock's calls made from bank 2 */
 }
 
 /* H2: in place of filter.c's clip_read, with its arguments (the stock reader FUN_080662e4's). */
