@@ -250,11 +250,6 @@ static __attribute__((noinline)) struct cw_bank *pad_bank(const uint8_t *pad, in
     return b && (*q = cw_pad(pad)) >= 0 ? b : 0;
 }
 
-static const void *pad_store(unsigned q)
-{
-    return (const void *)(APP_PADS + (q + (q >> 2)) * 0x30u);   /* row * 0xf0 + col * 0x30 */
-}
-
 /* H3. Replaces bl FUN_080636f0 (fw_src_len, r0 = the source; r4 = the pad, clipwin_thunk.S) at 0x08064b2c (site 1: the
    recompute's first, Beat Count Auto and the frames per step), 0x08064c5a (site 3: its second, the file tempo, right
    after it stored the step fields; clip = r9 there, the clip in output samples), 0x0806561e (site 0: FUN_08065550's
@@ -264,18 +259,12 @@ static const void *pad_store(unsigned q)
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
    0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
    and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
-static const uint16_t region_rows[CW_SET_ROWS] = {P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE};  /* CW_SET */
-
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
-    int32_t len = fw_src_len(src), set[CW_SET_ROWS];
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (!b)
-        return len;
-    for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
-        set[i] = fw_setting(pad_store((unsigned)q), region_rows[i]);
-    return cw_len(b, (unsigned)q, pad, site, clip, len, set);
+    return b ? cw_lenhook(b, (unsigned)q, src, pad, site, clip)   /* clipwin_b2.c: the body (stage 3) */
+             : fw_src_len(src);
 }
 
 /* H3'. Replaces bl FUN_08064a94 (the recompute, r0 = pad, r1 = the clock) at 0x08066fac (the synced wrap; t = the
@@ -290,16 +279,9 @@ void clipwin_wrap(uint8_t *pad, void *clock, const uint32_t *t)
 {
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (!b) {
-        fw_recompute(pad, clock);
-        return;
-    }
-    int32_t was[4] = {b->region[q].rs, b->region[q].vlen, *(const int32_t *)(pad + PAD_WRAP_GRID),
-                      *(const int32_t *)(pad + PAD_TPS) * *(const int32_t *)(pad + PAD_STEPS)};   /* CW_WAS_* */
-    b->wrap = (uint8_t)(q + 1);
-    fw_recompute(pad, clock);
-    b->wrap = 0;
-    if (cw_hold(b, (unsigned)q, pad, t, was))
+    if (b)
+        cw_wrap(b, (unsigned)q, pad, clock, t);   /* clipwin_b2.c: the body (stage 3) */
+    else
         fw_recompute(pad, clock);
 }
 
@@ -311,7 +293,7 @@ void clipwin_seg_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     if (b)
-        pos = cw_latch(b, (unsigned)q, k, pad, fw_src_len(src), pos);
+        pos = cw_segstart(b, (unsigned)q, k, pad, src, pos);   /* clipwin_b2.c: the body (stage 3) */
     fw_prefetch(src, pos);
 }
 
@@ -334,59 +316,8 @@ void clipwin_slice_start(void *src, int32_t pos, unsigned k, uint8_t *pad)
 void clipwin_tick(uint8_t *engine)
 {
     struct cw_bank *b = bank();
-    if (!b)
-        return;
-    unsigned q = b->scan++ & 15;
-    const void *store = pad_store(q);
-    int32_t slip = fw_setting(store, P_SLIP);
-    unsigned ll = (unsigned)fw_setting(store, P_LOOPLEN);
-    uint32_t msg[6];
-    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
-    uint8_t *pad = b->pad[q];
-    if (r & 8)                           /* Fit: a fitted pad made at another tempo */
-        fw_recompute(pad, engine);
-    if (r & 4) {                         /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
-        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
-        cw_retire(pad, len);
-        /* F-p: a Sync or Quant set while the slot was closed re-gridded the playing segments onto a step of the
-           closed slot's 2^28-frame clip (+0x200 keeps the frames per step it re-gridded from), and the recompute at
-           the open re-grids nothing, so the pad sounds no segment for millions of samples. Its own Sync, sent again,
-           re-grids them from the open file (the class-B param-set has no same-value check, notes/re/a2). Only a
-           step of the closed slot (SRC_BAD / n, to a frame a step) longer than the whole file: a shorter take
-           under a pad synced the ordinary way (+0x200 the old file's step) stays stock's. The param-set stores the
-           new step, so it is sent once. Never while a launch waits for its Quant point: any Sync message sounds it
-           at once (droplaunch). */
-        float was = *(const float *)(pad + PAD_FPS_WAS);
-        uint32_t w = was > (float)len && was <= (float)SRC_BAD ? (uint32_t)(was + 0.5f) : 0;
-        uint32_t n = w ? (SRC_BAD + w / 2) / w : 0;
-        if (engine && !(r & 2) && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] && n &&
-            n * w + n >= SRC_BAD && n * w <= SRC_BAD + n) {
-            int wait = 0;
-            for (unsigned k = 0; k < 4; k++) {
-                const uint8_t *seg = pad + SEG0 + k * SEG_SIZE;
-                wait |= seg[0] && !seg[1] && seg[SEG_FIRST];
-            }
-            if (!wait) {
-                msg[0] = 0x39;
-                msg[1] = 0;
-                msg[2] = *(const uint32_t *)(pad + PAD_ID);
-                msg[3] = P_SYNC;
-                msg[4] = (uint32_t)fw_setting(store, P_SYNC);
-                msg[5] = 0;
-                r |= 2;
-            }
-        }
-    }
-    if (r & 2)
-        fw_pad_param(pad, engine, msg, engine + CLOCK_CTX);
-    if (!(r & 1))
-        return;
-    unsigned again = cw_drop(b, q, pad);
-    for (unsigned k = 0; k < 4; k++)
-        if (again & (1u << k)) {
-            void *src = *(void **)(pad + PAD_SOURCE);
-            fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
-        }
+    if (b)
+        cw_poll(b, engine);              /* clipwin_b2.c: the body (stage 3), stock's calls made from bank 2 */
 }
 
 /* H2: in place of filter.c's clip_read, with its arguments (the stock reader FUN_080662e4's). */
@@ -475,17 +406,10 @@ void clipwin_format(uint8_t *knob)
 {
     unsigned type = knob[KNOB_TYPE];
     if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_FROZEN] || (type != TYPE_INT && type != 9) ||
-        !b2_live()) {
+        !b2_live())
         fw_format(knob);                 /* a reset knob keeps a stale id with type 0: the type test matters */
-        return;
-    }
-    uint8_t *st = knob + KNOB_STEP0;
-    int v = type == TYPE_INT ? *(int32_t *)(st + STEPPER_INDEX) + *(int32_t *)(st + STEPPER_START)
-                             : fw_list_value(knob, *(int32_t *)(knob + KNOB_VALUE));
-    char text[16];
-    cw_text(text, v);
-    fw_set_text(knob + KNOB_TEXT, text);
-    fw_knob_redraw(knob);
+    else
+        cw_format(knob, type);           /* clipwin_b2.c: the body (stage 3) */
 }
 
 /* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde), which every screen's turn of a
@@ -496,16 +420,10 @@ void clipwin_format(uint8_t *knob)
 void clipwin_turn(uint8_t *stepper, int counts)
 {
     uint8_t *knob = stepper - KNOB_STEP0;
-    if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_TYPE] != TYPE_INT || !counts || !b2_live()) {
+    if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_TYPE] != TYPE_INT || !counts || !b2_live())
         fw_stepper_add(stepper, counts);
-        return;
-    }
-    struct cw_bank *b = bank();
-    uint32_t now = GUI_MS;
-    int32_t add;
-    fw_ring_push(knob + KNOB_RING, counts, now);
-    if (cw_turn(b, stepper, counts, fw_ring_speed(knob + KNOB_RING), now, &add))
-        fw_stepper_add(stepper, add);
+    else
+        cw_slipturn(bank(), stepper, counts);   /* clipwin_b2.c: the body (stage 3) */
 }
 
 /* ---- the Waveform screen in Clip mode (notes/re/a3, README section 3) ---- */
@@ -761,8 +679,6 @@ void clipwin_line(uint8_t *wave, int32_t anchor)
    Len's window, so on a region from 6 072 the line ran 6 072 frames behind the audio and wrapped before Loop End
    (Gate 3b). The line shows the frame heard instead (cw_playhead), its per mille as stock reckons it. The render keeps
    stock's position for itself (pad + 0x248), to post only a change; without bank 2 the message is stock's. */
-#define MSG_POS     0x10
-#define MSG_MILLE   0x14
 typedef void (*post_fn)(void *ui, void *msg);
 #define fw_post     ((post_fn)FN(0x0804f504))
 
@@ -770,14 +686,8 @@ void clipwin_playhead(void *ui, uint8_t *msg, uint8_t *pad, unsigned k)
 {
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (b) {
-        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
-        int32_t real = cw_playhead(b, (unsigned)q, pad, k, *(int32_t *)(msg + MSG_POS), len);
-        if (real >= 0) {
-            *(int32_t *)(msg + MSG_POS) = real;
-            *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
-        }
-    }
+    if (b)
+        cw_playmsg(b, (unsigned)q, pad, k, msg);   /* clipwin_b2.c: the body (stage 3) */
     fw_post(ui, msg);
 }
 

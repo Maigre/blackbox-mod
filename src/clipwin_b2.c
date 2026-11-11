@@ -768,3 +768,165 @@ int32_t cw_bracket(uint8_t *wave, int mode, int32_t ls, int32_t le, int32_t len,
     wave[WAVE_LOOP_ON] = (uint8_t)show;
     return edge;
 }
+
+/* ---- Clip Window stage 3: the poll's body (clipwin.c's clipwin_tick keeps the gate) ----
+   Stock 3.1.9's text never moves, so bank 2 may call it (test_bank2.py's rule since stage 3); never the cave. */
+#define B2_FN(addr) ((addr) | 1u)
+typedef int (*b2_setting_fn)(const void *store, unsigned param);
+typedef int (*b2_src_int_fn)(void *src);
+typedef void (*b2_prefetch_fn)(void *src, int32_t pos);
+typedef void (*b2_recompute_fn)(uint8_t *pad, void *clock);
+typedef void (*b2_pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void *ctx);
+#define fw_setting      ((b2_setting_fn)B2_FN(0x08093e9c))
+#define fw_src_len      ((b2_src_int_fn)B2_FN(0x080636f0))
+#define fw_prefetch     ((b2_prefetch_fn)B2_FN(0x0806375c))
+#define fw_recompute    ((b2_recompute_fn)B2_FN(0x08064a94))
+#define fw_pad_param    ((b2_pad_param_fn)B2_FN(0x08067648))   /* the class-B param-set: what a 0x39 message does */
+#define B2_APP_PADS     (0x24020088u + 0x1840u)                 /* clipwin.c's APP_PADS: + row * 0xf0 + col * 0x30 */
+#define B2_P_SLIP       0x1c9                                   /* clipwin.c's P_SLIP, P_LOOPLEN, CLOCK_CTX */
+#define B2_P_LOOPLEN    0x1ca
+#define B2_CLOCK_CTX    0x128e0
+
+void cw_poll(struct cw_bank *b, uint8_t *engine)
+{
+    unsigned q = b->scan++ & 15;
+    const void *store = (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u);
+    int32_t slip = fw_setting(store, B2_P_SLIP);
+    unsigned ll = (unsigned)fw_setting(store, B2_P_LOOPLEN);
+    uint32_t msg[6];
+    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
+    uint8_t *pad = b->pad[q];
+    if (r & 8)                           /* Fit: a fitted pad made at another tempo */
+        fw_recompute(pad, engine);
+    if (r & 4) {                         /* a segment its file no longer reaches (cw_retire, Gate 3 finding 9) */
+        int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE));
+        cw_retire(pad, len);
+        /* F-p: a Sync or Quant set while the slot was closed re-gridded the playing segments onto a step of the
+           closed slot's 2^28-frame clip (+0x200 keeps the frames per step it re-gridded from), and the recompute at
+           the open re-grids nothing, so the pad sounds no segment for millions of samples. Its own Sync, sent again,
+           re-grids them from the open file (the class-B param-set has no same-value check, notes/re/a2). Only a
+           step of the closed slot (SRC_BAD / n, to a frame a step) longer than the whole file: a shorter take
+           under a pad synced the ordinary way (+0x200 the old file's step) stays stock's. The param-set stores the
+           new step, so it is sent once. Never while a launch waits for its Quant point: any Sync message sounds it
+           at once (droplaunch). */
+        float was = *(const float *)(pad + PAD_FPS_WAS);
+        uint32_t w = was > (float)len && was <= (float)SRC_BAD ? (uint32_t)(was + 0.5f) : 0;
+        uint32_t n = w ? (SRC_BAD + w / 2) / w : 0;
+        if (engine && !(r & 2) && len > 0 && len < SRC_BAD && pad[PAD_SYNCED] && n &&
+            n * w + n >= SRC_BAD && n * w <= SRC_BAD + n) {
+            int wait = 0;
+            for (unsigned k = 0; k < 4; k++) {
+                const uint8_t *seg = pad + SEG0 + k * SEG_SIZE;
+                wait |= seg[0] && !seg[1] && seg[SEG_FIRST];
+            }
+            if (!wait) {
+                msg[0] = 0x39;
+                msg[1] = 0;
+                msg[2] = *(const uint32_t *)(pad + PAD_ID);
+                msg[3] = P_SYNC;
+                msg[4] = (uint32_t)fw_setting(store, P_SYNC);
+                msg[5] = 0;
+                r |= 2;
+            }
+        }
+    }
+    if (r & 2)
+        fw_pad_param(pad, engine, msg, engine + B2_CLOCK_CTX);
+    if (!(r & 1))
+        return;
+    unsigned again = cw_drop(b, q, pad);
+    for (unsigned k = 0; k < 4; k++)
+        if (again & (1u << k)) {
+            void *src = *(void **)(pad + PAD_SOURCE);
+            fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
+        }
+}
+
+/* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the store rows the
+   region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE). */
+static const uint16_t region_rows[CW_SET_ROWS] = {0x1c8, 0x91, 0x92, 0x1cb, 0xfa};   /* CW_SET */
+
+int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip)
+{
+    int32_t len = fw_src_len(src), set[CW_SET_ROWS];
+    for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
+        set[i] = fw_setting((const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u), region_rows[i]);
+    return cw_len(b, q, pad, site, clip, len, set);
+}
+
+/* H3': the recompute at a wrap, and cw_hold's second one when it moves the wrap grid off this pass (clipwin.c's
+   clipwin_wrap keeps the gate). */
+void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uint32_t *t)
+{
+    int32_t was[4] = {b->region[q].rs, b->region[q].vlen, *(const int32_t *)(pad + PAD_WRAP_GRID),
+                      *(const int32_t *)(pad + PAD_TPS) * *(const int32_t *)(pad + PAD_STEPS)};   /* CW_WAS_* */
+    b->wrap = (uint8_t)(q + 1);
+    fw_recompute(pad, clock);
+    b->wrap = 0;
+    if (cw_hold(b, q, pad, t, was))
+        fw_recompute(pad, clock);
+}
+
+/* H1: the segment's prefetch point (clipwin.c's clipwin_seg_start keeps the gate and stock's prefetch) */
+int32_t cw_segstart(struct cw_bank *b, unsigned q, unsigned k, uint8_t *pad, void *src, int32_t pos)
+{
+    return cw_latch(b, q, k, pad, fw_src_len(src), pos);
+}
+
+/* H5: the playhead message (msg 0x4a: + 0x10 the position, + 0x14 its per mille of the file) shows the frame heard
+   (cw_playhead), its per mille as stock reckons it; -1 leaves stock's (clipwin.c's clipwin_playhead keeps the gate and
+   stock's post) */
+#define MSG_POS     0x10
+#define MSG_MILLE   0x14
+
+void cw_playmsg(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigned k, uint8_t *msg)
+{
+    int32_t len = fw_src_len(*(void *const *)(pad + PAD_SOURCE));
+    int32_t real = cw_playhead(b, q, pad, k, *(int32_t *)(msg + MSG_POS), len);
+    if (real >= 0) {
+        *(int32_t *)(msg + MSG_POS) = real;
+        *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
+    }
+}
+
+/* The Slip knob (clipwin.c's clipwin_format and clipwin_turn keep the gates and stock's text and stepper): its value
+   text in beats.ticks with its sign (cw_text), and its turn through stock's accelerator ring and cw_turn. */
+typedef void (*b2_knob_fn)(uint8_t *knob);
+typedef int (*b2_knob_value_fn)(uint8_t *knob, int value);
+typedef void (*b2_text_fn)(void *widget, const char *text);
+typedef void (*b2_ring_push_fn)(void *ring, int counts, uint32_t ms);
+typedef unsigned (*b2_ring_speed_fn)(void *ring);
+typedef void (*b2_stepper_fn)(void *stepper, int counts);
+#define fw_knob_redraw  ((b2_knob_fn)B2_FN(0x080b0480))          /* clipwin.c's, as the five below */
+#define fw_list_value   ((b2_knob_value_fn)B2_FN(0x080b0416))
+#define fw_set_text     ((b2_text_fn)B2_FN(0x080c3b98))
+#define fw_ring_push    ((b2_ring_push_fn)B2_FN(0x080b0cc4))
+#define fw_ring_speed   ((b2_ring_speed_fn)B2_FN(0x080b0ce0))
+#define fw_stepper_add  ((b2_stepper_fn)B2_FN(0x080b0b74))
+#define B2_GUI_MS       (*(volatile uint32_t *)0x2402eee0u)       /* clipwin.c's GUI_MS, TYPE_INT and KNOB_* */
+#define B2_TYPE_INT     1
+#define B2_KNOB_VALUE   0x34
+#define B2_KNOB_TEXT    0x9c
+#define B2_KNOB_STEP0   0x270
+#define B2_KNOB_RING    0x294
+
+void cw_format(uint8_t *knob, unsigned type)
+{
+    uint8_t *st = knob + B2_KNOB_STEP0;
+    int v = type == B2_TYPE_INT ? *(int32_t *)(st + STEPPER_INDEX) + *(int32_t *)(st + STEPPER_START)
+                                : fw_list_value(knob, *(int32_t *)(knob + B2_KNOB_VALUE));
+    char text[16];
+    cw_text(text, v);
+    fw_set_text(knob + B2_KNOB_TEXT, text);
+    fw_knob_redraw(knob);
+}
+
+void cw_slipturn(struct cw_bank *b, uint8_t *stepper, int counts)
+{
+    uint8_t *knob = stepper - B2_KNOB_STEP0;
+    uint32_t now = B2_GUI_MS;
+    int32_t add;
+    fw_ring_push(knob + B2_KNOB_RING, counts, now);
+    if (cw_turn(b, stepper, counts, fw_ring_speed(knob + B2_KNOB_RING), now, &add))
+        fw_stepper_add(stepper, add);
+}

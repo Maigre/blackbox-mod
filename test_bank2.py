@@ -26,6 +26,7 @@ from emu import DEPLOYED_BANK2, Emu
 
 IMAGE = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin"
 B2, CAVE_LO, CAVE_HI, OLD_PIN = 0x08100000, 0x080F1E78, 0x08100000, 0x080F8B40
+STOCK_LO = 0x08040000                 # stock 3.1.9's text: from here to the cave (CAVE_LO), never moves
 
 fails = 0
 
@@ -61,6 +62,10 @@ else:
 # The cave is relinked every build and its addresses move; bank 2 is written once and lives through every bank 1
 # install. A branch from one into the other is the crash that hit every build from 3.2.m to 3.2.r. The reverb that
 # Confetti and Prism share used to be the one such call (through a jump pinned at 0x080f8b40); it is in bank 2 now.
+# Clip Window stage 3 (the fork's rule, 2026-11-11): bank 2 MAY call stock 3.1.9's own text (STOCK_LO .. CAVE_LO),
+# which no build relinks, so a hook's body can live up here and its gate and thunk stay in the cave. JOEBOX's half of
+# the invariant is kept whole - nothing in the cave - and anywhere else in the flash (the bootloader, past the payload)
+# is still a fault. Stock is reached through a register (each file's FN(addr)), so most such calls are no branch at all.
 md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
 # The scan reads a branch at every halfword, so it also reads one in the middle of an instruction: the tail of an
 # `lsl.w` (f00c) followed by an `sdiv` / `udiv` (fb9x / fbbx) decodes as a bl. Integer division came to bank 2 with
@@ -70,7 +75,7 @@ md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
 mapsyms = sorted((int(p[0], 16), p[-1]) for p in (l.split() for l in subprocess.run(
     ["arm-none-eabi-nm", "-n", "--special-syms", "out/cave.elf"], capture_output=True, text=True, check=True).stdout.splitlines())
     if len(p) >= 3 and p[-1] in ("$t", "$d") and B2 <= int(p[0], 16) < B2 + len(deployed))
-mid, swept, code_bytes = set(), 0, 0
+mid, swept, code_bytes, decoded = set(), 0, 0, set()
 for i, (a, kind) in enumerate(mapsyms):
     if kind != "$t":
         continue
@@ -78,6 +83,7 @@ for i, (a, kind) in enumerate(mapsyms):
     code_bytes += end - a
     for ins in md.disasm(deployed[a - B2:end - B2], a):
         swept += ins.size
+        decoded.update(range(ins.address, ins.address + ins.size))
         if ins.size == 4:
             mid.add(ins.address + 2)
 check(f"the mapping symbols mark bank 2's code, and the sweep decodes all of it ({swept} of {code_bytes} bytes)",
@@ -85,8 +91,9 @@ check(f"the mapping symbols mark bank 2's code, and the sweep decodes all of it 
 
 
 def scan(payload):
-    """every branch in the payload that lands in the cave, and every one that leaves bank 2 for anywhere else"""
-    leaving, outside, off = {}, {}, 16
+    """every branch in the payload that lands in the cave, every one into stock's text (allowed), and every one that
+    leaves bank 2 for anywhere else"""
+    leaving, outside, stock, off = {}, {}, {}, 16
     while off < len(payload) - 4:
         h1, h2 = struct.unpack_from("<HH", payload, off)
         if (h1 & 0xF800) == 0xF000 and (h2 & 0xD000) in (0xD000, 0x9000, 0xC000) and B2 + off not in mid:
@@ -95,19 +102,21 @@ def scan(payload):
                 tgt = int(ins[0].op_str.lstrip("#"), 16)
                 if CAVE_LO <= tgt < CAVE_HI:
                     leaving.setdefault(tgt, []).append(B2 + off)
+                elif STOCK_LO <= tgt < CAVE_LO:
+                    stock.setdefault(tgt, []).append(B2 + off)
                 elif 0x08000000 <= tgt < 0x08200000 and not B2 <= tgt < B2 + len(payload):
                     outside.setdefault(tgt, []).append(B2 + off)     # anywhere else in the flash (a constant that
                                                                      # happens to decode as a branch points nowhere near it)
                 off += 4
                 continue
         off += 2
-    return leaving, outside
+    return leaving, outside, stock
 
 
-leaving, outside = scan(deployed)
+leaving, outside, into_stock = scan(deployed)
 check("no branch in bank 2 lands in the cave", not leaving, {hex(t): [hex(x) for x in sites] for t, sites in leaving.items()})
-check("...and none leaves bank 2 at all: it is leaf DSP, calling only itself", not outside,
-      {hex(t): [hex(x) for x in sites] for t, sites in outside.items()})
+check(f"...and none leaves bank 2 for anything but stock's text ({sum(map(len, into_stock.values()))} branch(es) into stock)",
+      not outside, {hex(t): [hex(x) for x in sites] for t, sites in outside.items()})
 # ...and the scan still sees a real one: a bl into the cave planted on an instruction of each of clipwin_b2.c's cw_*
 # functions (the Clip Window's maths, all of it in bank 2 since D-018; cw_looplen and cw_window brought the division code
 # the mapping symbols were brought in for), at each one's first instruction and at its first sdiv / udiv if it has one
@@ -138,10 +147,36 @@ for fn in cw_funcs:
           + " is still found", all(caught), (hex(cw), div and hex(div), caught))
 check(f"...{len(divs)} of them planted on a division, cw_looplen and cw_window among them ({', '.join(sorted(divs))})",
       {"cw_looplen", "cw_window"} <= divs, sorted(divs))
+# ...and the stage-3 rule draws its line where it says: at one cw_* function's first instruction, a bl into stock's text
+# (fw_src_len, 0x080636f0) is a call into stock and nothing else, a bl to the cave's first byte is still a cave call, and
+# one into the bootloader (below STOCK_LO) is still a branch out of bank 2
+at = funcs_all[cw_funcs[0]]
+lines = {}
+for tgt in (0x080636F0, CAVE_LO, STOCK_LO - 0x100):
+    planted = bytearray(deployed)
+    planted[at - B2:at - B2 + 4] = bl_bytes(at, tgt)
+    lines[tgt] = scan(bytes(planted))
+check("a bl planted into stock's text is allowed: seen as a call into stock, not as a cave call or a branch out",
+      at in lines[0x080636F0][2].get(0x080636F0, []) and not lines[0x080636F0][0] and not lines[0x080636F0][1], hex(at))
+check("...one planted on the cave's first byte is still a cave call, and one into the bootloader still a branch out",
+      lines[CAVE_LO][0] == {CAVE_LO: [at]} and lines[STOCK_LO - 0x100][1] == {STOCK_LO - 0x100: [at]},
+      (lines[CAVE_LO][0], lines[STOCK_LO - 0x100][1]))
 check("the reverb is in bank 2 beside its two callers", B2 <= funcs_all.get("rev4_step", 0) < B2 + len(deployed), hex(funcs_all.get("rev4_step", 0)))
 check("the old pinned jump is gone from the cave", "rev4_step_impl" not in funcs_all and funcs.get(OLD_PIN) != "rev4_step", funcs.get(OLD_PIN))
-lits = [struct.unpack_from("<I", deployed, o)[0] for o in range(16, len(deployed) - 3, 4)]
-check("bank 2 holds no data pointers into the cave", not [v for v in lits if CAVE_LO <= (v & ~1) < CAVE_HI])
+# A word the sweep decoded as instructions is code, not a pointer: `and.w r8, r3, #15` is f003 080f, the word 0x080ff003,
+# which the cave's range takes (cw_poll, stage 3). Literal pools ($d), and anything the sweep did not decode, are still read.
+def cave_words(payload):
+    return {hex(B2 + o): hex(v) for o in range(16, len(payload) - 3, 4)
+            for v in [struct.unpack_from("<I", payload, o)[0]]
+            if CAVE_LO <= (v & ~1) < CAVE_HI and not all(B2 + o + i in decoded for i in range(4))}
+
+
+check("bank 2 holds no data pointers into the cave", not cave_words(deployed), cave_words(deployed))
+pool = next(a for a, kind in mapsyms if kind == "$d" and a % 4 == 0 and B2 + 16 <= a and a + 4 <= B2 + len(deployed))
+planted = bytearray(deployed)
+planted[pool - B2:pool - B2 + 4] = struct.pack("<I", CAVE_LO + 0x101)
+check(f"...and one planted in a literal pool ({pool:#010x}) is still found", cave_words(bytes(planted)) == {hex(pool): hex(CAVE_LO + 0x101)},
+      cave_words(bytes(planted)))
 
 # --- 2b. AND THE OTHER WAY ROUND: the firmware only ever reaches the cave. A patched call site or vtable entry that
 # pointed into bank 2 would run whatever is up there before anything had checked it - a missing or stale payload
