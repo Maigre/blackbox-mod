@@ -586,6 +586,13 @@ static int32_t clip_len(const uint8_t *view)
     return len;
 }
 
+/* trim.c: the engine's length of pad q's file (flen), 0 when its bank is down or no recompute has measured it */
+int32_t clipwin_flen(unsigned q)
+{
+    struct cw_bank *b = q < 16 ? bank() : 0;
+    return b && b->flen[q] > 0 && b->flen[q] < SRC_BAD ? b->flen[q] : 0;
+}
+
 /* The knobs and the bracket from the view's store; step = frames per pixel for the two position knobs, 0 = as they
    are. The binder leaves a type-0xd knob at the table's range (0 .. 1000) with its value only pending, and one turn
    would post the clamped value (notes/re/a3): the step goes first (the range is counted in steps of it), then the

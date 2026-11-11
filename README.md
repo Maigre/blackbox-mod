@@ -38,6 +38,9 @@ JOEBOX):
   tempo changes.
 - **Loop Fade** on a region — the loop point crossfades as in Sample mode, so a loop whose ends do not meet does not
   click.
+- **Trim on a Clip pad** (in a dev build, not yet proven on the unit) — the File menu's Trim, which stock offers only
+  on a Sample pad, cuts a Clip pad's file to the loop its Region plays, keeping Loop Fade's pre-roll, and keeps every
+  row of the pad. Offered only when no other pad of the preset uses the same file. `notes/features/trim.md`.
 - **The Waveform screen in Clip mode**: the four knobs are Loop Start, Loop End, Slip and Loop Len; the loop bracket
   shows; the playhead line shows the frame you hear. Turning Loop Start or Loop End takes the view to that edge, and
   it follows the playhead again after a pause.
