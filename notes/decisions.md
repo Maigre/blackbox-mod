@@ -46,6 +46,12 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   what either Auto counts. No preset migration, his call: a preset stores the list's index, so one saved with a length
   or with Auto (Beats) before loads one place off: a length as the row before it (1/4 as Auto (Beats), 1 bar as 3
   beats, 8 bars as 4 bars), Auto (Beats) as 8 bars; Off and Auto (Bars) load as they were. He re-saves his. `FIT_BEATS` 10 → 2; the lengths are rows 3 … 10; cw_bank's layout is unchanged.
+- **D-035 (2026-11-07) — Trim on a Clip pad: three stateless hooks, riding with the `filter` set** (hub #t-040, plan
+  #t-031 rev 1). The cave discards `.data`/`.bss`, so nothing carries state between the File menu's enable, the write
+  request and the reload: each hook reads the pad's store itself, and two asm thunks pass the caller's cell and trim
+  flag in as arguments. The patch list rides with `filter`, as Clip Window's does, so the image keeps the name every
+  suite opens (a separate `trim` set renamed it under all 31). Trim is refused while another cell of the preset names
+  the same file — stock's trim reloads those too — compared by the name in each store, as stock's own loop does.
 - **D-032 (2026-10-21) — The Clip Window goes upstream as one PR of five commits** (hub #t-039). Thomas, the night
   Gate 3 closed: « one PR with five-commits ». One branch, `feat/clip-window`, from upstream `main`: slip, region (+
   the Clip-mode Waveform knobs and the playhead), looplen, fit, loopfade, each commit building and passing
