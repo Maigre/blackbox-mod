@@ -406,17 +406,10 @@ void clipwin_format(uint8_t *knob)
 {
     unsigned type = knob[KNOB_TYPE];
     if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_FROZEN] || (type != TYPE_INT && type != 9) ||
-        !b2_live()) {
+        !b2_live())
         fw_format(knob);                 /* a reset knob keeps a stale id with type 0: the type test matters */
-        return;
-    }
-    uint8_t *st = knob + KNOB_STEP0;
-    int v = type == TYPE_INT ? *(int32_t *)(st + STEPPER_INDEX) + *(int32_t *)(st + STEPPER_START)
-                             : fw_list_value(knob, *(int32_t *)(knob + KNOB_VALUE));
-    char text[16];
-    cw_text(text, v);
-    fw_set_text(knob + KNOB_TEXT, text);
-    fw_knob_redraw(knob);
+    else
+        cw_format(knob, type);           /* clipwin_b2.c: the body (stage 3) */
 }
 
 /* Replaces the stepper call of the type-1 turn path (bl FUN_080b0b74 @0x080b0dde), which every screen's turn of a
@@ -427,16 +420,10 @@ void clipwin_format(uint8_t *knob)
 void clipwin_turn(uint8_t *stepper, int counts)
 {
     uint8_t *knob = stepper - KNOB_STEP0;
-    if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_TYPE] != TYPE_INT || !counts || !b2_live()) {
+    if (*(int32_t *)(knob + KNOB_PARAM) != P_SLIP || knob[KNOB_TYPE] != TYPE_INT || !counts || !b2_live())
         fw_stepper_add(stepper, counts);
-        return;
-    }
-    struct cw_bank *b = bank();
-    uint32_t now = GUI_MS;
-    int32_t add;
-    fw_ring_push(knob + KNOB_RING, counts, now);
-    if (cw_turn(b, stepper, counts, fw_ring_speed(knob + KNOB_RING), now, &add))
-        fw_stepper_add(stepper, add);
+    else
+        cw_slipturn(bank(), stepper, counts);   /* clipwin_b2.c: the body (stage 3) */
 }
 
 /* ---- the Waveform screen in Clip mode (notes/re/a3, README section 3) ---- */

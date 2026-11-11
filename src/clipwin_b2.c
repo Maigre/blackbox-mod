@@ -888,3 +888,45 @@ void cw_playmsg(const struct cw_bank *b, unsigned q, const uint8_t *pad, unsigne
         *(uint16_t *)(msg + MSG_MILLE) = (uint16_t)(int32_t)((float)real * 1000.0f / (float)len);
     }
 }
+
+/* The Slip knob (clipwin.c's clipwin_format and clipwin_turn keep the gates and stock's text and stepper): its value
+   text in beats.ticks with its sign (cw_text), and its turn through stock's accelerator ring and cw_turn. */
+typedef void (*b2_knob_fn)(uint8_t *knob);
+typedef int (*b2_knob_value_fn)(uint8_t *knob, int value);
+typedef void (*b2_text_fn)(void *widget, const char *text);
+typedef void (*b2_ring_push_fn)(void *ring, int counts, uint32_t ms);
+typedef unsigned (*b2_ring_speed_fn)(void *ring);
+typedef void (*b2_stepper_fn)(void *stepper, int counts);
+#define fw_knob_redraw  ((b2_knob_fn)B2_FN(0x080b0480))          /* clipwin.c's, as the five below */
+#define fw_list_value   ((b2_knob_value_fn)B2_FN(0x080b0416))
+#define fw_set_text     ((b2_text_fn)B2_FN(0x080c3b98))
+#define fw_ring_push    ((b2_ring_push_fn)B2_FN(0x080b0cc4))
+#define fw_ring_speed   ((b2_ring_speed_fn)B2_FN(0x080b0ce0))
+#define fw_stepper_add  ((b2_stepper_fn)B2_FN(0x080b0b74))
+#define B2_GUI_MS       (*(volatile uint32_t *)0x2402eee0u)       /* clipwin.c's GUI_MS, TYPE_INT and KNOB_* */
+#define B2_TYPE_INT     1
+#define B2_KNOB_VALUE   0x34
+#define B2_KNOB_TEXT    0x9c
+#define B2_KNOB_STEP0   0x270
+#define B2_KNOB_RING    0x294
+
+void cw_format(uint8_t *knob, unsigned type)
+{
+    uint8_t *st = knob + B2_KNOB_STEP0;
+    int v = type == B2_TYPE_INT ? *(int32_t *)(st + STEPPER_INDEX) + *(int32_t *)(st + STEPPER_START)
+                                : fw_list_value(knob, *(int32_t *)(knob + B2_KNOB_VALUE));
+    char text[16];
+    cw_text(text, v);
+    fw_set_text(knob + B2_KNOB_TEXT, text);
+    fw_knob_redraw(knob);
+}
+
+void cw_slipturn(struct cw_bank *b, uint8_t *stepper, int counts)
+{
+    uint8_t *knob = stepper - B2_KNOB_STEP0;
+    uint32_t now = B2_GUI_MS;
+    int32_t add;
+    fw_ring_push(knob + B2_KNOB_RING, counts, now);
+    if (cw_turn(b, stepper, counts, fw_ring_speed(knob + B2_KNOB_RING), now, &add))
+        fw_stepper_add(stepper, add);
+}
