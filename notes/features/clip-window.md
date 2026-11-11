@@ -62,6 +62,7 @@ and Known issues. The research model of the hooks is outside the repo, in `/srv/
 | Clip pad, Pos tab, row 7; Clip Waveform BR (`LpLen`) | `Loop Len:` | `0x1ca` | Off, 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Off | `cliplooplen` |
 | Clip pad, Pos tab, row 8 | `Fit:` | `0x1cb` | Off, Auto (Bars), Auto (Beats), 1/4, 1/2, 3 beats, 1 bar, 6 beats, 2 bars, 4 bars, 8 bars | Off | `clipfit` |
 | Clip pad, Pos tab, row 9 | stock's Loop Fade | stock `0xfa` | 0 … 100 % (0 … 1000) | 0 | stock's |
+| Clip pad, Pos tab, row 10 | `TL Knob:` | `0x1cc` | Loop Start, Move | Loop Start | `cliptlknob` |
 | Clip Waveform TL | `LpS` | stock `0x91` | 0 … Loop End, frames | stock's | stock's |
 | Clip Waveform TR | `LpE` | stock `0x92` | Loop Start … the file's length, frames | stock's | stock's |
 
@@ -333,6 +334,11 @@ Stock leaves all four knobs blank in Clip mode and draws no loop bracket.
   stock's (`0x080F17A4`) with the whole draw and the clipped draw replaced (`clipwin_label`, §3.2). Sample, Granular,
   Slicer, New Rec and New Multi get it too: the four knobs are the same ones in every mode. Without this build's bank
   2 both draws are stock's, bit for bit.
+- **Region Move (`TL Knob:` Move, hub #t-042).** TL reads `Mov` and still shows Loop Start, but each turn moves Loop
+  Start and Loop End by the same amount: the region slides through the file with its length kept. TL's range is 0 …
+  the file's length − the region's, the view goes to Loop Start, and TR is unchanged. With no region (the bracket off)
+  TL does not turn. A playing pad hears the move at its next pass, as a TL or TR turn; under Fit the rate stays. The
+  row is per pad and saved; Loop Start is the default, which is TL as before.
 - **The white bracket.** It shows the loop Region plays, using the engine's own rule, as soon as you turn. A playing
   pad takes the new loop the next time its loop comes round, so while you turn, the bracket is ahead of what you hear.
   There is no bracket (and the loop points are not heard) on Region File, or when the points are the whole file.
@@ -444,12 +450,12 @@ knob, no bracket. The Waveform still binds its four rows (TL and TR are stock's 
 ### 3.3 State: `cw_bank`
 
 The bank lives in SDRAM at `master_block() + 0xB100`, the end of the block's core, which every unit takes with or
-without bank 2 (D-030; `+ 0x83900` before, behind Prism's), with `0x1000` reserved (`0x800` until Fit) and `0x8A8` used (`0x898` until Auto (Bars), D-031). The layout is in `src/clipwin.h`
-and the magic is `CWNB`. The magic history: `CWN1` was 37.1.x, `CWN2`
+without bank 2 (D-030; `+ 0x83900` before, behind Prism's), with `0x1000` reserved (`0x800` until Fit) and `0x8B8` used (`0x8A8` until Region Move, `0x898` until Auto (Bars), D-031). The layout is in `src/clipwin.h`
+and the magic is `CWNC`. The magic history: `CWN1` was 37.1.x, `CWN2`
 the stale-latch fix (the latch's `len`), `CWN3` the Region step, `CWN4` arrived with Loop Len, and `CWN5` with the
 knob's v2 (37.2.1: the bench fields at `0x720`, `zero_hold` gone), `CWN6` with Loop Len's settle (`llv`, `llc`,
 37.3.0), `CWN7` with the Waveform's file length (`flen`), `CWN8` with the knob's v3 (`zero_slow` at `0x4BD`), `CWN9`
-with Fit (`fit` … `engine`), `CWNA` with Loop Fade (`fade`), `CWNB` with the step-0 fade-in (`fin`, `wrapped`; 37.3.3). (On
+with Fit (`fit` … `engine`), `CWNA` with Loop Fade (`fade`), `CWNB` with the step-0 fade-in (`fin`, `wrapped`; 37.3.3), `CWNC` with Region Move's wrap guard (`moving[16]` at `0x8A8`, D-034). (On
 `feat/region`,
 without the fix, `CWN2`/`CWN3` were Region/Loop Len and the bank used `0x620`.) When the magic is wrong the bank is
 cleared whole, with a word loop, and the magic set. `master_alloc` clears the magic at every boot, because SDRAM keeps

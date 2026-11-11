@@ -44,6 +44,9 @@ JOEBOX):
 - **The Waveform screen in Clip mode**: the four knobs are Loop Start, Loop End, Slip and Loop Len; the loop bracket
   shows; the playhead line shows the frame you hear. Turning Loop Start or Loop End takes the view to that edge, and
   it follows the playhead again after a pause.
+- **Region Move** (`TL Knob:` Loop Start | Move, per pad, saved): in Move the top-left knob reads `Mov` and slides the
+  whole region — Loop Start and Loop End together, its length kept — and the view goes to Loop Start. Heard at the
+  next pass, as Loop Start and Loop End are; with no region the knob does not turn.
 
 Everywhere:
 

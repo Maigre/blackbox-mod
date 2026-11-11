@@ -99,6 +99,7 @@ S = e.sym
 
 P_SLIP, P_REGION, P_LOOPLEN, P_SYNC = 0x1C9, 0x1C8, 0x1CA, 0x94
 P_FIT, P_FADE = 0x1CB, 0xFA                          # Fit; stock's Sample-mode Loop Fade (0 .. 1000)
+P_TLKNOB = 0x1CC                                      # TL Knob: Loop Start, Move (the Waveform's TL in Clip mode)
 AUTO, FILE, LOOP = 0, 1, 2                           # Region's list
 FIT_NAMES = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars", "8 bars"]
 FIT_BEATS = [None, None, None, 1, 2, 3, 4, 6, 8, 16, 32]   # Fit's list: its beats (each Auto counts its own)
@@ -119,9 +120,10 @@ B_FIT, B_PFIT, B_FON, B_ABEATS, B_ALEN, B_BPM, B_ENGINE = 0x784, 0x794, 0x7A4, 0
 B_FADE = 0x858                                       # Loop Fade as taken with the region
 B_FIN, B_WRAPPED = 0x878, 0x888                      # F-a: the slots that get their fade-in back, the wraps just made
 B_ABARS = 0x898                                      # 1: Auto's count is Auto (Bars)', 0: Auto (Beats)'
-B_SIZE = 0x8A8                                       # sizeof(struct cw_bank)
+B_MOVING = 0x8A8                                     # 1: a Region Move is between its two posts (clipwin_move)
+B_SIZE = 0x8B8                                       # sizeof(struct cw_bank)
 B_BYTES = 0x1000                                     # what master.c's block gives it (0x800 before Fit)
-CW_MAGIC = 0x43574E42
+CW_MAGIC = 0x43574E43
 HEAP = 0xC1000000
 ARR = 0x24072000                                     # the stores' entry arrays, 0x100 a pad
 N = 128
@@ -299,11 +301,11 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
       order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
-POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE)   # the Clip Pos page's slots 5 .. 9
+POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 5 .. 10
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
     check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x1c8), Slip (0x1c9), Loop Len "
-          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), then {32 - len(POS_ROWS)} empty slots",
+          f"(0x1ca), Fit (0x1cb), stock's Loop Fade (0xfa), TL Knob (0x1cc), then {32 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
@@ -389,18 +391,23 @@ check(f"... and 0x1cb once, after Loop Len: 'Fit:', a list of {lists.get(P_FIT)}
       "'3 beats' and '6 beats'), saved as 'clipfit'", len(fit_reg) == 1 and fit_reg[0][2] == "Fit:" and fit_reg[0][5] == "clipfit"
       and {fit_reg[0][1]} == list_type and lists.get(P_FIT) == FIT_NAMES and regs.index(fit_reg[0]) > regs.index(ll_reg[0]),
       (fit_reg, lists.get(P_FIT)))
+tlk_reg = [r for r in regs if r[0] == P_TLKNOB]
+check(f"... and 0x1cc once, after Fit: 'TL Knob:', a list of {lists.get(P_TLKNOB)}, saved as 'cliptlknob'",
+      len(tlk_reg) == 1 and tlk_reg[0][2] == "TL Knob:" and tlk_reg[0][5] == "cliptlknob" and {tlk_reg[0][1]} == list_type
+      and lists.get(P_TLKNOB) == ["Loop Start", "Move"] and regs.index(tlk_reg[0]) > regs.index(fit_reg[0]),
+      (tlk_reg, lists.get(P_TLKNOB)))
 check("the labels fit the screen (<= 9 characters)", ours and len(ours[0][2]) <= 9 and region_reg and len(region_reg[0][2]) <= 9
-      and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9)
-check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8, 0x1c9, 0x1ca and 0x1cb there",
+      and ll_reg and len(ll_reg[0][2]) <= 9 and fit_reg and len(fit_reg[0][2]) <= 9 and tlk_reg and len(tlk_reg[0][2]) <= 9)
+check("stock registers nothing in 0x1c8 .. 0x1cf; the patched image only 0x1c8 .. 0x1cc there",
       not [r for r in stock_regs if 0x1C8 <= r[0] <= 0x1CF]
-      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT],
+      and sorted(r[0] for r in regs if 0x1C8 <= r[0] <= 0x1CF) == [P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB],
       [hex(r[0]) for r in regs if 0x1C8 <= r[0] <= 0x1CF])
 xmls = [r[5] for r in regs if r[5]]
 dups = sorted({x for x in xmls if xmls.count(x) > 1})
 stock_xmls = [r[5] for r in stock_regs if r[5]]
-check("'clipslip', 'clipregion', 'cliplooplen' and 'clipfit' are unique among every registered xml name (and new to the "
-      "image)", all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
-                    for x in ("clipslip", "clipregion", "cliplooplen", "clipfit")))
+check("'clipslip', 'clipregion', 'cliplooplen', 'clipfit' and 'cliptlknob' are unique among every registered xml name (and "
+      "new to the image)", all(xmls.count(x) == 1 and x not in stock_xmls and x.encode() not in stock
+                               for x in ("clipslip", "clipregion", "cliplooplen", "clipfit", "cliptlknob")))
 if dups:
     info(f"xml names registered more than once (stock's own: {sorted({x for x in stock_xmls if stock_xmls.count(x) > 1})}): {dups}")
 check(f"the patched registrar still registers stock's {len(stock_regs)} ids under their stock xml names (JOEBOX relabels a few)",
@@ -416,9 +423,9 @@ del e.stubs[0x0804436C]
 count, cap = e.r16(PSTORE + 10), e.r16(PSTORE + 12)
 entries = [struct.unpack_from("<HHi", bytes(e.uc.mem_read(PARR + 8 * i, 8))) for i in range(count)]
 ids = [x[0] for x in entries]
-check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off) and Fit 0 (Off) once each "
-      f"({count} of {cap} entries used)",
-      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT))
+check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off), Fit 0 (Off) and TL Knob 0 (Loop Start) "
+      f"once each ({count} of {cap} entries used)",
+      all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB))
       and cap == 96 and count < cap,
       (count, cap, ids[-4:]))
 
@@ -2658,6 +2665,57 @@ for blk, W, when in ((100, 336000, "inside step 0"), (265, 384000, "inside step 
           same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
           and pk <= 1.0 + 1e-6 and lat and all(x == (6000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
 
+# Region Move (TL Knob: Move, hub blackbox#t-042, 12e): a region -> region change at the same length. The test above is
+# a move back (Loop Start posted first); moving forward clipwin_move posts Loop End first, and the pair between the two
+# posts, [24 000, 84 000), is a valid, longer region. [24 000, 72 000) -> [36 000, 84 000), Slip 480, inside step 0:
+# heard at the next wrap, its length and Slip kept (kw, ref_ and zr are the test above's)
+W = 336000
+cw = audio(pre=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000)) if rr.block == 100 else None, **kw)
+r = cw["rig"]
+up_to = (W - 287000) // N - 1
+same_before = all(np.array_equal(x, y) for x, y in zip(ref_["rig"].out[:up_to], r.out[:up_to]))
+out, z, pk = inside(cw, 36000, 48000, W + 300)
+zc = set(np.where(np.abs(cw["gain"]) < 1e-7)[0] + cw["base"])
+added = sorted(x for x in zc - zr if 290000 <= x < cw["base"] + len(cw["gain"]) - N)
+lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
+s_ = [x for x in starts(r) if x[0] >= W][:3]
+check(f"live, Region Move forward (Loop End posted first, then Loop Start), Slip 480, inside step 0: every output sample "
+      f"as without the move up to the wrap at {W}, from it the moved region (steps {s_}; latched {lat[:1]}), its length "
+      f"and Slip kept, nothing outside [36 000, 84 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
+      same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
+      and pk <= 1.0 + 1e-6 and lat and all(x == (36000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
+
+# ...a wrap between the move's two posts (x5 3: an audio tick can fall there; the plan's Risk 1): clipwin_move marks the
+# pad moving in cw_bank across them (12e), and adopt keeps the region the pad has while it is marked. Loop End 84 000
+# alone with the mark inside step 0 (the recompute for the wrap at 336 000 runs when step 1 starts), then Loop Start
+# 36 000 and the mark cleared inside the next pass's step 0: that pass plays the old region, the one after the moved one.
+# Without the mark, the pass from 336 000 plays the half-moved pair [24 000, 84 000)
+gw = {}
+for mark in (1, 0):
+    mid = []
+    def pre(rr, mark=mark, mid=mid):
+        if rr.block == 100:
+            rr.m.uc.mem_write(BANK + B_MOVING + 6, bytes([mark]))
+            rr.param(0x92, 84000)
+        elif rr.block == 420:
+            mid.extend(latch(rr.m, 6, k) for k in range(4) if bank_valid(rr.m, 6) >> k & 1)
+        elif rr.block == 450:
+            rr.param(0x91, 36000)
+            rr.m.uc.mem_write(BANK + B_MOVING + 6, bytes(1))
+    cw = audio(pre=pre, **kw)
+    r = cw["rig"]
+    gw[mark] = (mid, [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1],
+                [x for x in starts(r) if x[0] >= 336000][:5], inside(cw, 24000, 48000, 336000 + 300, 384000)[0],
+                inside(cw, 36000, 48000, 384000 + 300)[0])
+mid, lat, s_, old, new = gw[1]
+check(f"live, Region Move with a wrap between its two posts (Loop End posted with the pad marked moving): the pass from "
+      f"336 000 keeps the old region (latched {mid[:1]}, {old} frames outside [24 000, 72 000)), the pass from 384 000 "
+      f"plays the moved one once Loop Start is posted and the mark cleared (latched {lat[:1]}, {new} outside); "
+      f"unmarked, the pass from 336 000 plays the half-moved pair ({gw[0][0][:1]})",
+      mid and all(x == (24000, 48000, 12000) for x in mid) and old == 0 and lat and new == 0
+      and all(x == (36000, 48000, 12000) for x in lat) and [a for a, _, _ in s_] == [336000, 360000, 384000, 408000, 432000]
+      and gw[0][0] and all(x == (24000, 60000, 15000) for x in gw[0][0]) and gw[0][3] > 0, gw)
+
 # a change that makes the clip longer moves stock's wrap grid (+0x230 = min(Quant, clip)): a pass that does not start on
 # it has its end snapped back into the past. Stock does that on a live Beat Count change (2 -> 4 beats, Quant 1 bar):
 # two passes start at once over the last step (gain 2), then the bar. The region waits for a wrap on its grid (H3').
@@ -3070,6 +3128,32 @@ check(f"Loop Len 1/4 on Region [24 000, 72 000) with Slip 480 (taken at origin {
       f"nothing outside the region, summed gain = without Loop Len ({same_gain(ref_, cw, 288300)} differ), {z} zero-gain samples",
       on and on[2] == 960 and len(sg) >= 5 and all(x[2] == 60000 for x in sg) and n_ > 80000 and err <= 0.02 and bad_ == 0
       and out == 0 and z == 0 and same_gain(ref_, cw, 288300) == 0, (on, sg[:6], n_, err, bad_, out, z))
+
+# Region Move (TL Knob: Move, hub blackbox#t-042) under Loop Len: the stacked pad above, its region moved forward as
+# clipwin_move posts it (Loop End 84 000 first, then Loop Start 36 000) inside step 0 of a pass, Loop Len 1/4 engaged.
+# The in-point stays; from the next wrap every step plays the window's beat in the moved region, 36 000 + (24 000 +
+# 12 000) mod 48 000 = 72 000 on; before it, every sample as the run without the move (cw above). Under Loop Len a
+# latch's delta is Slip's frames + the window's (cw_latch): the moved run's are cw's, rs 12 000 on
+W = 384000
+mv = audio(pre=ll_pre({300: 3}, slip=480, then=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000))
+                       if rr.block == 500 else None), **kw)
+r = mv["rig"]
+up_to = (W - 287000) // N - 1
+same_before = all(np.array_equal(x, y) for x, y in zip(cw["rig"].out[:up_to], r.out[:up_to]))
+on = taken(r, 3)
+sg = seg_firsts(mv, W)
+n_, err, bad_ = follows(mv, sf=12000, rs=36000, vlen=48000, after=W + 300)
+out, z, pk = inside(mv, 36000, 48000, W + 300)
+lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
+lat_ = [latch(cw["rig"].m, 6, k) for k in range(4) if bank_valid(cw["rig"].m, 6) >> k & 1]
+check(f"Region Move forward under Loop Len 1/4 (Region [24 000, 72 000) -> [36 000, 84 000), Slip 480, the move inside "
+      f"step 0 at sample {287000 + 500 * N}): every output sample as without the move up to the wrap at {W}; the in-point "
+      f"kept (origin {on and on[2]}); from it every step starts on 72 000 ({[x[2] for x in sg[:5]]}), every sample 36 000 + "
+      f"(its step's frame + 12 000) mod 48 000 ({n_}, max {err:.4f}); latched {lat}: the run without the move's, 12 000 on "
+      f"(length, Slip and window kept); nothing outside the moved region, {z} zero-gain samples",
+      same_before and on and on[2] == 960 and len(sg) >= 4 and all(x[2] == 72000 for x in sg) and n_ > 60000
+      and err <= 0.02 and bad_ == 0 and out == 0 and z == 0 and lat and lat == [(a + 12000, v, d) for a, v, d in lat_],
+      (same_before, on, sg[:6], n_, err, bad_, out, z, lat, lat_))
 
 # where Loop Len does nothing: Quant None (no grid); Sync None (no clock phase: a1; forcing a Sync there would make
 # stock's None-to-synced re-grid double a whole step at gain 2); a window of the whole clip or more (2 bars on 4 beats);
@@ -3589,6 +3673,26 @@ for what, kw in (("as a region", REG4), ("as a whole file", dict(frames=VL4))):
           f"{on[4]:.3f}, a pass every bar ({on[5][:4]})",
           len(off[2]) >= 8 and abs(on[0] - 0.935) < 1e-4 and on[1] >= 8 and not on[2] and on[3] == 0 and on[4] <= 1 + 1e-6
           and on[5][:4] == [288000, 384000, 480000, 576000] and on[6] == 4, (off[:5], on))
+# Region Move under Fit 1 bar (TL Knob: Move, hub blackbox#t-042): the 3.74-beat region moved 24 000 frames forward
+# inside a pass (Loop End posted first, then Loop Start, at block 400). From the pass after next, it plays what the
+# unmoved region plays, 24 000 frames later in the file: frame for frame and gain for gain, at the rate Fit gave it
+# (89 760 / 96 000), with no jump at a joint
+mv_ = {}
+for name, pre in (("moved", lambda rr: (rr.param(0x92, RS4 + VL4 + 24000), rr.param(0x91, RS4 + 24000))
+                   if rr.block == 400 else None), ("unmoved", None)):
+    d = fit_audio(FIT_NAMES.index("1 bar"), beats=0, blocks=2300, cell=0x102, pre=pre, **REG4)
+    a_ = 480300 - d["base"]
+    mv_[name] = (d["frame"][a_:len(d["gain"]) - N], d["gain"][a_:len(d["gain"]) - N], seamless(d, VL4, since=480300),
+                 pass_starts(d["rig"]))
+(fm, gm, sm_, pm), (fu_, gu, su, pu) = mv_["moved"], mv_["unmoved"]
+nan_same = np.array_equal(np.isnan(fm), np.isnan(fu_))
+shift = float(np.nanmax(np.abs(fm - fu_ - 24000))) if nan_same else None
+check(f"Region Move under Fit 1 bar: from sample 480 300 the moved region plays the unmoved one's frames + 24 000 "
+      f"(off by {shift:.4f} at most: float frames), gain for gain; rate {sm_[0]:.6f} (89 760 / 96 000, unmoved {su[0]:.6f}), no jump at its "
+      f"{sm_[1]} joints ({sm_[2]}), no zero-gain sample ({sm_[3]}), passes {pm[:5]}",
+      nan_same and shift < 0.02 and np.array_equal(gm, gu) and abs(sm_[0] - 0.935) < 1e-4 and abs(sm_[0] - su[0]) < 1e-6
+      and sm_[1] >= 3 and not sm_[2] and sm_[3] == 0 and pm == pu and pm[:4] == [288000, 384000, 480000, 576000],
+      (shift, sm_, su, pm[:5], pu[:5]))
 # a WAV's Beat Count over a one-bar region (Gate 3 finding 3): Beat Count 8 cuts it into 8 steps of an eighth of the bar,
 # each played for a beat - every step re-placed back half a beat. Fit Auto and Fit 1 bar make it the bar it is.
 res = {}
@@ -5234,6 +5338,82 @@ fp_gap = max(b_ - a_ for a_, b_ in zip(fp_plain, fp_plain[1:]))
 check("  ...a load with no Sync set inside it sends nothing: the pad plays on through it, a step every 1/16 as with no "
       f"load (longest gap {fp_gap} blocks)", not fp_plain_sent and fp_plain[:8] == fp_none[:8] and fp_gap <= 50 and
       fp_plain[-1] > 2500, f"sent {fp_plain_sent}, made {fp_plain[:8]} / {fp_none[:8]}")
+
+
+# ====================================================================================================== 12e. Region Move
+# TL Knob: Move (0x1cc, hub blackbox#t-042, notes/re/x5): on a Clip pad's Waveform TL still sets Loop Start, ranged 0 ..
+# file - (Loop End - Loop Start), and Loop End follows it by the same amount. The view's forward (slice_forward ->
+# clipwin_move) posts the pair itself, the edge ahead first (SetCellParam clamps neither, x5 (a)); the app stores each
+# and posts its own 0x66 (done here one refresh per post, as the app does it); the view ends on Loop Start (x5 (b)).
+def mv_run(vals, counts, mode=1, marks=None):
+    """the Screen opened on CLIP12 + vals; one TL turn per entry of counts. Returns (the screen, per turn: (the knob's
+    forwards, the pair stored after it, every frame the view was sent to)); marks, when given, gets cw_bank's moving[]
+    as each post to the app found it"""
+    sc = Screen()
+    shows = []
+    sc.m.uc.hook_add(UC_HOOK_CODE, lambda *a: shows.append(sc.m.arg(1)), begin=0x080C6E68, end=0x080C6E68)
+    if marks is not None:
+        sc.m.uc.hook_add(UC_HOOK_CODE, lambda *a: marks.append(bytes(sc.m.uc.mem_read(BANK + B_MOVING, 16))),
+                         begin=0x080AED14, end=0x080AED14)
+    sc.open({**CLIP12, 0x8B: mode, **vals}, was=mode)
+    out, t = [], 50_000
+    for c in counts:
+        t += 5_000
+        sc.m.w32(GUI_MS, t)
+        sc.posts.clear()
+        sc.msg(0x080A6D28, 0x32, 0, c)
+        own, fwd = list(sc.posts), []
+        for p_ in own:
+            sc.posts.clear()
+            sc.m.uc.mem_write(VMSG, struct.pack("<HHIHHiiI", p_[0], 0, 0x080CFBA4, 0, 0, p_[1], p_[2], 0))
+            sc.m.call(0x080A66DC, VIEW, VMSG, count=50_000_000)
+            fwd += sc.posts
+        shows.clear()
+        for p_ in fwd:
+            if p_[0] == 0x6E:
+                sc.stored(**{f"_{p_[1]:x}": p_[2]})
+        out.append(([(r, v) for _, r, v in fwd], (sc.vals[0x91], sc.vals[0x92]), list(shows)))
+    return sc, out
+
+
+mv, mv_out = mv_run({P_TLKNOB: 1}, (+2000, -3600))
+k_ = mv.knob("TL")
+mv_names = [x for a, x in mv.texts if a == KN12["TL"] + 0x44]
+check("Move: TL keeps Loop Start (0x91), named 'Mov', ranged 0 .. 192 000 - 48 000 (the region slides inside the file, "
+      "its length kept)", k_["id"] == 0x91 and mv.shown("TL") == mv_out[-1][1][0] and (k_["lo"], k_["hi"]) == (0, 144000)
+      and mv_names[-1:] == ["Mov"], (k_, mv_names))
+(f1, p1, v1), (f2, p2, v2) = mv_out
+check("  ...a turn forward posts Loop End first, then Loop Start, by the same amount: the pair between them is a valid, "
+      f"longer region; the length stays 48 000 and the view ends on the new Loop Start ({f1}, views {v1})",
+      [r for r, _ in f1] == [0x92, 0x91] and f1[0][1] - 72000 == f1[1][1] - 24000 > 0 and p1[1] - p1[0] == 48000
+      and v1[-1:] == [p1[0]], (f1, p1, v1))
+check(f"  ...a turn back posts Loop Start first, then Loop End; the length kept, the view on Loop Start ({f2}, views {v2})",
+      [r for r, _ in f2] == [0x91, 0x92] and f2[1][1] - p1[1] == f2[0][1] - p1[0] < 0 and p2[1] - p2[0] == 48000
+      and v2 == [p2[0], p2[0]] and mv.wave()["on"] == 1 and (mv.wave()["ls"], mv.wave()["le"]) == p2, (f2, p2, v2))
+ls_, ls_out = mv_run({}, (+2000, -3600))
+k_ = ls_.knob("TL")
+check("TL Knob: Loop Start (the default) is the knob as before: 'LpS', ranged 0 .. Loop End, one post of Loop Start a "
+      "turn, the view on the edge it moved", (k_["lo"], k_["hi"]) == (0, ls_out[-1][1][1])
+      and [x for a, x in ls_.texts if a == KN12["TL"] + 0x44][-1:] == ["LpS"]
+      and all([r for r, _ in f] == [0x91] and v == [p[0]] for f, p, v in ls_out) and ls_out[-1][1][1] == 72000, ls_out)
+fl, fl_out = mv_run({P_TLKNOB: 1, P_REGION: 1}, (+2000, -3600))
+k_ = fl.knob("TL")
+check("Move with no region (Region File, the bracket off): TL does not turn (its range is Loop Start alone) and nothing is "
+      "posted", (k_["lo"], k_["hi"]) == (24000, 24000) and all(not f and p == (24000, 72000) for f, p, _ in fl_out),
+      (k_, fl_out))
+# the wrap guard (x5 3, the plan's Risk 1): each post reaches the engine as it is made, and an audio tick can fall
+# between the two; the pad is marked moving in cw_bank across them, so a wrap there keeps the region it has (adopt; the
+# engine side is the region -> region tests' « half moved » case)
+gm = []
+gd, gd_out = mv_run({P_TLKNOB: 1}, (+2000, -3600), marks=gm)
+gq = [[i for i, x in enumerate(mk) if x] for mk in gm]
+check(f"  ...the knob's own message to the forward finds no pad marked; clipwin_move's two posts of each turn find the "
+      f"pad (6) marked moving in cw_bank, and only it ({gq}); the mark is gone after the turn",
+      gq == [[], [6], [6]] * 2 and bytes(gd.m.uc.mem_read(BANK + B_MOVING, 16)) == bytes(16)
+      and [f for f, _, _ in gd_out] == [f for f, _, _ in mv_out], (gq, gd_out))
+sm, sm_out = mv_run({P_TLKNOB: 1}, (+2000,), mode=0)
+check("Sample mode with TL Knob Move: TL is stock's Start (0x8f) and posts it alone", sm.knob("TL")["id"] == 0x8F
+      and [r for r, _ in sm_out[0][0]] == [0x8F] and sm_out[0][1] == (24000, 72000), sm_out)
 
 
 print(f"{fails} failed")

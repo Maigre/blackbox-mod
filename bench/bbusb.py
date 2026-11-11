@@ -131,7 +131,7 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E42            # "CWNB": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E43            # "CWNC": src/clipwin.h's cw_bank layout this tool reads
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 

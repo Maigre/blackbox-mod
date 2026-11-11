@@ -119,8 +119,10 @@ struct cw_bank {
                                         pass's step 0, not a launch */
     uint8_t abars[16];               /* 1: abeats is Auto (Bars)' count, 0: Auto (Beats)' (cw_fit counts again when the
                                         other Auto is chosen) */
+    uint8_t moving[16];              /* 1: a Region Move is between its two posts (clipwin_move): the pad's wrap keeps the
+                                        region it has (adopt) until the pair is whole */
 };
-#define CW_MAGIC  0x43574e42u        /* "CWNB": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e43u        /* "CWNC": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's CORE_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's CORE_BYTES gives the bank CW_BYTES");
@@ -132,7 +134,7 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
                offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
                offsetof(struct cw_bank, wrapped) == 0x888 && offsetof(struct cw_bank, abars) == 0x898 &&
-               sizeof(struct cw_bank) == 0x8a8,
+               offsetof(struct cw_bank, moving) == 0x8a8 && sizeof(struct cw_bank) == 0x8b8,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*

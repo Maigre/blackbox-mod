@@ -36,6 +36,7 @@ doc has it whole, its §7 the Gate 3b run.
 | [`x2-sdram-and-memory.md`](x2-sdram-and-memory.md) | The SDRAM pool and allocators, free figures (upper bounds), the sample pool, where `cw_bank` and the Looper ring go, Patch RAM / backup SRAM maps. |
 | [`x3-region-data-path.md`](x3-region-data-path.md) | How pad params reach the engine (40 class-B ids, the class-H sibling), mode change, WAV load and `smpl`/`acid` import, `fw_src_len`, mismatched-length wraps, the Region Auto rule. |
 | [`x4-trim.md`](x4-trim.md) | Stock's Trim on a Clip pad (blackbox#t-040): the File menu's enable, « Trim and Save? », `FUN_080A0DD4`'s steps and hook sites, what the reload does to a Clip pad's rows; §6–8 ✓ under Unicorn (the meta, the chunks, the bytes written, the temp file, the menu's enables: Trim is Sample-only on stock) and the task read (the Trim and the host-message pass in one GUI call); the reload owed. |
+| [`x5-region-move.md`](x5-region-move.md) | Region Move's two posts: the app clamps neither Loop Start past Loop End nor the reverse (the safe order), each refresh sends the view to the edge it moved, a tick can fall between the posts (inferred) |
 
 ## 2. P2 hand-off — Clip Window v1 (Slip only)
 

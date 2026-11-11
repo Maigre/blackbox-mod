@@ -56,9 +56,13 @@ static __attribute__((noinline)) int is_loop(int mode, int32_t ls, int32_t le, i
 /* The region pad q plays from now: its Region setting over the loop points. From the cell's class-H object, which
    stores them in queue order with everything else the pad hears; from the app's store (set, which clipwin.c read)
    when that link does not hold, keeping the last pair that made sense there (the app writes Loop Start and Loop End
-   one at a time). Fit and Loop Fade come with it, from the store; the Fit the pad had is kept for cw_hold. */
+   one at a time). Fit and Loop Fade come with it, from the store; the Fit the pad had is kept for cw_hold. Not while a
+   Region Move is between its two posts (moving, clipwin_move): the pair is half moved, so the pad keeps what it has and
+   takes the whole pair at its next wrap (x5 3: one pass of the longer region otherwise). */
 static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len, const int32_t *set)
 {
+    if (b->moving[q])
+        return;
     b->pfit[q] = b->fit[q];
     b->fit[q] = (uint8_t)((uint32_t)set[CW_SET_FIT] <= FIT_MAX ? set[CW_SET_FIT] : 0);
     b->fade[q] = (uint16_t)((uint32_t)set[CW_SET_FADE] <= LOOP_FADE_MAX ? set[CW_SET_FADE] : 0);
