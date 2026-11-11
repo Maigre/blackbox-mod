@@ -250,11 +250,6 @@ static __attribute__((noinline)) struct cw_bank *pad_bank(const uint8_t *pad, in
     return b && (*q = cw_pad(pad)) >= 0 ? b : 0;
 }
 
-static const void *pad_store(unsigned q)
-{
-    return (const void *)(APP_PADS + (q + (q >> 2)) * 0x30u);   /* row * 0xf0 + col * 0x30 */
-}
-
 /* H3. Replaces bl FUN_080636f0 (fw_src_len, r0 = the source; r4 = the pad, clipwin_thunk.S) at 0x08064b2c (site 1: the
    recompute's first, Beat Count Auto and the frames per step), 0x08064c5a (site 3: its second, the file tempo, right
    after it stored the step fields; clip = r9 there, the clip in output samples), 0x0806561e (site 0: FUN_08065550's
@@ -264,18 +259,12 @@ static const void *pad_store(unsigned q)
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
    0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
    and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
-static const uint16_t region_rows[CW_SET_ROWS] = {P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE};  /* CW_SET */
-
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
-    int32_t len = fw_src_len(src), set[CW_SET_ROWS];
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (!b)
-        return len;
-    for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
-        set[i] = fw_setting(pad_store((unsigned)q), region_rows[i]);
-    return cw_len(b, (unsigned)q, pad, site, clip, len, set);
+    return b ? cw_lenhook(b, (unsigned)q, src, pad, site, clip)   /* clipwin_b2.c: the body (stage 3) */
+             : fw_src_len(src);
 }
 
 /* H3'. Replaces bl FUN_08064a94 (the recompute, r0 = pad, r1 = the clock) at 0x08066fac (the synced wrap; t = the
@@ -290,16 +279,9 @@ void clipwin_wrap(uint8_t *pad, void *clock, const uint32_t *t)
 {
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
-    if (!b) {
-        fw_recompute(pad, clock);
-        return;
-    }
-    int32_t was[4] = {b->region[q].rs, b->region[q].vlen, *(const int32_t *)(pad + PAD_WRAP_GRID),
-                      *(const int32_t *)(pad + PAD_TPS) * *(const int32_t *)(pad + PAD_STEPS)};   /* CW_WAS_* */
-    b->wrap = (uint8_t)(q + 1);
-    fw_recompute(pad, clock);
-    b->wrap = 0;
-    if (cw_hold(b, (unsigned)q, pad, t, was))
+    if (b)
+        cw_wrap(b, (unsigned)q, pad, clock, t);   /* clipwin_b2.c: the body (stage 3) */
+    else
         fw_recompute(pad, clock);
 }
 

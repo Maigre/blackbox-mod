@@ -841,3 +841,28 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
             fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
         }
 }
+
+/* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the store rows the
+   region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE). */
+static const uint16_t region_rows[CW_SET_ROWS] = {0x1c8, 0x91, 0x92, 0x1cb, 0xfa};   /* CW_SET */
+
+int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip)
+{
+    int32_t len = fw_src_len(src), set[CW_SET_ROWS];
+    for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
+        set[i] = fw_setting((const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u), region_rows[i]);
+    return cw_len(b, q, pad, site, clip, len, set);
+}
+
+/* H3': the recompute at a wrap, and cw_hold's second one when it moves the wrap grid off this pass (clipwin.c's
+   clipwin_wrap keeps the gate). */
+void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uint32_t *t)
+{
+    int32_t was[4] = {b->region[q].rs, b->region[q].vlen, *(const int32_t *)(pad + PAD_WRAP_GRID),
+                      *(const int32_t *)(pad + PAD_TPS) * *(const int32_t *)(pad + PAD_STEPS)};   /* CW_WAS_* */
+    b->wrap = (uint8_t)(q + 1);
+    fw_recompute(pad, clock);
+    b->wrap = 0;
+    if (cw_hold(b, q, pad, t, was))
+        fw_recompute(pad, clock);
+}
