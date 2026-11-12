@@ -1,0 +1,40 @@
+# test_relapse.py: CPU seconds of each top-level statement (bench/shard.py --profile, mgr-ran, 2026-11-12, beside four other sessions, load 6 to 12); under 0.05 s left out. The planner's weights: only their ratios matter
+# key	cpu	line	first words
+6196385e5d6a	0.14	20	e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+s
+40d8459fdfae	3.45	186	l, r = impulse(2.2)
+8176ebb9f42b	1.43	193	l, r = impulse(1.0)
+23448440de02	2.09	198	l, r = impulse(1.5)
+f2f57d69fd43	7.40	203	l, r = impulse(5.0)
+220d02c25771	1.57	211	run(1.0, swell)
+18a442afb998	0.70	213	l, r = run(0.5, swell)
+d89ef0336c50	7.65	224	run(4.0, tone(500))
+fa3fa45b2a31	7.78	225	l, r = run(4.0)                              # input stops: 
+d89ef0336c50	5.92	229	run(4.0, tone(500))
+16f526db42a8	5.98	230	l, r = run(4.0)
+3b0e5434839c	3.21	233	run(2.0, tone(500))
+e54a445dcc76	14.80	234	l, r = run(8.0, tone(500))
+0febbb367e6e	11.95	240	run(5.0, tone(500))
+152ab54019e7	8.40	241	l, r = run(3.0)
+0febbb367e6e	12.15	245	run(5.0, tone(500))
+152ab54019e7	6.45	246	l, r = run(3.0)
+5bccdd58f377	12.77	270	f0, l, r = snippet_pitch(0)
+dcc6e40ba4f1	13.31	272	f1, l, r = snippet_pitch(2)
+7d32ee6e0c30	11.92	274	f2, l, r = snippet_pitch(3)
+b43a6a6cc06d	7.65	285	run(4.0, rise)
+152ab54019e7	6.35	286	l, r = run(3.0)
+b43a6a6cc06d	9.15	291	run(4.0, rise)
+152ab54019e7	8.24	292	l, r = run(3.0)
+d91c6d18498f	9.47	299	run(4.0, blip)
+152ab54019e7	9.05	300	l, r = run(3.0)
+da5e3b2af419	6.58	308	bright, _ = run(3.0, lambda t: ((((t * 7919) % 2001) - 1000)
+c9077adf5828	6.73	310	dark, _ = run(3.0, lambda t: ((((t * 7919) % 2001) - 1000) /
+2308860ee69c	16.48	316	l, r = run(6.0, noise)
+2ef846c68cbf	0.12	317	check(f"everything maxed with Feed on, full-scale noise in f
+2b7ad3df0834	25.92	318	l, r = run(9.0)                              # past one full
+413b9b443c18	0.08	319	check("...and it keeps running past the memory wrap", all(ma
+3d348e5b375b	7.21	321	run(3.0, burst)
+fe72917bb9c8	22.01	322	a, _ = run(8.0)
+3d348e5b375b	7.71	324	run(3.0, burst)
+177c9a11bc76	24.09	325	b, _ = run(8.0)
+bb9c34576f55	0.07	331	block([noise(i) for i in range(N)])
+343baa09ff1e	0.38	336	block([(0.0, 0.0)] * N)

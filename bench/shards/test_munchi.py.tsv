@@ -1,0 +1,31 @@
+# test_munchi.py: CPU seconds of each top-level statement (bench/shard.py --profile, mgr-ran, 2026-11-12, beside four other sessions, load 6 to 12); under 0.05 s left out. The planner's weights: only their ratios matter
+# key	cpu	line	first words
+6196385e5d6a	0.11	21	e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+s
+a1d73a4a8daf	4.43	221	run(0.6)
+bdfdba5861ca	13.59	223	imp_l, imp_r = run(2.0, lambda t: (1.0, 1.0) if t == run.t e
+259d4d610f2a	10.81	236	run(1.5)
+c9157e2117f3	13.82	237	l, r = run(2.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+259d4d610f2a	11.14	242	run(1.5)
+c9157e2117f3	15.79	243	l, r = run(2.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+0e2320d9379d	36.11	247	l, r = run(4.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+229434b9bc6c	25.94	255	l, r = run(3.0, noise)
+432b9d301b3d	33.01	258	l, r = run(4.0, noise)
+0fb7017e3f7a	9.80	265	run(1.0, steady)
+9075edfc9898	14.60	266	tail_off = energy(run(1.5)[0][48000:])
+0fb7017e3f7a	10.74	267	run(1.0, steady)
+e8a5a4d45dfa	2.66	269	run(0.3, steady)
+4c3484e81bda	16.46	270	held = energy(run(2.0)[0][48000:])
+718f714e89df	5.24	273	run(0.5)
+efbd912f6d88	10.36	278	run(1.0)
+d41a0ec9242a	10.47	279	l, r = run(1.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+259d4d610f2a	14.87	283	run(1.5)
+b3b6832d0a07	13.72	284	l, r = run(1.5, lambda t: (1.0, 1.0) if t == run.t else (0.0
+efbd912f6d88	10.42	288	run(1.0)
+d41a0ec9242a	10.95	289	l, r = run(1.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+efbd912f6d88	10.31	292	run(1.0)
+d41a0ec9242a	8.72	293	l, r = run(1.0, lambda t: (1.0, 1.0) if t == run.t else (0.0
+2a8013e8b69c	41.00	307	e_off, e_heavy = ducked(1), ducked(3)
+2dc8b5ab25d7	89.01	345	for kv, tempo, src, seconds in FP_SCRIPT:
+59178acad51a	1.94	398	l, r = run(0.2, noise)
+142213ec9ae4	2.19	411	run(0.2, noise)
+f73051d2e82e	7.38	414	for wand in (250, 800):
