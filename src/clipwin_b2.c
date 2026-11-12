@@ -783,8 +783,8 @@ typedef void (*b2_pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void
 #define fw_recompute    ((b2_recompute_fn)B2_FN(0x08064a94))
 #define fw_pad_param    ((b2_pad_param_fn)B2_FN(0x08067648))   /* the class-B param-set: what a 0x39 message does */
 #define B2_APP_PADS     (0x24020088u + 0x1840u)                 /* clipwin.c's APP_PADS: + row * 0xf0 + col * 0x30 */
-#define B2_P_SLIP       0x1c9                                   /* clipwin.c's P_SLIP, P_LOOPLEN, CLOCK_CTX */
-#define B2_P_LOOPLEN    0x1ca
+#define B2_P_SLIP       0x151                                   /* clipwin.c's P_SLIP, P_LOOPLEN, CLOCK_CTX */
+#define B2_P_LOOPLEN    0x152
 #define B2_CLOCK_CTX    0x128e0
 
 void cw_poll(struct cw_bank *b, uint8_t *engine)
@@ -844,7 +844,7 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
 
 /* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the store rows the
    region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE). */
-static const uint16_t region_rows[CW_SET_ROWS] = {0x1c8, 0x91, 0x92, 0x1cb, 0xfa};   /* CW_SET */
+static const uint16_t region_rows[CW_SET_ROWS] = {0x150, 0x91, 0x92, 0x153, 0xfa};   /* CW_SET */
 
 int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip)
 {
