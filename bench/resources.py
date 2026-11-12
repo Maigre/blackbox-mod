@@ -1079,6 +1079,7 @@ def scan(path, label, do_build=False, stock=None):
     # ---- build
     man["build"] = build_info(path, do_build)
     man["_fake"] = {str(a): n for a, n in fake.items()}
+    man["warnings"] = list(dict.fromkeys(warn))           # one line per place, not one per loop value
     return man
 
 
@@ -1829,6 +1830,9 @@ def md_report(r):
     L = [f"# Collisions: {r['ours']} (ours) against {r['theirs']} (theirs)", ""]
     if r.get("base"):
         L += [f"Merge base for the bank-1 estimate: {r['base']}", ""]
+    for side in ("ours", "theirs"):
+        if r["unread"][side]:
+            L += [f"**{len(r['unread'][side])} items not read in {side}** (listed at the end): a clash can hide there.", ""]
     kinds = {}
     for c in r["collisions"]:
         kinds.setdefault(c["kind"], []).append(c)
@@ -1903,6 +1907,8 @@ def main(argv=None):
         x.add_argument("--md")
         x.add_argument("--json")
     a = ap.parse_args(argv)
+    # exit status: 0 clean, 1 a problem or a collision, 2 something the reader could not read (whatever else it
+    # found): a clash can hide behind an unread id or patch table, so an unread tree never reads as clean
     if a.cmd in ("scan", "check"):
         p, label = open_tree(a.tree)
         man = scan(p, label, a.build, stock_image(p))
@@ -1910,8 +1916,10 @@ def main(argv=None):
             bad = check_tree(man)
             for rule, text in bad:
                 print(f"{rule}: {text}")
-            print(f"{len(bad)} problems")
-            return 1 if bad else 0
+            for w in man["warnings"]:
+                print(f"not read: {w}")
+            print(f"{len(bad)} problems" + (f"; {len(man['warnings'])} not read" if man["warnings"] else ""))
+            return 2 if man["warnings"] else 1 if bad else 0
         md = md_scan(man)
         if a.json:
             json.dump(_clean(man), open(a.json, "w"), indent=1, default=str)
@@ -1919,7 +1927,9 @@ def main(argv=None):
             open(a.md, "w").write(md)
         if not a.md and not a.json:
             sys.stdout.write(md)
-        return 0
+        if man["warnings"]:
+            print(f"resources.py: {len(man['warnings'])} not read in {label} (the 'Not read' list)", file=sys.stderr)
+        return 2 if man["warnings"] else 0
     po, lo = open_tree(a.ours)
     pt_, lt = open_tree(a.theirs)
     stock = stock_image(po, pt_)
@@ -1937,9 +1947,14 @@ def main(argv=None):
         open(a.md, "w").write(md)
     if not a.md:
         sys.stdout.write(md)
+    unread = {s: len(v) for s, v in rep["unread"].items() if v}
+    line = f"{len(rep['collisions'])} collisions" + ("".join(f"; {n} not read in {s}" for s, n in unread.items())
+                                                     + " (see 'Not read': a clash can hide there)" if unread else "")
+    if a.md:
+        print(line + f"; markdown {a.md}" + (f", JSON {a.json}" if a.json else ""))
     else:
-        print(f"{len(rep['collisions'])} collisions; markdown {a.md}" + (f", JSON {a.json}" if a.json else ""))
-    return 1 if rep["collisions"] else 0
+        print(line, file=sys.stderr)
+    return 2 if unread else 1 if rep["collisions"] else 0
 
 
 if __name__ == "__main__":
