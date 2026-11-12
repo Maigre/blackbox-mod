@@ -14,5 +14,6 @@ PATCHES = [
     hook(0x0808DEA4, 0x0808C0D8, "fx2_register"),     # param 0x198: "FX2" Delay/Reverb -> "Type:" Plate/Room
     hook(0x080944A2, 0x08093EF6, "fx2_defaults"),     # reverb cell defaults: Type first
     hook(0x080944B8, 0x08093EF6, "fx2_defaults_last"),  # ... and Room's Size / Mod / Early / Width last
+    # resources: store reverb sites=0x080944A2,0x080944B8 cap=0x08093F26,0x080949F0 stock=3   (FUN_08093f20's reverb case)
     hook(0x0806318E, 0x08074F50, "fx2_core_thunk"),   # reverb process: the core call
 ]

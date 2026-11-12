@@ -17,6 +17,7 @@ PATCHES = [
     hook(0x08094886, 0x08093EF6, "comp_defaults"),   # global settings defaults: + Comp Thresh = 0
     # the global settings store holds 64 entries and stock + ours had reached 50: make it 96 (movs r1, #0x40 -> #0x60)
     (0x08094820, bytes.fromhex("4021"), bytes.fromhex("6021")),
+    # resources: store global sites=0x08094886 cap=0x08094820 stock=41   (FUN_0809481c: 41 bl 0x08093ef6, no branch)
     # Tools Main page (address 0x40, page 0, 0x080eed18): Headphone, Compressor, Comp Thresh, then the rest as before
     (0x080EED18, struct.pack("<11H", 0xBA, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0xB4, 0x19B, 0),
      struct.pack("<11H", 0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B)),

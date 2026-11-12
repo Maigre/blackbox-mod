@@ -58,3 +58,6 @@ PATCHES = [
     (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
     (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x1C8, 0x1C9, 0x1CA, 0x1CB, 0xFA, 0x1CC)),
 ]
+# Planned, not patched yet (bench/resources.py reports a tree that patches it): stage 1's capture of the class-B
+# param-set call (notes/clip-window-audit.md, notes/re/x3-region-data-path.md section C; hub #t-044)
+# resources: wants site=0x080685D2 callee=0x08067648 by=clipwin_param

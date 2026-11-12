@@ -39,6 +39,9 @@ PATCHES = [
     # 3.1.C..F missed it, so a sample pad's store filled up at 64 and LFO 3's Rate / Trig / Offset had nowhere to live
     # (the report: those three knobs do not move).
     (0x080949F0, bytes.fromhex("4021"), bytes.fromhex("6021")),
+    # bench/resources.py reads these two lines (stock's own adds: FUN_08093f20's bl 0x08093ef6 in each cell's case):
+    # resources: store pad sites=0x0809423C cap=0x08093F26,0x080949F0 stock=59
+    # resources: store cell4c sites=0x080943B4 cap=0x08093F26,0x080949F0 stock=37
     hook(0x080B8844, 0x080B8724, "lfo_tabs"),
     hook(0x080B8BCC, 0x080B8724, "lfo_tabs"),
     (0x080EFCF0, bytes(16), struct.pack("<8H", *range(0x1A9, 0x1B1))),   # Sample pads, page 3
