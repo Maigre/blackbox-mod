@@ -27,6 +27,8 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
   `bench/resources.py` reads each, the `resources:` tags, and the report to run at every upstream release, with its
   proof against JOEBOX 2 and what it does not see.
 - [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X7) and the hand-off index (`re/README.md`).
+- `spikes/` — a question tried in code and answered: [`spikes/b2split.md`](spikes/b2split.md) (moving a whole module
+  to bank 2 by tool: what works, what a hand still writes, the numbers; verdict go, D-047).
 - `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it:
   [`features/clip-window.md`](features/clip-window.md) (Slip, Region, Loop Len, Fit, Loop Fade, the Clip-mode
   Waveform knobs; its §6–§7 are the Gate 3 and Gate 3b bench recipes).

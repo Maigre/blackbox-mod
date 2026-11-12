@@ -82,6 +82,9 @@ reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when
   throwaway worktree and leaves `verdict.json`, an `error` one when it is stopped.
 - Install: copy the patched `BLACKBOX.bin` (and `BBEXTRA.BIN` when a build has one) to the card root, hold BACK + INFO
   while powering on, on the unit's normal power supply. Back to stock the same way with 1010music's file.
+- Room in bank 1: `python3 bench/b2split.py <module> --decl bench/splits/<module>.py` moves a whole module to bank 2
+  with generated bank-1 stubs that fall back to stock, its source untouched (D-047,
+  [`notes/spikes/b2split.md`](notes/spikes/b2split.md)); `--verify` after `patch.py` checks the result.
 - Before an upstream merge: `python3 bench/resources.py report . upstream/main` (add `--build --base $(git merge-base
   HEAD upstream/main)` for bank 1) lists where the release collides with the fork: parameter ids and their reads, call
   sites, calls into stock the release hooks, page slots, settings stores, the SDRAM block, backup SRAM, flash

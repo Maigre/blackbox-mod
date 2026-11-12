@@ -310,3 +310,14 @@ python3 bench/b2split.py --decl bench/splits/both.py --run ./check.sh
 - each stub's fallback and why;
 - the veneers;
 - the bytes on each side.
+
+## Verdict taken (2026-11-12)
+
+Thomas: « go for the split » (fork D-047). The tool and this note are on `maigre` as they left the spike, which was
+cut from pristine JOEBOX 2. Tried the same evening on 37.5.0 as it stands, nothing adapted:
+`python3 bench/b2split.py repeat --decl bench/splits/repeat.py` links, `.cave` 57,449 → 55,952 B (**1,784 B free**,
+287 before), bank 2 + 1,788 B, eight stubs; `--verify` 0 failures; `test_repeat` 22, `test_bank2` 60, `test_b2safe`
+67, `test_benchkit` 111, `test_resources` 58, all 0 failed; `test_solo` 2 failed, both the division button's label,
+which reads « --- » in a harness where bank 2 is not live (the declared fallback, as designed). Next: the split of
+note repeat wired into the build (the Looper's 673 B of bank-1 glue then fit), those two checks, and a unit.
+

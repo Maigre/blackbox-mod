@@ -129,6 +129,19 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   whole, so `test_munchi` sets the check's floor: about 12.5 min on mgr-ran, not the five the task aimed at.
   `check.sh`'s pool is the box's core count (`CHECK_JOBS` overrides it); its diff against upstream stays the pool
   and one call into `bench/suites.py`, with an xargs fallback when `bench/` is absent.
+- **D-047 (2026-11-12) — A module moves to bank 2 by tool, its source untouched** (Thomas: « go for the split »,
+  hub #t-057; `notes/spikes/b2split.md`). `bench/b2split.py` wraps the build: the module's functions go to bank 2
+  whole, bank 1 keeps one 16-byte stub per entry and a 52-byte dispatcher that runs the body when bank 2 is live
+  and the fallback otherwise (the stock callee the patch replaced, a declared value, or a hand-written function).
+  Bank 2 holds no branch and no pointer into the cave: its calls back go through a table whose address sits in one
+  word of patch RAM (`0x2405FF5C`). So an upstream module that must leave bank 1 no longer needs its source
+  edited, and the next JOEBOX release merges where a hand split conflicts. Measured: on pristine JOEBOX 2,
+  ChopShop and note repeat moved, bank 1 from 1,067 B to 6,054 B free; on 37.5.0 (ChopShop already split by hand,
+  D-038), note repeat alone leaves 1,784 B free where there were 287, the tool's verify green, two checks of
+  `test_solo.py` to adjust. When ChopShop itself is moved by tool, at the next upstream merge, `chop_header_post`
+  and `chop_forget` stay in bank 1 (`--keep`, +128 B): before the meter's first audio block every stub takes its
+  fallback, and a project loaded that early would skip part of ChopShop's header handling. Until then the hand
+  split stands. Not on a unit yet: the dispatcher, the patch-RAM word, the gate's cost (38 instructions a call).
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving
