@@ -559,8 +559,14 @@ static uint8_t *data_area(volatile struct kit_box *b)
    caller's buffer (HAL_SD_ReadBlocks_DMA, FUN_0807fef0) and keeps no data cache maintenance at all, while SDRAM is
    write-back cached (x2) and the long peek and poke reach the chunk through the cache. So before a read or a write
    every line of the bytes it moves is written out and forgotten (the card gets what the computer put; no dirty line
-   lands later on what the card wrote), and after a read forgotten again (the computer's next peek reads SDRAM). */
-#define DCIMVAC     (*(volatile uint32_t *)0xe000ef5cu)   /* data cache: forget this line */
+   lands later on what the card wrote), and after a read written out and forgotten again (the computer's next peek
+   reads SDRAM). Written out, not only forgotten, after the read too (review 12/11): f_read also copies bytes into the
+   buffer with the CPU (a partial sector, its window's sector: FUN_08084200 in FUN_08086866), and SDRAM takes no line
+   on a write miss (x2), so those bytes are in SDRAM - unless a line came back into the cache during the read (a
+   speculative read, a peek of the chunk), when they sit in that line and forgetting it would lose them. A line that
+   only the DMA wrote is clean in the cache or absent, so writing it out changes nothing. Not closed: a line holding
+   both bytes the CPU copied and bytes the DMA wrote (only a read that starts at no sector's start gives one: after a
+   seek), and taken into the cache during that read. */
 #define DCCIMVAC    (*(volatile uint32_t *)0xe000ef70u)   /* data cache: write this line out and forget it */
 static void chunk_lines(volatile uint32_t *op, const uint8_t *chunk, uint32_t n)
 {
@@ -642,7 +648,7 @@ static int job_rw(volatile struct kit_box *b)
     chunk_lines(&DCCIMVAC, d + D_CHUNK, n);
     r = (read ? fw_f_read : fw_f_write)(d + D_FIL, d + D_CHUNK, n, &done);
     if (read)
-        chunk_lines(&DCIMVAC, d + D_CHUNK, n);
+        chunk_lines(&DCCIMVAC, d + D_CHUNK, n);
     b->r[0] = (int32_t)done;
     return r ? fatfs(b, r) : R_OK;
 }

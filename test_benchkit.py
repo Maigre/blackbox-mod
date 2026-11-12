@@ -974,7 +974,9 @@ name(k, "C1")
 r = k.job(CARD, 0x47)
 r2 = k.job(CARD, 0x47)
 # the chunk's cache lines around the card's DMA (stock's SD reads and writes go by SDMMC1's IDMA straight to the
-# buffer, and SDRAM is write-back cached): written out and forgotten before a transfer, forgotten again after a read
+# buffer, and SDRAM is write-back cached): written out and forgotten before a transfer, and again after a read -
+# written out too, since f_read also copies bytes into the buffer with the CPU, which a line taken into the cache
+# during the read would hold (review 12/11; the emulator has no cache, so this checks the operations only)
 cache_ops = []
 k.e.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, kind, a, size, v, _: cache_ops.append(
     ({0xE000EF70: "clean+forget", 0xE000EF5C: "forget"}[a], v & 0xFFFFFFFF)), begin=0xE000EF5C, end=0xE000EF70)
@@ -992,9 +994,9 @@ k.job(CARD, 0x42, 100)
 wr = list(cache_ops)
 k.job(CARD, 0x44)
 lines = [D_CHUNK + 32 * i for i in range(128)]
-check(f"the chunk's cache lines: a 4 096-byte read writes out and forgets its 128 lines before FatFs, forgets them again "
-      f"after; a 100-byte write writes out and forgets its 4 lines before, nothing after ({len(rd)}, {len(wr)} operations)",
-      rd == [("clean+forget", a) for a in lines] + [("fatfs", 0)] + [("forget", a) for a in lines]
+check(f"the chunk's cache lines: a 4 096-byte read writes out and forgets its 128 lines before FatFs, and again after "
+      f"(not only forgets them); a 100-byte write writes out and forgets its 4 lines before, nothing after ({len(rd)}, "
+      f"{len(wr)} operations)", rd == [("clean+forget", a) for a in lines] + [("fatfs", 0)] + [("clean+forget", a) for a in lines]
       and wr == [("clean+forget", a) for a in lines[:4]] + [("fatfs", 0)], (rd[:3], rd[127:131], wr))
 fs.files["B.WAV"] = fs.files["B.WAV"][:5004]
 check("delete (job 0x47): gone; again: -6 (FR_NO_FILE, 4)", r["result"] == 0 and "C1" not in fs.files and r2["result"] == -6
