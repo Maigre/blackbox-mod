@@ -1,8 +1,9 @@
 # per suite: wall s, CPU s (user + sys) of one run on mgr-ran (i7-3770K, 4 cores / 8 threads), and the shards
 # check.sh runs it as (bench/suites.py; at most the pool width). Measured 2026-11-12, two suites at a time beside
-# four other sessions (load average 3 to 12): CPU seconds here run up to ~2x an idle box's. Order: longest first.
+# four other sessions (load average 3 to 20): CPU seconds here run up to ~2x an idle box's. Order: longest first.
+# test_clipwin: its whole run beside its six shards (bench/shard.py --prove 6), load 10 to 20.
 # suite	wall s	CPU s	shards
-test_clipwin.py	2193.5	2058.6	6
+test_clipwin.py	3116.0	2366.1	6
 test_munchi.py	404.4	397.4	1
 test_relapse.py	280.8	276.0	1
 test_confetti.py	191.6	187.5	1
