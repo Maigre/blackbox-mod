@@ -80,7 +80,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   `feat/looper` has them; corrections come at the unit, at Gate 4. The Looper comes up on the merged JOEBOX 2 base
   with its body in bank 2 (its 673 B of bank-1 glue no longer fit).
 - **D-043 (2026-11-12) — Crash-safe bank 2** (hub #t-059; the hold and its end proven on the unit the same day,
-  `notes/bench/2026-11-12-37.5.0d.md`; three points below are Thomas's to confirm). Three boots in a row ended by a fault (the recorder's « FLT1 » token at `0x388003d8`) or by
+  `notes/bench/2026-11-12-37.5.0d.md`; the three points below taken as built, Thomas 12/11:
+  « close as built »). Three boots in a row ended by a fault (the recorder's « FLT1 » token at `0x388003d8`) or by
   the window watchdog hold bank 2 off from the next boot on: no pairing scan, no card loader, `b2_present` says no
   payload, Tools reads « !held » (« ! » alone in a `USB_DIAG` build, whose label is the USB line). A power-on, a
   brown-out and every other reset that is not a crash set the count (`0x388003d4`) to 0 and end a hold; a boot
@@ -126,7 +127,10 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   shards a suite only when that digest still matches: any edit to the suite makes it run whole until it is proven
   again, so a shard can never pass where the whole run fails. Only `test_clipwin.py` is split (6 shards);
   `test_munchi`, `test_relapse` and `test_confetti` keep one emulator running from statement to statement and run
-  whole, so `test_munchi` sets the check's floor: about 12.5 min on mgr-ran, not the five the task aimed at.
+  whole, so `test_munchi` sets the check's floor: about 12.5 min on mgr-ran, not the five the task aimed at. On
+  37.5.0 (59 suites) the check takes 17.5 min and JOEBOX 2's `test_savexml` is the floor; Thomas, 12/11: 20 minutes
+  is enough. A suite missing from `bench/shards/times.tsv` is queued as a 2-minute job: redo the table from
+  `out/check-times.tsv` when suites arrive.
   `check.sh`'s pool is the box's core count (`CHECK_JOBS` overrides it); its diff against upstream stays the pool
   and one call into `bench/suites.py`, with an xargs fallback when `bench/` is absent.
 - **D-047 (2026-11-12) — A module moves to bank 2 by tool, its source untouched** (Thomas: « go for the split »,
