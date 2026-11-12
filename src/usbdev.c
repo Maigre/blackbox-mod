@@ -46,6 +46,7 @@
 
 void bkp_enable(void);           /* od.c */
 uint8_t *master_block(void);     /* master.c: the SDRAM block taken at boot, or 0 */
+void kit_poll(unsigned task);    /* kit.c: the bench kit (dev builds) */
 
 #define REG(a) (*(volatile uint32_t *)(a))
 
@@ -861,102 +862,12 @@ void usbdev_poll(void)
         return;
     case RUNNING:
         serve();
+#ifndef PUBLIC_BUILD
+        kit_poll(1);                                         /* kit.c: the bench kit's jobs for this task (buttons) */
+#endif
         return;
     default:
         return;
     }
 }
 
-#ifndef PUBLIC_BUILD
-/*
- * DEBUG: the bench's parameter mailbox (dev builds only, as the peek and poke; fork-only, D-019). The computer
- * writes a request with the poke; the GUI task applies it right after its knob scan (the app pass, 0x080a2cd6), as
- * the 0x6e message a turned knob's view sends the app (FUN_080a1718 -> SetCellParam: the pad's store, the engine's
- * 0x39, the screens' 0x66), so the store, the engine, a preset save and every Clip Window hook see it as a turn.
- * At MBOX_AT in the boot-time SDRAM block: cw_bank's 4 KB (CW_OFFSET), past cw_bank (bench/bbusb.py: set, get).
- *   +0x00 magic MBOX_MAGIC   +0x04 seq (written last)   +0x08 op, row, col (rows from the bottom), 0
- *   +0x0c id (u16), 0        +0x10 value (i32)
- *   firmware: +0x14 done (= the seq it served, written last)   +0x18 result   +0x1c the store's value after
- * op 1 sets a pad row (MBOX_IDS only, in the table's min .. max; Pad Mode only Sample .. Granular, never New Rec /
- * New Multi), op 2 reads one. Result 0 done, -1 an unknown op, -2 not a pad, -3 not a row it may set, -4 out of range.
- * One request at a time: a seq is served once; nothing happens while the magic is not there.
- */
-#include "clipwin.h"
-#define MBOX_AT    (CW_OFFSET + 0xf00u)
-#define MBOX_MAGIC 0x3158424du            /* "MBX1" */
-#define APP        ((uint8_t *)0x24020088u)
-_Static_assert(sizeof(struct cw_bank) <= 0xf00u && 0xf00u + 0x20u <= CW_BYTES, "the mailbox sits past cw_bank, in its 4 KB");
-
-struct mbox {
-    uint32_t magic, seq;
-    uint8_t op, row, col, pad0;
-    uint16_t id, pad1;
-    int32_t value;
-    uint32_t done;
-    int32_t result, back;
-};
-
-/* Stock's functions this calls, at their fixed 3.1.9 addresses, as Thumb symbols the linker resolves, so each call is
-   one bl rather than a literal and a blx (bank 1 room: 37.3.2d, D-027). */
-void mbox_knob_scan(void *hw);                           /* FUN_08040724: the knobs' ADC scan */
-void mbox_app_msg(uint8_t *app, const void *msg);        /* FUN_080a1718: the app's message handler (case 0x6e) */
-int32_t mbox_param_min(unsigned id);                     /* FUN_0808e2d0 / FUN_0808e304: the parameter table's min */
-int32_t mbox_param_max(unsigned id);                     /*   and max of an id */
-int32_t mbox_get(const void *store, unsigned id);        /* FUN_08093e9c: a store's value of an id */
-__asm__(".global mbox_knob_scan, mbox_app_msg, mbox_param_min, mbox_param_max, mbox_get\n"
-        ".thumb_set mbox_knob_scan, 0x08040724\n"
-        ".thumb_set mbox_app_msg, 0x080a1718\n"
-        ".thumb_set mbox_param_min, 0x0808e2d0\n"
-        ".thumb_set mbox_param_max, 0x0808e304\n"
-        ".thumb_set mbox_get, 0x08093e9c\n");
-#define fw_knob_scan   mbox_knob_scan
-#define fw_app_msg     mbox_app_msg
-#define fw_param_min   mbox_param_min
-#define fw_param_max   mbox_param_max
-#define fw_get         mbox_get
-
-/* Pad Mode, Loop Mode, Quant Size, Loop Start, Loop End, Launch Mode, Sync, Beat Count, Loop Fade, Region, Slip, Loop
-   Len, Fit */
-static const uint16_t MBOX_IDS[] = {0x8b, 0x8d, 0x47, 0x91, 0x92, 0x93, 0x94, 0xd2, 0xfa, 0x1c8, 0x1c9, 0x1ca, 0x1cb};
-
-/* Replaces bl FUN_08040724 @0x080a2cd6 (dev builds only: patches/cpu.py), the app pass's knob scan */
-void usbdev_mailbox_scan(void *hw)
-{
-    fw_knob_scan(hw);
-    uint8_t *block = master_block();
-    volatile struct mbox *x = block ? (volatile struct mbox *)(block + MBOX_AT) : 0;
-    uint32_t seq = x ? x->seq : 0;
-    if (!x || x->magic != MBOX_MAGIC || seq == x->done)
-        return;
-    /* the request, read once its seq says it is all there (no volatile re-reads: they cost a zero-extend each) */
-    __asm__ volatile("" : : : "memory");
-    const struct mbox *q = (const struct mbox *)x;
-    unsigned op = q->op, row = q->row, col = q->col, id = q->id, known = 0;
-    int32_t v = q->value, r = 0;
-    for (unsigned i = 0; i < sizeof MBOX_IDS / sizeof MBOX_IDS[0]; i++)
-        known |= MBOX_IDS[i] == id;
-    if (op != 1 && op != 2)
-        r = -1;
-    else if (row > 3 || col > 3)
-        r = -2;
-    else if (!known)
-        r = -3;
-    else if (op == 1) {
-        int32_t lo = fw_param_min(id), hi = fw_param_max(id);
-        if (id - 0x91u < 2)                          /* Loop Start / End: the table holds 0 .. 1000 there, not frames */
-            lo = 0, hi = SRC_BAD - 1;
-        if (id == 0x8b)
-            hi = 3;
-        if (v < lo || v > hi)
-            r = -4;
-        else {
-            uint32_t msg[6] = {0x6e, 0, row << 4 | col, id, (uint32_t)v, 0};
-            fw_app_msg(APP, msg);
-        }
-    }
-    if (r >= 0)
-        x->back = fw_get(APP + 0x1840u + row * 0xf0u + col * 0x30u, id);
-    x->result = r;
-    x->done = seq;
-}
-#endif

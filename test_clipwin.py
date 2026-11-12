@@ -5073,22 +5073,29 @@ png("out/halo-preview.png", [frame(st_lc), frame(lc)])
 info("out/halo-preview.png: stock's corner labels (left) and these (right), over the screen's cyan on its background")
 
 # ====================================================================================================== 12c. the mailbox
-# The bench's parameter mailbox (src/usbdev.c, dev builds only): a request the computer pokes into cw_bank's 4 KB
-# (+0xF00) is applied in the GUI task after the knob scan (0x080a2cd6), as the 0x6e message a knob's view sends the app
-# (FUN_080a1718 -> SetCellParam, real): the store, the engine's 0x39 and the screens' 0x66 as from a turn. Real: the
-# app's handler, SetCellParam, the store, the parameter table (the stock registrar's, with our rows). Stubbed: the knob
-# scan's ADC, SetCellParam's posts (recorded).
+# The bench's parameter mailbox (dev builds only; now the bench kit's MBX1, src/kit_b2.c in bank 2, behind the
+# gate src/kit.c): a request the computer pokes into cw_bank's 4 KB (+0xF00) is applied in the GUI task after the knob
+# scan (0x080a2cd6), as the 0x6e message a knob's view sends the app (FUN_080a1718 -> SetCellParam, real): the store,
+# the engine's 0x39 and the screens' 0x66 as from a turn. Real: the gate, the app's handler, SetCellParam, the store, the
+# parameter table (the stock registrar's, with our rows). Stubbed: the knob scan's ADC, SetCellParam's posts (recorded).
+# test_benchkit.py has the kit's own suite (the gate, every job, the release without it).
 MB = BLOCK + 0xB100 + 0xF00
-check("the app pass's knob scan at 0x080a2cd6: stock 'bl 0x08040724' is now 'bl usbdev_mailbox_scan' (dev build)",
-      branch(0x080A2CD6, stock) == ("bl", 0x08040724) and branch(0x080A2CD6) == ("bl", S["usbdev_mailbox_scan"]))
-# Its five stock calls are direct bl's to their 3.1.9 addresses (absolute Thumb symbols in usbdev.c, bank 1 room for
-# 37.3.2d): a blx there would switch to ARM state, which this core does not have.
-_mb = S["usbdev_mailbox_scan"] & ~1
-mb_calls = [(i.mnemonic, int(i.op_str.lstrip("#"), 16)) for i in cs.disasm(img[_mb - BASE:_mb - BASE + sizes["usbdev_mailbox_scan"]], _mb)
-            if i.mnemonic in ("bl", "blx")]
-check("...and the mailbox calls stock with bl only: the knob scan, the table's min and max, the app's handler, the store",
-      sorted(t for m, t in mb_calls if m == "bl" and t < 0x080F1E78) == [0x08040724, 0x0808E2D0, 0x0808E304, 0x08093E9C, 0x080A1718]
-      and all(m == "bl" for m, t in mb_calls), [(m, hex(t)) for m, t in mb_calls])
+check("the app pass's knob scan at 0x080a2cd6: stock 'bl 0x08040724' is now 'bl kit_scan' (dev build)",
+      branch(0x080A2CD6, stock) == ("bl", 0x08040724) and branch(0x080A2CD6) == ("bl", S["kit_scan"]))
+# kit_scan calls the knob scan with a direct bl to its 3.1.9 address (an absolute Thumb symbol, bank 1 room): a blx there
+# would switch to ARM state, which this core does not have. The rows' body is bank 2's kit_row, which reaches stock
+# through Thumb pointers (bit 0 set) in its literal pool: the table's min and max, the app's handler, the store.
+_ks = S["kit_scan"] & ~1
+ks_calls = [(i.mnemonic, int(i.op_str.lstrip("#"), 16)) for i in cs.disasm(img[_ks - BASE:_ks - BASE + sizes["kit_scan"]], _ks)
+            if i.mnemonic in ("bl", "blx", "b", "b.w")]
+_kr = S["kit_row"] & ~1
+_b2 = open("out/bank2.bin", "rb").read()
+kr_words = {struct.unpack_from("<I", _b2, o)[0] for o in range(_kr - 0x08100000, _kr - 0x08100000 + sizes["kit_row"] + 32, 2)}
+check("...kit_scan: bl to the knob scan, then the gate (kit_poll); the rows' body in bank 2 (kit_row) calls the table's "
+      "min and max, the app's handler and the store through Thumb pointers",
+      ks_calls[:1] == [("bl", 0x08040724)] and any(t == S["kit_poll"] & ~1 for m, t in ks_calls)
+      and 0x08100000 <= S["kit_row"] < 0x08200000 and {0x0808E2D1, 0x0808E305, 0x080A1719, 0x08093E9D} <= kr_words,
+      ([(m, hex(t)) for m, t in ks_calls], hex(S["kit_row"])))
 
 
 def mb_screen():
@@ -5116,7 +5123,7 @@ def mb_req(sc_, op, row, col, pid, v, seq=None, magic=0x3158424D):
     seq = (m_.r32(MB + 0x14) + 1) & 0xFFFFFFFF if seq is None else seq
     m_.uc.mem_write(MB, struct.pack("<IIBBBBHHi", magic, seq, op, row, col, 0, pid, 0, v))
     sc_.mposts.clear()
-    m_.call(S["usbdev_mailbox_scan"], 0x24000170, count=20_000_000)
+    m_.call(S["kit_scan"], 0x24000170, count=20_000_000)
     done, res, back = struct.unpack("<Iii", bytes(m_.uc.mem_read(MB + 0x14, 12)))
     m_.call(0x08093E9C, ST12, pid)
     store_ = struct.unpack("<i", struct.pack("<I", m_.uc.reg_read(66) & 0xFFFFFFFF))[0]
