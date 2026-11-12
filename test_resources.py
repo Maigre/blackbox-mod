@@ -15,12 +15,12 @@ What is checked, on the tree this runs in (read statically: no build needed for 
    store-defaults hook run under Unicorn with the stock registrars / store_add stubbed, and the ids they really
    register or add compared with what part 1 read from the sources.
 4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule and per way of writing it (a registered
-   id taken again directly and through a helper; an xml name taken again; a drifted copy
+   id taken again directly, through a helper, through a function-like macro; an xml name taken again; a drifted copy
    of an id; an SDRAM part on another as mem + OFF, through a parameter, an out-parameter, master_block() + OFF and
    &mem[enum]; a backup-SRAM word on another module's, as a literal and as base macro + offset, and a `shares` tag that
    allows it; a call site patched twice and a TAKES that allows it; a wanted site; a store pushed past its cap; a
    hooked store_add no tag names); each must fail the rule it targets, or pass it when allowed. Forms the reader
-   cannot follow (an untraced block pointer, a literal block offset, a
+   cannot follow (a registrar in a function-pointer variable, an untraced block pointer, a literal block offset, a
    backup-SRAM cast with a variable offset) must be said not read, which fails part 1. Report mutants, two copies of
    this tree: the same free backup SRAM claimed by a module on each side (a row) or by one struct moved to another
    file (no row), a parameter added on one of our ids (a row), a trampoline on a stock function we call (a row).
@@ -201,6 +201,12 @@ mutant(f"... the same through a helper that takes the id and the xml name as par
 mutant(f"xml name {p0['xml']!r} on the free id {R.h(free_id)}",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f'void zz_register(void *t) {{ fw_register_list(t, {R.h(free_id)}, "Zz:", 0, 0, "{p0["xml"]}"); }}\n'),
        "xml-name")
+mutant(f"id {R.h(p0['id'])} registered again through a function-like macro wrapping the registrar",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + '#define ZZ_REG(t, id, x) fw_register_list(t, id, "Zz:", 0, 0, x)\n'
+                     f'void zz_register(void *t) {{ ZZ_REG(t, {R.h(p0["id"])}, "zzmutant"); }}\n'), "param-id")
+mutant("the registrar held in a function-pointer variable",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + "void zz_register(void *t) { register_list_fn r = fw_register_list; "
+                     f'r(t, {R.h(p0["id"])}, "Zz:", 0, 0, "zzmutant"); }}\n'), None)
 # a module's own id read under a copied name (clipwin_b2.c's B2_P_SLIP) that has drifted from the registered value
 named = next((p for p in man["params"] if p.get("id_name") and not p.get("via")), None)
 SET_AT = man["stock_api"]["setting"][0] if man["stock_api"]["setting"] else None

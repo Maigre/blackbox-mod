@@ -14,7 +14,7 @@ can hide there, so the console line counts it and an unread tree never reads as 
 
 What is read, and from where (notes/resources.md has the long form):
 - parameter ids: every call to a binding of the stock registrars (a macro of src/*.c bound to a stock address and
-  named *regist*), directly or through a helper, its id evaluated from the file's #defines,
+  named *regist*), directly, through a helper or a function-like macro, its id evaluated from the file's #defines,
   enums, loops and const arrays; the xml name says which parameter it is. Where ids are read: the calls of a
   binding named *setting* (fw_setting).
 - stock functions called: every macro binding one with FN() / B2_FN(); the report flags one whose first bytes the
@@ -180,7 +180,7 @@ class CFile:
         self.raw = open(os.path.join(tree.path, rel), encoding="utf-8", errors="replace").read()
         code, blank, self.comments = lex(self.raw)
         self.code_pp = code                   # comments out, preprocessor lines kept (macro bodies)
-        self.macros, self.fmacros, self.includes, self.exclusive = {}, {}, [], []
+        self.macros, self.fmacros, self.includes, self.exclusive, self.fparams = {}, {}, [], [], {}
         lines_c, lines_b = code.split("\n"), blank.split("\n")
         self.conds = []                       # per line (0-based): the #if conditions it sits under
         stack, dead = [], 0
@@ -222,6 +222,8 @@ class CFile:
                     if m:
                         (self.fmacros if m.group(2) else self.macros).setdefault(
                             m.group(1), (m.group(3).strip(), i + 1, tuple(c for c in stack if c)))
+                        if m.group(2):
+                            self.fparams.setdefault(m.group(1), [x.strip() for x in m.group(2)[1:-1].split(",")])
                 elif kw == "include" and not dead:
                     m = re.match(r'"([^"]+)"', rest)
                     if m:
@@ -419,7 +421,7 @@ class CEval(ast.NodeVisitor):
         if depth > 20:
             raise Unresolved("macro depth")
         self.depth = depth
-        s = _CAST.sub(" ", _SUFFIX.sub(r"\1", expr.strip()))
+        s = _CAST.sub(" ", _SUFFIX.sub(r"\1", expr.strip())).strip()
         s = s.replace("&&", " and ").replace("||", " or ")
         s = re.sub(r"!(?!=)", " not ", s)
         try:
@@ -967,11 +969,31 @@ def scan(path, label, do_build=False, stock=None):
                     out.append((g, cfn, cpos, env, exprs))
         return out
 
+    def wrapped(f, names):
+        """calls of a function-like macro of f whose body calls one of names, the macro expanded: (name, fn, pos, args)"""
+        wraps = {w: (f.visible("fparams").get(w), body) for w, (body, _l, _c) in f.visible("fmacros").items()
+                 if re.search(r"\b(" + "|".join(map(re.escape, names)) + r")\s*\(", body)} if names else {}
+        for w, (ps, body) in wraps.items():
+            for _n, fn, pos, args in calls(f, {w}):
+                text = body
+                for p_, a_ in zip(ps or [], args):
+                    text = re.sub(r"\b" + re.escape(p_) + r"\b", lambda _m, a_=a_: a_, text)
+                code, blank, _c = lex(text)
+                for m in re.finditer(r"\b(" + "|".join(map(re.escape, names)) + r")\s*\(", blank):
+                    o = m.end() - 1
+                    yield m.group(1), fn, pos, split_top(code, blank, o + 1, match_close(blank, o))
+
+    def taken_as_value(f, names):
+        """a binding used other than by a call (a function-pointer variable): calls through it are not read"""
+        for m in re.finditer(r"\b(" + "|".join(map(re.escape, names)) + r")\b(?!\s*\()", f.blank) if names else ():
+            warn.append(f"{f.rel}:{f.line(m.start())}: {m.group(1)} is taken as a value: calls through it are not read")
+
     # ---- parameter registrations and store adds
     params, adds, forwarded = [], [], []
     for f in t.sources():
         regs, sadd = names_for(f, "register"), names_for(f, "store_add")
-        for name, fn, pos, args in calls(f, regs | sadd):
+        taken_as_value(f, regs | sadd)
+        for name, fn, pos, args in list(calls(f, regs | sadd)) + list(wrapped(f, regs | sadd)):
             if len(args) < 2:
                 continue
             idx, line = args[1], f.line(pos)
