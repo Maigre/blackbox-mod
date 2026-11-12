@@ -1652,11 +1652,18 @@ def sdram_report(o, t, add):
             ", ".join(f"{m['name']} {h(m['ours'])}" for m in out["moved"]),
             ", ".join(f"{m['name']} {h(m['theirs'])}" for m in out["moved"]),
             "the two layouts differ: a merge keeps one master.c and re-bases the other side's modules")
+    # boot-time allocations other than the block that only one side makes (stretch.c's own area)
+    key = lambda a: (a["file"], a["func"])                          # noqa: E731
+    ko, kt = {key(a) for a in o["allocations"]}, {key(a) for a in t["allocations"]}
+    out["allocations_theirs_only"] = [a for a in t["allocations"] if key(a) not in ko]
+    out["allocations_ours_only"] = [a for a in o["allocations"] if key(a) not in kt]
+    also = "; ".join(f"their {a['file']}:{a['line']} {a['func']} takes its own {'/'.join(h(x) for x in a['sizes']) or '?'} at boot"
+                     for a in out["allocations_theirs_only"])
     lim = (o.get("bound") or {}).get("value", o["block"])
     if o["block"] and out["merged_on_ours"] > lim:
         add("sdram", "block size", f"{h(o['block'])}" + (f" (master.c:{o['bound']['line']}: {o['bound']['assert']})" if o.get("bound") else ""),
             h(t["block"]), f"merged needs {h(out['merged_on_ours'])} on our layout, {h(out['merged_on_theirs'])} on theirs"
-            + (f"; our core {h(o['core'])} -> {h(out['core_on_ours'])}" if out["core_on_ours"] else ""))
+            + (f"; our core {h(o['core'])} -> {h(out['core_on_ours'])}" if out["core_on_ours"] else "") + (f"; {also}" if also else ""))
     return out
 
 
@@ -1675,7 +1682,8 @@ def bank_report(bo, bt, base, add):
             e2 = max(0, o["bank2"] + t["bank2"] - b["bank2"])
             # both sides shrank it from the base: perhaps the same move made twice (Munchi's engine to bank 2), which a
             # merge holds once; the sum then undercounts, so the high end takes the larger side
-            both_down = o["bank1"] < b["bank1"] and t["bank1"] < b["bank1"] and e1 < max(o["bank1"], t["bank1"])
+            both_down = all(b["bank1"] - x >= max(256, b["bank1"] // 10) for x in (o["bank1"], t["bank1"])) \
+                and e1 < max(o["bank1"], t["bank1"])
         else:
             b, e1, e2, both_down = None, max(o["bank1"], t["bank1"]), max(o["bank2"], t["bank2"]), False
         m1 += e1
@@ -1793,6 +1801,10 @@ def md_report(r):
           f"Ours {h(sd['ours']['block'])} (core {h(sd['ours']['core'])}), theirs {h(sd['theirs']['block'])}; merged "
           f"{h(sd['merged_on_ours'])} on our layout, {h(sd['merged_on_theirs'])} on theirs"
           + (f"; our core would grow to {h(sd['core_on_ours'])}" if sd.get("core_on_ours") else "") + ".", ""]
+    for side in ("theirs", "ours"):
+        for a in sd.get(f"allocations_{side}_only", []):
+            L += [f"Only {side}: {a['file']}:{a['line']} {a['func']}({a['expr']}) = {'/'.join(h(x) for x in a['sizes']) or '?'} "
+                  f"at boot, outside the block.", ""]
     if sd["new_theirs"]:
         L += ["Their parts that ours has not:", "", "| part | file | at | size | rides in our | lands on, as is |", "|---|---|---|---|---|---|"]
         for p in sd["new_theirs"]:
@@ -1810,7 +1822,10 @@ def md_report(r):
     b = r["bank"]
     if "objects" in b:
         L += ["## Flash", "", f"Bank 1: ours {b['ours_bank1']} B, theirs {b['theirs_bank1']} B, merged estimate "
-              f"{b['merged_bank1']} B of {b['cave_length']} B ({b['method']}). Bank 2 merged estimate {b['merged_bank2']} B.", "",
+              f"{b['merged_bank1']}" + (f"..{b['merged_bank1_high']}" if b["merged_bank1_high"] != b["merged_bank1"] else "")
+              + f" B of {b['cave_length']} B ({b['method']}" + (f"; the high end counts the larger side of {', '.join(b['both_shrank'])}, "
+                                                                 "which both sides shrank" if b["both_shrank"] else "")
+              + f"). Bank 2 merged estimate {b['merged_bank2']} B.", "",
               "| object | ours | theirs | base | merged |", "|---|---|---|---|---|"]
         for o in b["objects"]:
             if o["ours"] or o["theirs"]:
