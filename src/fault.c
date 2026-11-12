@@ -26,6 +26,7 @@
  *   0x38800fe8  SAVED    6 words  the ring as it stood when the unit last booted: the trail INTO the hang
  */
 #include <stdint.h>
+#include "b2.h"                                /* bkp_put's prototype */
 
 #define BKP_END    0x38801000u                 /* backup SRAM is 4 KB: nothing may be written at or above this */
 
@@ -108,6 +109,15 @@ static void bkp_flush(void)
 {
     for (uint32_t a = 0x38800000u; a < BKP_END; a += 32u)
         DCCMVAC = a;
+    __asm volatile("dsb\n isb");
+}
+
+/* The same for one word and its line, for whoever keeps state here across a reset (b2.h: the bank 2 words). Out of
+   line since t-059: b2.h had it inline, and nine writes in cpu.c and b2load.c cost the cave 112 bytes more. */
+void bkp_put(volatile uint32_t *at, uint32_t value)
+{
+    *at = value;
+    DCCMVAC = (uint32_t)at;
     __asm volatile("dsb\n isb");
 }
 
