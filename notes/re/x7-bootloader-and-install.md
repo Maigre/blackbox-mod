@@ -6,7 +6,8 @@ sha256 `9343d292…`). Read 2026-11-12 in its own Ghidra project and with `arm-n
 app's side from stock 3.1.9's exports. Nothing was tried on the unit.
 
 Marks: ✓ = the bootloader's own code run under Unicorn (scratch harnesses, see "How this was checked"); *static* =
-read twice (decompile and disassembly of the same bytes); *inferred* = a reasoning step past what was read.
+read twice (decompile and disassembly of the same bytes; §6.1's readings from the disassembly alone); *inferred* = a
+reasoning step past what was read; *design* = a proposal, nothing built.
 
 ## Short answers
 
@@ -26,15 +27,22 @@ read twice (decompile and disassembly of the same bytes); *inferred* = a reasoni
    the bank 2 erase disagrees with one bench line (§4.3).
 4. **It never updates itself.** The only erases in the dump are the installer's two and the calibration's one (bank 2
    sector 7); no path writes below `0x08040000`. ✓ / *static*. High confidence.
-5. **No buttonless path through the stock bootloader.** Its only input the app could influence would have to survive a
-   reset and be read before the decision; nothing it reads does (§6). Short of wiring the INFO button, an install
-   with no hands needs code of our own. High confidence.
+5. **No buttonless path through a reset; one possible path through a jump, untried.** Two answers:
+   - Nothing the app can leave behind survives a reset and changes the decision: the bootloader reads two pins it
+     sets up itself and the app's first 128 bytes, and no RAM, backup SRAM, RTC or reset-cause word (§2, §6). ✓ /
+     *static*. High confidence.
+   - A jump is not a reset. An app that locks PC3 (GPIOC's LCKR) so that it reads low, then branches to the
+     bootloader's reset handler `0x0800051F`, would find the stock installer running with no hands: the bootloader
+     sets PC3 up only through registers a lock freezes, never writes its output and never resets GPIOC (*static*, and
+     ✓ for its GPIOC writes before the decision). Whether the bootloader comes up cleanly from the app's state is not
+     known: not tried, not emulated end to end (§6.1). **Open.**
 6. **Our own updater** is possible from the app, the way `b2load.c` writes bank 2, but it rewrites the bank it runs
    from: it must run from ITCM with interrupts off, have the whole file in SDRAM first, feed the window watchdog, and
    write the 128-byte vector window last (§7). What only hands repair: anything in bank 1 sectors 2–7 that the
    bootloader can still read. What nothing short of a debug probe repairs: bank 1 sectors 0–1, the option bytes, and
    a word of the app's vector window left unreadable by a power cut (*inferred*, §4.2; the stock installer has the
-   same exposure). **Recommendation: keep the hands** (§8).
+   same exposure). **Recommendation: keep the hands**; if a buttonless install is ever wanted, try §6.1's route
+   before writing a flasher of our own (§8).
 
 Side findings: **INFO alone starts the installer** (✓ in the code, never tried); the bootloader's MPU region 3 is
 the Device mapping under JOEBOX's patch RAM in D-013 (§5); a `BLACKBOX.bin` whose length is 29, 30 or 31 modulo 32
@@ -228,16 +236,65 @@ The bench check is in §9.
 
 ## 6. No buttons: is there a path?
 
-No. ✓ / *static*: the decision is two GPIO levels read right after reset, and the installer one more read of PC3.
-What the app could try, and why it fails:
+**Not through a reset.** ✓ / *static*: the decision is two GPIO levels read right after reset, and the installer
+one more read of PC3. What the app could leave behind, and why it fails:
 
 - Leave a word in RAM, backup SRAM or an RTC register: never read (§2).
-- Drive PC3 low before a reset: a system reset puts every GPIO back in its reset state (*inferred*, STM32H7 reset
-  scheme), and the bootloader sets the pin up as an input itself.
+- Drive PC3 low before a reset: a system reset puts every GPIO back in its reset state and releases any port lock
+  (*inferred*, STM32H7 reset scheme), and the bootloader sets the pin up as an input itself.
 - Erase the app's vectors: the bootloader stays, but on its test pages; the installer still wants INFO at the first
   pass. A unit left like that needs hands.
-- Jump into the bootloader past its decision: it reinitialises the whole machine and reads PC3 again at the first pass.
 - Call its install steps from the app: they depend on its own FatFs, SD driver and RAM layout, which overlap the app's.
+- Jump into the bootloader with PC3 left alone: it reads no button, finds the app and jumps straight back (a soft
+  restart). Jumping past its decision, into `main` or the installer, gains nothing: the first pass reads PC3 again.
+
+### 6.1 Through a jump, with PC3 locked (open: not tried, not emulated end to end)
+
+A jump is not a reset, and a GPIO port lock holds until the next reset (ST's documented behaviour, the GPIO chapter
+of RM0433; not checked on the unit). The lock freezes a pin's MODER, OTYPER, OSPEEDR, PUPDR and AFR bits, not its
+output register.
+
+- **What the bootloader does to PC3.** It configures it only through `HAL_GPIO_Init` from its input table
+  (`0x08001544`; the entry at `0x24000DE4 + 0x90`, built at `0x080018A4`). ✓ The only GPIOC registers the boot run
+  writes before the decision are MODER and PUPDR, both frozen by a lock. It never writes PC3's output (*static*): the
+  dump's six write-pin calls go to GPIOG and to the LED table at `0x24001494`, which holds no GPIOC pin, and the button
+  scanner (`0x080016E8`) mirrors only entries 0–10 to LEDs (PC2 and PC3 are entries 11 and 12). Its other GPIOC
+  set-ups are PC0/4/5, PC6, PC7, PC8–12 (SDMMC1, with a de-init of those five at `0x08003952`) and PC13. It never
+  resets GPIOC: no write to RCC_AHB4RSTR anywhere (*static*: every store at offset `0x88` resolves to CPACR, a RAM
+  table or a UART handle). It reads PC3 only from IDR (`0x08000FD0`, `0x08015D00`).
+- **How PC3 can read low.** Locked in analog mode, the pin's IDR bit reads 0 and nothing drives the pin; locked as an
+  output driven low, it reads low as a held INFO does (both ST's documented behaviour). The analog lock drives
+  nothing against the button circuit, which was not read.
+- **Then** both PC3 reads see INFO held: the bootloader stays and its first screen pass starts the installer. ✓ In the
+  model, with PC3 low on every pass, the installer runs exactly as with INFO let go after the first pass (480 passes,
+  "Success! Restarting.", reset; no file: "Unable to find firmware.", reset): its state machine `0x08015BDC` reads
+  neither the key ring nor PC3 (*static*). Its final `NVIC_SystemReset` releases the lock, so the next boot starts
+  the new app with no button.
+- **What it needs** (*design*):
+  - a one-shot flag in backup SRAM, set by the running app only after it has checked `BLACKBOX.bin` on the card
+    (size, id and sum: the installer checks nothing), then a restart; the early code clears the flag **before** the
+    jump, so a failure never loops;
+  - the jump made from `main`, as early as possible and in any case before `0x080442FE`, where stock starts WWDG1
+    (`0x08046938`). The bootloader never feeds it (no `0x50003000` anywhere in the dump, *static*) and the screen
+    loop's rate is unmeasured, so a jump after it could be reset after the erase has begun. Before that point the
+    app also still runs `main` on its main stack, ahead of the scheduler (`0x08044322`), as the bootloader's reset
+    handler assumes (it sets SP, then CONTROL = 0). No fork hook sits in `main` today;
+  - the machine quiet: every interrupt disabled and cleared at the NVIC, SysTick off, every DMA stopped, PRIMASK and
+    BASEPRI 0, and the D-cache cleaned, invalidated and off. The bootloader never enables the D-cache and does no
+    data-cache maintenance (*static*: the only CCR write sets the I-cache bit, `0x08001016`); left on, its SD reads
+    by DMA could be programmed stale and verified against the same stale lines;
+  - then PC3 to analog, the lock sequence on GPIOC LCKR bit 3 (checked by reading LCKK back; no jump if it did not
+    take), and a branch to `0x0800051F`. The bootloader's SystemInit (`0x0800F644`) puts the clock back on HSI and
+    turns the PLLs off itself, and its reset handler sets its own stack and VTOR.
+- **Risks.** The app's leftover state (clocks, the D-cache, DMA, interrupt sources, peripherals the bootloader sets up
+  again) is unknown: nothing was run. A hang or fault before the installer's erase leaves flash untouched, and a power
+  cycle starts the old app (the lock and the flag are gone): benign. One after the erase is a failed install: hands.
+  A lock that does not take sends the bootloader straight back into the app: benign. Stale cache or DMA data could be
+  programmed and pass the verify: a bad app, hands. No flash is written by code of ours: the erase and the program
+  are the stock installer's, with its exposures (§4.2), the cut that only a probe repairs included.
+- **A first bench trial needs no erase**: run it with no `BLACKBOX.bin` on the card. The installer stops at "Unable
+  to find firmware." and restarts (✓ in the model), which proves the route up to the installer without touching
+  flash.
 
 ## 7. What our own updater would need
 
@@ -280,17 +337,21 @@ What can go wrong, and what repairs it:
 | an erase of bank 2 sector 7 | defaults instead of the factory trims, no crash | hands plus instruments: the bootloader's calibration (§3) |
 
 The stock installer has the same exposure in the first three rows, and a worse cut state: it writes the vectors
-first.
+first. §6.1's route uses the stock installer, so it has the stock installer's rows and not the bug rows.
 
 ## 8. Recommendation
 
-**Keep the hands.** No buttonless path exists through the stock bootloader, and the one we could build adds a failure
-with no repair on the unit (a bug that reaches bank 1 sectors 0–1, §7) to save a two-finger hold at power-on. Hands
-are needed after a failed install either way, and a power cut at the wrong moment needs a probe whatever runs the
-install (§4.2). Build the updater only for a real unattended need (an automated bench), from §7, first on the bench
-unit with a known-good `BLACKBOX.bin` on the card. Cheaper and worth doing now (*design*): a build-time check that
-`BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), and correct the fork's wording on bank 2 once §9's
-check has settled §4.3.
+**Keep the hands.** Nothing the app leaves behind survives a reset, and the updater we could build adds a failure with
+no repair on the unit (a bug that reaches bank 1 sectors 0–1, §7) to save a two-finger hold at power-on. Hands are
+needed after a failed install either way, and a power cut at the wrong moment needs a probe whatever runs the install
+(§4.2).
+
+§6.1's lock-and-jump route changes the weighing: no flash is written by code of ours, its likely failures are benign
+(a power cycle) or need hands, and its first bench trial erases nothing. It is still untried and unmodelled from the
+app's state. **If a buttonless install is ever wanted** (an automated bench), try that route first, on the bench unit,
+with no `BLACKBOX.bin` on the card; build §7's updater only if the route fails. Cheaper and worth doing now
+(*design*): a build-time check that `BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), and correct the
+fork's wording on bank 2 once §9's check has settled §4.3.
 
 ## 9. Open
 
@@ -301,6 +362,9 @@ check has settled §4.3.
   version. Leave by power cycle; do not step to the SD Card Test pages (they write `TESTDATA.BIN`) nor hold INFO on
   the Clock Test page (calibration).
 - INFO alone starting the installer: in the code, never tried.
+- The lock-and-jump route (§6.1): the lock's behaviour on this chip, the button circuit with PC3 locked, and the
+  bootloader coming up from the app's state are all untried. Not to be tried before someone asks for a buttonless
+  install; its first trial goes without `BLACKBOX.bin` on the card.
 - Whether a power cut during a sector erase or a flash-word program leaves a word with two bad bits (§4.2): inferred
   from `cpu.c`'s record of this chip, not measured.
 - A card read error ending in "Success!" (§4.2): the code run in the model with FatFs stubbed; never seen on a unit.
@@ -324,7 +388,10 @@ check has settled §4.3.
   every sector erase logged, 9 sizes and 64 residues. Their outputs: `truth.txt`, `ui.txt`, `flash.txt`,
   `residues.txt` there.
 - A second reader's review the same day led to §4.2's card read error and the tail's dependence on the image's bytes;
-  §4.2's cut that needs a probe. Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`): the
-  program and verify steps with chosen file bytes and card read failures, the verify's tail with the stale bytes
+  §4.2's cut that needs a probe; §6.1. Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`):
+  the program and verify steps with chosen file bytes and card read failures, the verify's tail with the stale bytes
   `0xFF` or not and six read-failure cases.
-- `heldrun.py` (output `heldrun.txt`): the boot run with both pins low and the words of the vector window it reads.
+- `heldrun.py` (output `heldrun.txt`): the boot run with both pins low and the words of the vector window it reads;
+  the GPIOC registers it writes before the decision, and the installer with INFO held low on every pass. The
+  bootloader readings behind §6.1 (GPIOC, the RCC reset, the caches, the watchdog) are `arm-none-eabi-objdump` reads
+  of the dump; the watchdog and scheduler starts in stock's `main` come from its listing export.
