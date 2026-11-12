@@ -357,6 +357,13 @@ def honest(u):
     u.power_on(keep=True, rsr=POWER_ON | RESTART)            # flags from before stock's clear can still be there
     out.append(("a power-on that finds the fault's token still in backup SRAM (FAULT_SHOW's hold, power-cycled): 0",
                 u.count() == 0 and u.u32(FAULTED) == 0, (u.count(), hex(u.u32(FAULTED)))))
+    u.fault()
+    u.fault()
+    u.up(3)
+    u.call("fault_record", FRAME, 0xFFFFFFED)                # the token is up again ...
+    u.boot(BOR | PIN | WWDG)                                 # ... and a brown-out alone, a watchdog flag still there
+    out.append(("a BROWN-OUT ALONE (BOR, no POR) that finds the token and a watchdog flag: not a crash, 0",
+                u.count() == 0 and u.u32(FAULTED) == 0, (u.count(), hex(u.u32(FAULTED)))))
     u.uc.mem_write(B2, stale)                                  # bank 2 holds another build's payload ...
     u.fault()
     u.fault()
@@ -576,6 +583,14 @@ def never_clear():
     return [(x.address, b"\x70\x47\x00\xbf")] if x else None           # bx lr: the clear never written
 
 
+def no_bor():
+    """the power-on test without BOR: tst #0xa00000 (POR | BOR) made #0x800000, its modified immediate's 0x20 bit off"""
+    x = one("b2_crash_boot", is_("tst", "#0xa00000"))
+    if not x or x.size != 4:
+        return None
+    return [(x.address, bytes(x.bytes[:2]) + struct.pack("<H", struct.unpack_from("<H", x.bytes, 2)[0] & ~0x20))]
+
+
 def stamp_gate(field):
     """the branch that skips the 32.8 s clear while this stamp (#0x584 the disk task's, #0x588 the screen task's) is
     under 12,288 blocks"""
@@ -606,6 +621,7 @@ MUTANTS = [
     ("every SYSRESETREQ is a crash (the token not asked)", lambda: nop(after("b2_crash_boot", is_("cmp", "r0, r3"), branch("bne"))),
      ["honest"]),
     ("a power-on does not clear the count", lambda: nop(after("b2_crash_boot", ldr_count, branch("bne"))), ["honest"]),
+    ("a brown-out does not clear the count (POR alone)", no_bor, ["honest"]),
     ("a crash counts two", add2, ["good_boot"]),
     ("the count clears at boot, not after 32.8 s", no_wait, ["three_faults"]),
     ("the clear does not wait for the disk task's stamp", lambda: nop(stamp_gate("0x584")), ["hung_task"]),
