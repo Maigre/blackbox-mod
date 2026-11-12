@@ -1118,6 +1118,122 @@ def stores_of(man, tags, stock):
     return out
 
 
+def _strip(e):
+    """an expression with its casts and outer parentheses taken off"""
+    e = e.strip()
+    while True:
+        n = re.sub(r"^\(\s*(?:(?:const|volatile|struct|unsigned|signed)\s+)*\w+\s*(?:(?:const|volatile)\s*)*\**\s*\)\s*", "", e)
+        if n.startswith("(") and match_close(n, 0) == len(n) - 1:
+            n = n[1:-1].strip()
+        if n == e:
+            return e
+        e = n
+
+
+class BlockTracer:
+    """where a pointer inside a function comes from: the accessors (master_block, master_tail, prism_mem, ...) it may
+    hold, or "other" when it is traced to something else (stock's pointer, the raw allocation); empty = not traced"""
+
+    def __init__(self, t, acc):
+        self.t, self.acc, self.cache = t, acc, {}
+        self.defs, self.static = {}, set()
+        for f in t.sources():
+            for fn in f.funcs:
+                self.defs.setdefault(fn.name, []).append((f, fn))
+                k = fn.a - 1
+                while k >= 0 and f.blank[k] not in ";}":
+                    k -= 1
+                if re.search(r"\bstatic\b", f.blank[k + 1:fn.a]):
+                    self.static.add((f.rel, fn.name))   # its callers are in its own file only
+        self.acc_call = re.compile(r"\b(" + "|".join(map(re.escape, acc)) + r")\s*\(\s*\)") if acc else None
+        self.statics = {}                     # per file: names assigned from an accessor anywhere in it
+        for f in t.sources():
+            d = self.statics.setdefault(f.rel, {})
+            for m in (self.acc_call.finditer(f.blank) if self.acc_call else ()):
+                k = m.start() - 1
+                while k >= 0 and f.blank[k] not in ";{}":
+                    k -= 1
+                am = re.search(r"\b(\w+)\s*=(?!=)[^=]*$", f.blank[k + 1:m.start()])
+                if am:
+                    d.setdefault(am.group(1), set()).add(m.group(1))
+
+    def _rhs(self, f, i, limit):
+        """the expression starting at i: up to a ; or a , or ) at depth 0"""
+        depth, j = 0, i
+        while j < limit:
+            c = f.blank[j]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c in ";," and depth == 0:
+                break
+            j += 1
+        return f.code[i:j]
+
+    def classify(self, f, fn, expr, depth):
+        e = _strip(expr)
+        if self.acc_call:
+            got = {m.group(1) for m in self.acc_call.finditer(e)}
+            if got:
+                return got
+        tern = re.match(r"(.+?)\?(.+):(.+)$", e, re.S)
+        if tern:
+            return self.classify(f, fn, tern.group(2), depth) | self.classify(f, fn, tern.group(3), depth)
+        if re.fullmatch(r"[A-Za-z_]\w*", e):
+            return self.trace(f, fn, e, depth + 1)
+        return {"other"}
+
+    def trace(self, f, fn, ident, depth=0):
+        key = (f.rel, fn.name, fn.a, ident)
+        if key in self.cache:
+            return self.cache[key]
+        if depth > 8:
+            return set()
+        self.cache[key] = set()                               # a cycle reads as not traced
+        got = set()
+        # assigned here: `ident = expr` (a declaration's initialiser too, `uint8_t *ident = expr`; not `*ident = expr`,
+        # which stores through it)
+        for m in re.compile(r"(?<![\w.>])" + re.escape(ident) + r"\s*=(?!=)").finditer(f.blank, fn.a, fn.b):
+            before = f.blank[fn.a:m.start()].rstrip()
+            if before.endswith("*") and not re.search(r"[\w)]\s*\**$", before):
+                continue
+            got |= self.classify(f, fn, self._rhs(f, m.end(), fn.b), depth)
+        # handed back through an out-parameter: g(..., &ident, ...) with `*param = expr` in g
+        for m in re.finditer(r"\b(\w+)\s*\(", f.blank[fn.a:fn.b]):
+            o = fn.a + m.end() - 1
+            args = split_top(f.code, f.blank, o + 1, match_close(f.blank, o))
+            for k, a in enumerate(args):
+                if re.fullmatch(r"&\s*" + re.escape(ident), a.strip()):
+                    for g, gfn in self.callee(f, m.group(1)):
+                        if k < len(gfn.params):
+                            p = gfn.params[k]
+                            for mm in re.finditer(r"\*\s*" + re.escape(p) + r"\s*=(?!=)", g.blank[gfn.a:gfn.b]):
+                                got |= self.classify(g, gfn, self._rhs(g, gfn.a + mm.end(), gfn.b), depth)
+        # a parameter: what its callers pass
+        if ident in fn.params:
+            k = fn.params.index(ident)
+            for g in ([f] if (f.rel, fn.name) in self.static else self.t.sources()):
+                for _n, cfn, _pos, cargs in calls(g, {fn.name}):
+                    if k < len(cargs):
+                        got |= self.classify(g, cfn, cargs[k], depth)
+        # a macro standing for an address or an accessor call
+        body = f.macro_map().get(ident)
+        if not got and body:
+            got = self.classify(f, fn, body[0], depth) if not re.fullmatch(r"\s*", body[0]) else {"other"}
+        if not got:
+            got = set(self.statics.get(f.rel, {}).get(ident, ()))
+        self.cache[key] = got
+        return got
+
+    def callee(self, f, name):
+        """the definitions a call of name in file f reaches: its own file's static one, else the global ones"""
+        own = [(g, gfn) for g, gfn in self.defs.get(name, []) if g is f]
+        return own or [(g, gfn) for g, gfn in self.defs.get(name, []) if (g.rel, name) not in self.static]
+
+
 def sdram(t, warn, roles):
     master = t.files.get("src/master.c")
     res = {"block": None, "core": None, "parts": [], "allocations": []}
@@ -1197,37 +1313,46 @@ def sdram(t, warn, roles):
             stem = name[:-4].upper()
             add_part(stem, master, off, name, next(x for x in master.funcs if x.name == name).a, f"{name}()")
 
-    accessor_rx = r"\b(" + "|".join(map(re.escape, acc)) + r")\s*\(" if acc else r"(?!x)x"
+    # where a pointer comes from, traced through the code (comments play no part): assigned from an accessor, passed
+    # down as an argument (a bank-2 function's `uint8_t *mem`), handed back through a `uint8_t **` out-parameter,
+    # or a file's static assigned from an accessor in another function
+    tracer = BlockTracer(t, acc)
+    offset_rx = re.compile(r"(?<![\w.>])([A-Za-z_]\w*)(\s*\(\s*\))?\s*\+\s*([A-Z][A-Z0-9_]*|0[xX][0-9a-fA-F]+[uUlL]*)(?![\w(])"
+                           r"|&\s*([A-Za-z_]\w*)\s*\[\s*([A-Z][A-Z0-9_]*|0[xX][0-9a-fA-F]+[uUlL]*)\s*\]")
     for f in t.sources():
-        bases = {}
-        for m in re.finditer(accessor_rx, f.blank):
-            k = m.start() - 1
-            while k >= 0 and f.blank[k] not in ";{}":
-                k -= 1
-            am = re.search(r"\b(\w+)\s*=(?!=)[^=]*$", f.blank[k + 1:m.start()])
-            if am:
-                bases[am.group(1)] = m.group(1)
-        mentions = "master_block" in f.raw or any("master_block" in (t.header(f.rel, i).raw if t.header(f.rel, i) else "")
-                                                   for i in f.includes)
-        if mentions:
-            for b in ("mem", "block"):
-                bases.setdefault(b, "master_block")
-        if not bases:
-            continue
         mm = f.macro_map()
-        for m in re.finditer(r"\b(\w+)\s*\+\s*([A-Z][A-Z0-9_]*)\b", f.blank):
-            base, name = m.group(1), m.group(2)
-            if base not in bases or name not in mm or f.rel == "src/master.c" and name.endswith("_BYTES"):
-                continue
-            try:
-                rel = f.eval(name, {}, m.start())
-            except Unresolved as x:
-                warn.append(f"{f.rel}:{f.line(m.start())}: block offset {name} not read ({x})")
-                continue
-            a = bases[base]
-            if a not in acc:
-                continue
-            add_part(name, f, acc[a] + rel, a, m.start(), " ".join(mm[name][0].split()))
+        for fn in f.funcs:
+            for m in offset_rx.finditer(f.blank, fn.a, fn.b):
+                base, call, off = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), None, m.group(5))
+                named = off[0].isalpha()
+                if named and (off not in mm and off not in f._en or f.rel == "src/master.c" and off.endswith("_BYTES")):
+                    continue
+                if call:
+                    got = {base} if base in acc else set()
+                    if not got:
+                        continue                                # another function's result, not the block
+                else:
+                    got = tracer.trace(f, fn, base)
+                if any(a.endswith("_mem") for a in got):
+                    continue                    # inside a module's own part (prism.c's layout of PRISM): its own business
+                blocks = sorted(a for a in got if a in acc)
+                if not blocks:
+                    if not got and named and re.search(r"_(OFFSET|AT|OFF)$", off):
+                        warn.append(f"{f.rel}:{f.line(m.start())}: `{base} + {off}` in {fn.name}: where `{base}` points "
+                                    f"was not traced (no caller, no accessor), so this block offset is not read")
+                    continue
+                if not named:
+                    warn.append(f"{f.rel}:{f.line(m.start())}: `{base} + {off}` in {fn.name}: a block offset written as a "
+                                f"literal, not read as a part (name it, as the other parts are)")
+                    continue
+                try:
+                    rel = f.eval(off, {}, m.start())
+                except Unresolved as x:
+                    warn.append(f"{f.rel}:{f.line(m.start())}: block offset {off} not read ({x})")
+                    continue
+                for a in blocks:
+                    add_part(off, f, acc[a] + rel, a, m.start(),
+                             " ".join(mm[off][0].split()) if off in mm else f"enum {off} = {h(rel)}")
     # sizes
     plist = sorted(parts.values(), key=lambda p: (p["offset"], p["name"]))
     for p in plist:
@@ -1243,7 +1368,8 @@ def sdram(t, warn, roles):
         # the struct cast at its use, and the _Static_asserts that bound that struct
         st = set()
         for fl in [p["_f"]] + [t.files[r] for r in p["files"] if r in t.files]:
-            for m in re.finditer(r"\(\s*(?:volatile\s+|const\s+)*struct\s+(\w+)\s*\*\s*\)\s*\(?\s*\w+\s*\+\s*" + name + r"\b", fl.blank):
+            for m in re.finditer(r"\(\s*(?:volatile\s+|const\s+)*struct\s+(\w+)\s*\*\s*\)\s*\(?\s*(?:&\s*)?\w+(?:\s*\(\s*\))?"
+                                 r"\s*(?:\+|\[)\s*" + name + r"\b", fl.blank):
                 st.add((fl, m.group(1)))
         for fl, sname in st:
             for g in [fl] + [t.header(fl.rel, i) for i in fl.includes if t.header(fl.rel, i)]:

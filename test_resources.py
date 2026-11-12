@@ -188,6 +188,24 @@ mutant(f"a 0x100-byte part on {blk['name']} ({R.h(blk['offset'])})",
                      "struct zz { uint32_t w[64]; };\n_Static_assert(sizeof(struct zz) <= 0x100, \"zz\");\n"
                      "void zz_poke(void) { uint8_t *mem = master_block(); struct zz *z = (struct zz *)(mem + ZZ_OFFSET); z->w[0] = 0; }\n"),
        "sdram")
+ZZ = f"#define ZZ_OFFSET {R.h(blk['offset'] - sd['accessors']['master_block'])}u\nstruct zz {{ uint32_t w[64]; }};\n"
+for form, body in (
+        ("passed down as a parameter (the bank-2 form), the caller handing master_block()",
+         ZZ + "static void zz_dsp(uint8_t *mem) { ((struct zz *)(mem + ZZ_OFFSET))->w[0] = 0; }\n"
+              "void zz_poke(void) { zz_dsp(master_block()); }\n"),
+        ("handed back through a uint8_t ** out-parameter",
+         ZZ + "static void zz_get(uint8_t **m) { *m = master_block(); }\n"
+              "void zz_poke(void) { uint8_t *mem; zz_get(&mem); ((struct zz *)(mem + ZZ_OFFSET))->w[0] = 0; }\n"),
+        ("written master_block() + offset", ZZ + "void zz_poke(void) { ((struct zz *)(master_block() + ZZ_OFFSET))->w[0] = 0; }\n"),
+        ("written &mem[offset], the offset an enum",
+         f"enum {{ ZZ_OFFSET = {R.h(blk['offset'] - sd['accessors']['master_block'])} }};\n"
+         "void zz_poke(void) { uint8_t *mem = master_block(); *(uint32_t *)&mem[ZZ_OFFSET] = 0; }\n")):
+    mutant(f"... the same part {form}", lambda d, b=body: put(d, "src/zz_mutant.c", HEAD + b), "sdram")
+mutant("... a block-like offset on a pointer parameter nothing passes",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + ZZ + "void zz_poke(uint8_t *mem) { ((struct zz *)(mem + ZZ_OFFSET))->w[0] = 0; }\n"), None)
+mutant("... the part's offset written as a literal on master_block()'s pointer",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + "void zz_poke(void) { uint8_t *mem = master_block(); "
+                     f"*(uint32_t *)(mem + {R.h(blk['offset'] - sd['accessors']['master_block'] + 0x10)}u) = 0; }}\n"), None)
 bk = man["bkpsram"][0]
 mutant(f"a backup-SRAM word on {bk['file']}'s {R.h(bk['start'])}",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(bk['start'])}u)\n"
