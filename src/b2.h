@@ -38,7 +38,8 @@
  *               It has its own value because that read happens in the screen task while the app is being built,
  *               and the audio task can arrive at the pairing scan in the middle of it: a scan that finds NAMING
  *               says "not yet" and asks again next block, where finding SCANNING means a dead scan.
- *   B2_TRIES_*  how many times the loader has programmed THIS payload without a clean scan afterwards.
+ *   B2_TRIES_*  how many times the loader has programmed THIS payload since backup SRAM last lost its contents (a
+ *               power-off, on the test unit). A clean write does not take it back down (b2load.c, t-059).
  * Every write goes through bkp_put: the data cache holds a write to this RAM back, and a reset does not write the
  * cache out (three fault recorders "caught nothing" that way, see fault.c).
  */

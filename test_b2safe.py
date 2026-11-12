@@ -29,7 +29,9 @@ IMAGE = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+mas
 ELF = "out/cave.elf"
 B2, B2_END, CLAIM_AT = 0x08100000, 0x081E0000, 0x081C0000
 LINE, MARK, CRASHES, FAULTED = 0x388003C0, 0x388003C8, 0x388003D4, 0x388003D8
+TRIES_N, SCANNING = 0x388003D0, 0x4E435332
 FLT1 = 0x31544C46
+SR2, ECC = 0x52002110, 1 << 25
 RCC_RSR, UPTIME = 0x580244D0, 0x2400A58C
 M = 0x2405FFD0
 B2CHK = M + 35
@@ -64,6 +66,7 @@ class Unit:
     """One unit, from a power-on, across as many resets as a case needs."""
 
     def __init__(self, patches=()):
+        self.patches = patches                 # a case that needs a second unit builds it with the same mutant
         self.e = e = Emu(IMAGE, ELF)
         self.uc = uc = e.uc
         for base, n in ((0x38800000, 0x1000), (0x58024000, 0x1000), (0x50003000, 0x1000), (0x30000000, 0x1000),
@@ -174,6 +177,15 @@ class Unit:
     def watchdog(self, seconds=5):
         self.up(seconds)
         self.boot(WATCHDOG)
+
+    def scan_dies(self):
+        """this boot's pairing scan dies on a flash word it cannot read: b2_paired's mark is up (its bkp_put before the
+        read), the read bus-faults, the recorder asks for the reset"""
+        self.up(1)
+        self.e.w32(MARK, SCANNING)
+        self.uc.mem_write(FRAME, struct.pack("<8I", 0, 1, 2, 3, 12, 0x080F6300, 0x080F6300, 0x61000000))
+        assert self.call("fault_record", FRAME, 0xFFFFFFED), "the recorder did not ask for the reset"
+        self.boot(RESTART)
 
     # ---- what the boot made of it
     def count(self):
@@ -374,6 +386,52 @@ def new_payload(u):
     return out
 
 
+def loader_loop(u):
+    """The loader's restart is not a crash, so the count cannot stop a loop of rewrites: B2_MAX_TRIES has to. A write
+    that reads back clean (b2_rescan pairs) and a boot after it that still cannot use bank 2 - its scan dies on a word
+    that reads marginal after a reset, or only sees the ECC flag - is that loop."""
+    out = []
+    u.power_on()
+    u.uc.mem_write(B2, stale)                                  # another build's payload: the loader will write this one's
+    u.boot(RESTART)
+    writes = []
+    for _ in range(5):
+        asked = u.loader()
+        writes.append((asked, u.programs, u.u32(TRIES_N)))
+        if not asked:
+            break
+        u.boot(RESTART)                                        # the loader's restart: count 0
+        u.scan_dies()                                          # the boot after it dies in the scan: count 1
+    u.up(33)
+    out.append(("THE SAME PAYLOAD IS NOT REWRITTEN IN A LOOP: the rescan pairs, the next boot's scan dies - two writes, then left alone",
+                [w[:2] for w in writes] == [(True, 1), (True, 1), (False, 0)], writes))
+    out.append(("...and the boot it is left alone in stays up without bank 2: not live, '!' on Tools, the count back to 0",
+                u.live() == 0 and u.tools().startswith("!") and u.count() == 0, (u.live(), u.count())))
+
+    u = Unit(u.patches)
+    flaky = {"on": True}
+    u.uc.hook_add(UC_HOOK_MEM_READ, lambda uc, _a, a, _s, _v, _d: uc.mem_write(SR2, struct.pack("<I", ECC if flaky["on"] else 0)),
+                  begin=SR2, end=SR2 + 3)
+
+    def program_reads_clean():
+        u._program()
+        flaky["on"] = False                                    # right after the write the bank reads clean ...
+
+    u.e.stub(sym["b2_program"] & ~1, program_reads_clean, value=1)
+    u.power_on()
+    writes = []
+    for _ in range(5):
+        flaky["on"] = True                                     # ... and after the reset it shows the ECC flag again
+        asked = u.loader()
+        writes.append((asked, u.programs, u.count()))
+        if not asked:
+            break
+        u.boot(RESTART)
+    out.append(("...THE SAME WITH NO CRASH AT ALL (the boot's scan sees the ECC flag, the rescan does not): two writes, then left alone",
+                [w[:2] for w in writes] == [(True, 1), (True, 1), (False, 0)], writes))
+    return out
+
+
 def cache(u):
     out = []
     u.power_on()
@@ -414,7 +472,7 @@ def cache(u):
 
 
 CASES = {f.__name__: f for f in (three_faults, three_watchdogs, faults_and_watchdogs, good_boot, hold_holds, honest, hold_ends,
-                                  new_payload, cache)}
+                                  new_payload, loader_loop, cache)}
 
 
 # ---------------------------------------------------------------- mutants: one rule broken each, in the linked image
@@ -524,6 +582,7 @@ MUTANTS = [
     ("b2_present ignores the hold", lambda: nop(after("b2_present", lambda x: is_("cmp", "#2")(x), branch("bhi"))), ["three_faults"]),
     ("Tools shows no '!held'", text_off, ["three_faults"]),
     ("the boot's count is written without cleaning its line", no_clean, ["cache"]),
+    ("B2_MAX_TRIES does not stop the card loader", lambda: nop(after("b2_load_poll", is_("cmp", "#1"), branch("bhi"))), ["loader_loop"]),
 ]
 
 

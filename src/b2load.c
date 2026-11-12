@@ -284,10 +284,14 @@ int b2_program(void)
 }
 
 /*
- * How many times this payload has been programmed without a clean scan after it (b2.h). A flash that cannot hold
- * the payload would otherwise be erased and rewritten on every boot for ever - and when the failure is a word the
+ * How many times this payload has been programmed since backup SRAM last lost its contents (b2.h). A flash that cannot
+ * hold the payload would otherwise be erased and rewritten on every boot for ever - and when the failure is a word the
  * scan cannot even read, every one of those boots ends in a fault. Twice, then leave it: effects off, "!" on
  * Tools. A different payload starts its own count, so a new file or a new build always gets its tries.
+ * A clean write does not take the count back down (t-059): its rescan reads the bank straight after the write, and
+ * a payload that passes it and then fails the next boot's scan - a word that reads marginal after a reset - would
+ * otherwise be erased, rewritten and restarted on every boot, the restart being one that the crash count
+ * (b2safe.c) rightly does not count.
  */
 #if B2LOAD_WRITE                 /* the tries and the restart are the writer's: B2LOAD_WRITE=0 builds without them */
 static uint32_t tries_key(void)
@@ -311,9 +315,9 @@ static void tries_set(unsigned n)
  * Bank 2 has just been written and reads back good: start again from the top. The lists were registered while it
  * was still the old bank 2 (or none), so they are calling the three effects "---"; the next boot registers them
  * by name, and the effects are live from its first block instead of switching on under a running engine.
- * Nothing is in flight to lose: all card access is this task's and it is between file commands, and the two
- * backup SRAM words just written went through bkp_put. It cannot loop - the next boot finds bank 2 paired and
- * writes nothing - and B2_MAX_TRIES bounds it even if that were to fail.
+ * Nothing is in flight to lose: all card access is this task's and it is between file commands, and the backup
+ * SRAM words this pass wrote (the tries, the scan's mark) went through bkp_put. It cannot loop - the next boot finds
+ * bank 2 paired and writes nothing - and B2_MAX_TRIES bounds it even if that were to fail.
  */
 static void restart(void)
 {
@@ -348,10 +352,8 @@ void b2_load_poll(void)
         unsigned n = tries();
         if (n < B2_MAX_TRIES) {
             tries_set(n + 1u);                           /* before the write, so one that kills the boot still counts */
-            if (b2_program() && b2_rescan()) {
-                tries_set(0);
-                restart();
-            }
+            if (b2_program() && b2_rescan())
+                restart();       /* the tries stay: only a power-off (or another payload) gives them back */
         }
     }
 #else
