@@ -64,3 +64,7 @@ PATCHES = [
 # pad the Waveform screen and its four knobs are the Clip Window's; with no selection set, the selection is stock to
 # the bit (clipsel.c), so its setup trampoline and the rest of slice.py stay. patch.py skips slice.py's entry here.
 TAKES = (0x08064B2C, 0x08064C5A, 0x080A53B0, 0x080A582A, 0x080A5B0E)
+
+# Planned, not patched yet (bench/resources.py reports a tree that patches it): stage 1's capture of the class-B
+# param-set call (notes/clip-window-audit.md, notes/re/x3-region-data-path.md section C; hub #t-044)
+# resources: wants site=0x080685D2 callee=0x08067648 by=clipwin_param

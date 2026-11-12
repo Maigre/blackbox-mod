@@ -14,6 +14,7 @@ PATCHES = [
     hook(0x0808DE8E, 0x0808C0D8, "munchi_register"),        # param 0x197 'FX1:' -> "Type:" Delay/Munchi + 3 settings
     hook(0x0809444A, 0x08093EF6, "munchi_defaults_first"),  # delay cell defaults: Type first
     hook(0x08094494, 0x08093EF6, "munchi_defaults_last"),   # ... Wand / Random / Freeze last
+    # resources: store delay sites=0x0809444A,0x08094494 cap=0x08093F26,0x080949F0 stock=8   (FUN_08093f20's delay case)
     hook(0x08054F3A, 0x080548C8, "munchi_process"),         # delay vtable wrapper: the process call
     hook(0x08098E72, 0x080A50FC, "munchi_list"),            # settings-list fill: per-Type controls on the FX pages
     hook(0x0808BA8A, 0x080AB880, "fxout_open"),             # knob screen opened (GUI msg 0x9d): the knobs, not FX OUT

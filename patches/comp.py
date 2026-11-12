@@ -19,6 +19,7 @@ PATCHES = [
     # ... and 112 with the pad stores (#t-047): stock's store copy (FUN_0809a830) memcpy's a store's entries into another
     # store's array without reading its size, so every store that can receive a pad's holds what a pad's holds
     (0x08094820, bytes.fromhex("4021"), bytes.fromhex("7021")),
+    # resources: store global sites=0x08094886 cap=0x08094820 stock=41   (FUN_0809481c: 41 bl 0x08093ef6, no branch)
     # Tools Main page (address 0x40, page 0, 0x080eed18): Headphone, Compressor, Comp Thresh, then the rest as before
     (0x080EED18, struct.pack("<11H", 0xBA, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0xB4, 0x19B, 0),
      struct.pack("<11H", 0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B)),
