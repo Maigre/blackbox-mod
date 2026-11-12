@@ -8,7 +8,8 @@ Fork-only tool, like bench/bbusb.py, whose peek and poke it uses.
   bbkit.py button NAME [press|release|hold]
                                          pads keys seqs song fx mix pset tools rec stop play back info (or 0-12)
   bbkit.py play | stop                   the PLAY / STOP button pressed
-  bbkit.py touch down|move|up [X Y]      the kit's own finger, in the screenshot's pixels (320 x 240)
+  bbkit.py touch down|move|up [X Y]      the kit's own finger, in the screenshot's pixels (320 x 240, 0 0 top left;
+                                         the unit's own grid runs up from the bottom left: this flips Y for it)
   bbkit.py tap X Y [PASSES]              down, and up PASSES GUI passes later (default 3)
   bbkit.py cancel                        end a knob or tap job still running (until it ends, the unit answers
                                          every other job -8, busy)
@@ -51,6 +52,12 @@ BUTTONS = ["pads", "keys", "seqs", "song", "fx", "mix", "pset", "tools", "rec", 
 FATFS = {1: "disk error", 2: "internal error", 3: "not ready", 4: "no file", 5: "no path", 6: "invalid name",
          7: "denied", 8: "exists", 9: "invalid object", 10: "write protected", 11: "invalid drive", 12: "not enabled",
          13: "no filesystem", 15: "timeout", 16: "locked", 17: "not enough core", 18: "too many open files"}
+
+
+def unit_xy(x, y):
+    """a screenshot pixel (0, 0 top left) in the unit's touch grid: X the same, Y counted up from the bottom. Seen on
+    the unit, 37.5.0d, 12/11: a tap sent at y 106 took the list row drawn at y 134, one at y 20 the tab drawn at 220"""
+    return x, 239 - y
 
 
 class KitError(Exception):
@@ -258,11 +265,11 @@ def main(argv):
             print(f"{BUTTONS[i]} {['press', 'release', 'hold'][what]}: code {job(0x20, i, what)[0]:#x}")
         elif cmd == "touch":
             what = ["down", "move", "up"].index(args[0])
-            xy = [int(v, 0) for v in args[1:3]] if what < 2 else []
+            xy = list(unit_xy(int(args[1], 0), int(args[2], 0))) if what < 2 else []
             print(f"touch {args[0]}: widget {job(0x04, what, *xy)[0]:#x}")
         elif cmd == "tap":
             x, y = int(args[0], 0), int(args[1], 0)
-            print(f"tap {x},{y}: widget {job(0x05, x, y, int(args[2], 0) if len(args) > 2 else 3, timeout=30)[0]:#x}")
+            print(f"tap {x},{y}: widget {job(0x05, *unit_xy(x, y), int(args[2], 0) if len(args) > 2 else 3, timeout=30)[0]:#x}")
         elif cmd == "cancel":
             r = job(CANCEL)
             print(f"cancelled the {SPANS[r[0]]} job ({'events posted' if r[0] == 3 else 'widget'} {r[1]})" if r[0] in SPANS

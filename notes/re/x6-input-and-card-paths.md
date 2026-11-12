@@ -129,7 +129,9 @@ then each write index behind a `dmb`. Refuse when a ring is full (`w − r` ≥ 
 - **Buffer**: `+0` u16 contact count (≤ 5); contact i at `+4 + 12i`: s16 x, s16 y, u8 track id. x and y are screen
   pixels, clamped to 0..319 and 0..239, after a transform set by `T+0x198` (swap / flip) and `T+0x199` (scale off),
   with `T+0x19C` / `T+0x1A0` the panel's height and width. ✓ unit: `T+0x198` = 1, `T+0x199` = 0, 240 and 320.
-  That the pixel grid is the screenshot's (x right, y down from the top left) is *inferred*.
+  ✓ unit (37.5.0d, 12/11, §13.2): x runs right as in the screenshot, **y runs up from the bottom left**: a tap sent
+  at y 106 took the list row drawn at y 134, one at y 20 the tab drawn at y 220. `bench/bbkit.py` takes screenshot
+  pixels and flips Y for the unit.
 - **Tracker** `FUN_0808B050(gui, buf)`, the first thing `FUN_0808B654` does: up to 4 contacts at `gui+0x214` (u16
   count) and `gui+0x218 + 12i` {s16 x, s16 y, u8 id, widget id at `+8`}.
   - **Down** (an id not tracked): hit test `FUN_080AB5F2(gui+0x280, &{x, y}, &widget)` (the current screen's `vt+0x28`
@@ -407,13 +409,13 @@ the card call-out ~16, the long peek ~70 (`request()` branch + interrupt refill)
 | # | question | for | cheapest way |
 |---|---|---|---|
 | 1 | GUI passes per second (the knob job's pacing, a tap's length) | knob, touch | peek `0x2402EEE0` and a counter the pass bumps, twice |
-| 2 | the touch grid = the screenshot's grid (0, 0 top left) | touch | one tap on a known button, then a screenshot |
+| 2 | ~~the touch grid = the screenshot's grid (0, 0 top left)~~ answered 12/11: x the same, y from the bottom (§13.2) | touch | — |
 | 3 | which message a held finger on a pad posts per pass (repeat or not) | touch | Unicorn on the Pads view |
 | 4 | who posts `0xD8` (same handler as `0x18`) | preset | grep a message table; not needed |
 | 5 | a flag that a take is being written to the card | restart | static: the WAV writer's object (`0x0807723C`'s callers) |
 | 6 | the card task's loop rate (latency of a card job) | files | a counter in `kit_run`, peeked |
-| 7 | the long peek's real rate on this host | shot | measure in pass 2 |
-| 8 | why the unit lost power twice on the new hub | bench | Thomas: the unit back on its own supply or a powered port |
+| 7 | ~~the long peek's real rate on this host~~ answered 12/11: a 320 x 240 screenshot, both layers, in 1.5 s (§13.2) | shot | — |
+| 8 | ~~why the unit lost power twice on the new hub~~ those were the session's two proof cuts of the switched port (`bench/bbpower.py`, 14:32 and 14:33), not the supply | bench | — |
 
 ## 13. Pass 2: what was built, and where it left §9
 
@@ -534,3 +536,26 @@ An independent review attacked pass 2 the same day; what it found and what chang
   check now; `master.c`'s block-size assert checks the release's sum (it had become true by construction).
 - **Bytes**: dev `.cave` 51 878 B (base + 4; `master_alloc` + 12), `.bank2` 28 568 B (`BBEXTRA.BIN` 28 608).
   Release unchanged.
+
+### 13.2 On the unit (37.5.0d, 12/11)
+
+The kit's first run on hardware, every job sent by a session over USB with nobody at the unit
+(`notes/bench/2026-11-12-37.5.0d.md` has the whole sitting).
+
+| job | on the unit |
+|---|---|
+| info | kit v1, 96 job slots; the screen byte and the boot count follow the unit |
+| screenshot (the long peek) | 320 x 240, both layers, in 1.5 s; 13 s before the kit |
+| card: ls, stat | the root listed, `BLACKBOX.BIN` 786 145 B |
+| card: put, get, rm | 9 000 B put in 0.2 s, got back identical; a second put refused (FatFs 8, exists); deleted, then stat says no file |
+| buttons | PADS, TOOLS, INFO, PLAY, STOP: the screens follow; PLAY runs the transport (the metronome on Out 2, the bar counter), STOP stops it |
+| knob | BL on a Clip pad's Waveform screen: +80 counts at speed 1 = +2 ticks of Slip (277 → 279), −80 back; TL: +2 000 counts = Loop Start 0 → 1 280 frames, −2 000 back to 0. `clipwin`'s own knob log reads the counts and the speed sent. A turn of 5 counts moves nothing: the Slip knob wants 40 counts a tick at speed 1 |
+| touch (tap) | a list row, and JOEBOX 2's TOOLS tabs, take the tap; the grid's Y runs from the bottom (§3) |
+| preset load, preset list | 75 names; `preset SYNTH` loads it |
+| the 13-row request (MBX1) | `bbusb.py get` / `set` served from bank 2; the automatic gate ran on it |
+| restart | 3.1 s from the request to the unit answering again; boot count + 1, reset cause SOFTWARE, bank 2 not rewritten |
+
+Not run on the unit: cancel, a held button, touch down / move / up apart from a tap, a file larger than 9 000 B, a
+knob job of many events. Not seen: any fault or watchdog record, any USB stall, over about 25 minutes of jobs, two
+restarts and one power cycle.
+
