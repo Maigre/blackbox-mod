@@ -48,6 +48,7 @@ X = os.path.join(OUT, "x")          # objects placed section by section by the g
 B1 = os.path.join(OUT, "b1")        # bank-1 objects that go in through the cave's own wildcard
 CAVE_LO, CAVE_HI, STOCK_LO, B2_LO = 0x080F1E78, 0x08100000, 0x08040000, 0x08100000
 VEC_RAM = 0x2405FF5C                # patch RAM: one of the 12 unclaimed bytes 0x2405FF54..0x2405FF5F (notes x2)
+# bench/resources.py reads this, the only place the word is stated:   resources: ram at=0x2405FF5C size=4
 SENT_LO, SENT_STEP = 0x080F2000, 0x20
 
 

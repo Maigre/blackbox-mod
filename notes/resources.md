@@ -31,6 +31,7 @@ read).
 | settings-store entries | a store's cap: stock `movs r1, #0x40`, 96 since JOEBOX (`patches/duck.py`, `patches/comp.py`) | the chains behind every stock `bl store_add` (0x08093ef6) a patch table hooks: the functions reached from that hook, their `fw_store_add` calls. Which store a site fills, the cap sites and stock's own count are `resources: store` tags (below); a hooked site no tag names is a problem in-tree and "not read" in the report |
 | the boot-time SDRAM block | the size `master_alloc` asks of stock's permanent allocator; our core (`master_block()`, on every unit) and tail (`master_tail()`, with a bank-2 payload only); D-030's bound, `_Static_assert(CORE_BYTES + TAIL_BYTES == 0x84900u)` | the allocation (a binding named *perm_alloc*) and master.c's accessors; every `p + NAME` or `&p[NAME]` in `src/` (NAME a macro or an enum) whose pointer `p` is traced to `master_block()` / `master_tail()`: assigned from it, a parameter its callers pass it in (the bank-2 `uint8_t *mem`), an out-parameter (`*m = master_block()`), a macro, a file static; `master_block() + NAME` too. Comments play no part. A block-like offset (`*_OFFSET`, `*_AT`) on a pointer traced to nothing, and a literal offset on the block's pointer, are said not read; what a module's own `*_mem()` accessor hands out stays inside its part. A part's size: its `STEM_BYTES`, else the smallest `sizeof(struct)` budget a `_Static_assert` gives it, else the room up to the next part. Other boot allocations (upstream's `stretch_alloc`) are listed beside it |
 | backup SRAM (0x38800000, 4 KB) | ranges of two modules apart | every pointer cast (in code and macro bodies) whose operand evaluates, with the file's macros, into backup SRAM (`(struct od_bank *)BKPSRAM`, `(uint32_t *)(BKP + 0x800u)`), `.S` literals, and the `_Static_assert(ADDR + size <= END)` that bound them (ADDR a literal or a macro); a struct with no assert gets its `sizeof` from the compiler. A cast on a backup-SRAM macro with a variable offset is said not read |
+| patch RAM (0x2405FF54..0x2405FFFF, 172 B above the heap, `src/solo.c`) | ranges of two modules apart, none past 0x24060000 (the MPU regions) | read like backup SRAM, plus `.S` `.equ` words (`duck_thunk.S`). Its users: the split's dispatcher word 0x2405FF5C (a `resources: ram` tag, below), solo, duck (`lfo.c` reads its spare bytes: a `shares` tag), slice, chord, cpu, filter's park in the last 12 bytes. Free since the split: 0x2405FF54..0x2405FF5B, 8 B |
 | stock bytes: call sites, page slots, constants | one module per byte | each `patches/*.py` imported with a stand-in symbol table, so no build is needed: (site, stock bytes, new bytes) for every patch of a set `check.sh` applies, in its order; a BL's target read back as its symbol name. Page slots and caps are data patches like any other |
 | planned hooks | a site a feature will need | `resources: wants` tags |
 | flash bank 1 / bank 2 | the cave's 57,736 B (`src/cave.ld.in`) | with `--build`: `out/cave.map` of a fresh build in a temporary copy, bytes per object per bank, each input section counted up to the next one's address (a merged string section is listed at full size under every object; summing the listed sizes overcounted by 2.5..3.5 KB). The per-object bytes add up to the cave's size |
@@ -52,7 +53,8 @@ another name (`B2_P_SLIP` for `P_SLIP`, read through `fw_setting`) must hold the
 
 ### The tags
 
-Only where nothing in the sources states a fact, in a comment of the file that describes it:
+Only where nothing in the sources states a fact, in a comment of the file that describes it; for a source this fork
+does not edit (JOEBOX's), in `bench/resources.tags`, which names the source each line is about:
 
 - `resources: store <name> sites=<stock store_add sites> cap=<movs sites> stock=<n>`: `patches/duck.py` (pad 59,
   the class-0x4c cell 37), `patches/comp.py` (global 41), `patches/munchi.py` (delay 8), `patches/fx2.py` (reverb 3).
@@ -65,7 +67,11 @@ Only where nothing in the sources states a fact, in a comment of the file that d
 - `resources: shares at=<addr> with=<module>,<module>`: two modules on one backup-SRAM range by design. Taking
   turns: `comp.c` and `compm.c` at 0x38800400 (one compressor runs at a time; the tag is in `src/compm.c`). One
   reading the other's word: the bench kit (`src/kit_b2.c`) reads `master.c`'s block pointer and check word and
-  `fault.c`'s boot count.
+  `fault.c`'s boot count. Patch RAM the same way: `lfo.c` reads the trigger bits `duck_thunk.S` writes into
+  `duck_state`'s spare bytes (0x2405FF7E; the tag is in `bench/resources.tags`, `lfo.c` being JOEBOX's).
+- `resources: ram at=<addr> size=<bytes>`: a word no source states. `bench/b2split.py`'s dispatcher vector
+  (0x2405FF5C, 4 B), which the generated stubs write before every bank-2 body (D-047); the tag sits beside its
+  `VEC_RAM`, and `test_resources.py` checks the two agree.
 
 A module's `TAKES` (a list of site addresses, or a dict keyed by them) lets it patch a site another module patches;
 a module whose stock bytes are another's new bytes (master.py on comp.py's Tools page) is a chain patch.py accepts.

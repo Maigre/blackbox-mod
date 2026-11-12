@@ -1,0 +1,5 @@
+# Tags bench/resources.py reads as if they sat in a source this fork does not edit (JOEBOX's: hub blackbox#t-061).
+# One per line, the same grammar as in src/ and patches/. A comment line says which source each one is about.
+
+# src/lfo.c's DUCK_TRIGS: duck_state's spare bytes at offset 14, which duck_thunk.S writes and lfo.c reads.
+resources: shares at=0x2405ff7e with=duck,lfo

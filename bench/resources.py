@@ -28,6 +28,9 @@ What is read, and from where (notes/resources.md has the long form):
   smallest sizeof(struct) budget a _Static_assert gives it, else the room up to the next part.
 - backup SRAM: pointer casts whose operand evaluates (macros included) into 0x38800000..0x38800fff, and the
   _Static_asserts that bound them.
+- patch RAM (the 172-byte gap 0x2405FF54..0x2405FFFF above the heap, src/solo.c): read the same way, and `.S` `.equ`
+  words. A word nothing in src/ states (bench/b2split.py's dispatcher vector) comes from a `resources: ram at=..
+  size=..` tag; a share in a source this fork does not edit (JOEBOX's) from bench/resources.tags.
 - patched stock bytes: each patches/*.py module is imported with a stand-in symbol table (no build needed), so every
   (site, stock bytes, new bytes) is known; a BL's target is read back as its symbol name. Page slots and caps are
   data patches like any other.
@@ -53,6 +56,7 @@ STOCK_SHA256 = "281ae303d32e5eb52adca7817a648a34e4bd3848017f26673dd9df3905f1341d
 FLASH = 0x08040000                    # where the stock image starts
 FAKE_BASE, FAKE_SPAN = 0x08800000, 0x00800000   # stand-in symbol addresses: past bank 2, inside a BL's reach
 BKP_LO, BKP_HI = 0x38800000, 0x38801000
+PATCH_LO, PATCH_HI = 0x2405FF54, 0x24060000       # patch RAM: the heap's end to the MPU regions (src/solo.c)
 
 
 def h(v):
@@ -801,34 +805,35 @@ def data_words(p):
 
 # ---------------------------------------------------------------------------------------------------------- tags
 
-_TAG = re.compile(r"resources:\s*(store|wants|shares)\b([^\n*]*)")
+_TAG = re.compile(r"resources:\s*(store|wants|shares|ram)\b([^\n*]*)")
+# beside src/ and patches/: the build's own tool (D-047: its stubs write a patch-RAM word), and the tags for sources
+# this fork does not edit
+TAG_FILES = ("bench/b2split.py", "bench/resources.tags")
 
 
 def read_tags(tree_path):
-    """`resources: store <name> sites=.. cap=.. stock=N` and `resources: wants site=.. callee=.. by=..` tags in
-    src/ and patches/"""
+    """`resources: store <name> sites=.. cap=.. stock=N`, `resources: wants site=.. callee=.. by=..`, `resources:
+    shares at=.. with=a,b` and `resources: ram at=.. size=..` tags in src/, patches/ and TAG_FILES"""
     tags = []
-    for d in ("src", "patches"):
-        base = os.path.join(tree_path, d)
-        if not os.path.isdir(base):
+    rels = [f"{d}/{fn}" for d in ("src", "patches") if os.path.isdir(os.path.join(tree_path, d))
+            for fn in sorted(os.listdir(os.path.join(tree_path, d)))] + list(TAG_FILES)
+    for rel in rels:
+        p = os.path.join(tree_path, rel)
+        if not os.path.isfile(p) or not rel.endswith((".c", ".h", ".cpp", ".S", ".py", ".tags")):
             continue
-        for fn in sorted(os.listdir(base)):
-            p = os.path.join(base, fn)
-            if not os.path.isfile(p) or not fn.endswith((".c", ".h", ".cpp", ".S", ".py")):
-                continue
-            for n, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
-                for m in _TAG.finditer(line):
-                    words = m.group(2).split()
-                    t = {"kind": m.group(1), "file": f"{d}/{fn}", "line": n}
-                    if m.group(1) == "store" and words and "=" not in words[0]:
-                        t["name"] = words.pop(0)
-                    for w in words:
-                        if "=" in w:
-                            k, v = w.split("=", 1)
-                            vals = [int(x, 0) for x in v.split(",") if re.fullmatch(r"(0x)?[0-9a-fA-F]+", x)]
-                            t[k] = vals if k in ("sites", "cap") else (vals[0] if vals and k in ("stock", "site", "callee", "at")
-                                                                       else v.split(",") if k == "with" else v)
-                    tags.append(t)
+        for n, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
+            for m in _TAG.finditer(line):
+                words = m.group(2).split()
+                t = {"kind": m.group(1), "file": rel, "line": n}
+                if m.group(1) == "store" and words and "=" not in words[0]:
+                    t["name"] = words.pop(0)
+                for w in words:
+                    if "=" in w:
+                        k, v = w.split("=", 1)
+                        vals = [int(x, 0) for x in v.split(",") if re.fullmatch(r"(0x)?[0-9a-fA-F]+", x)]
+                        t[k] = vals if k in ("sites", "cap") else (vals[0] if vals and k in ("stock", "site", "callee", "at", "size")
+                                                                   else v.split(",") if k == "with" else v)
+                tags.append(t)
     return tags
 
 
@@ -1149,8 +1154,9 @@ def scan(path, label, do_build=False, stock=None):
     # ---- SDRAM: the boot-time block
     man["sdram"] = sdram(t, warn, roles)
 
-    # ---- backup SRAM
-    man["bkpsram"] = bkpsram(t, path, warn)
+    # ---- backup SRAM, patch RAM
+    man["bkpsram"] = ram_ranges(t, path, warn, man["tags"], BKP_LO, BKP_HI, "backup SRAM")
+    man["patchram"] = ram_ranges(t, path, warn, man["tags"], PATCH_LO, PATCH_HI, "patch RAM")
 
     # ---- build
     man["build"] = build_info(path, do_build)
@@ -1525,37 +1531,43 @@ def _cast_operand(s, i):
     return (m.group(1), m.end()) if m else (None, i)
 
 
-def bkp_value(f, expr):
-    """expr's value when it is an address in backup SRAM (macros and enums of f evaluated), else None"""
+def ram_value(f, expr, lo, hi):
+    """expr's value when it is an address in [lo, hi) (macros and enums of f evaluated), else None"""
     try:
         v = f.eval(expr, {})
     except (Unresolved, RecursionError, ValueError, TypeError, ZeroDivisionError):
         return None
-    return v if BKP_LO <= v < BKP_HI else None
+    return v if lo <= v < hi else None
 
 
-def bkpsram(t, path, warn):
-    """the backup-SRAM ranges each file uses: pointer casts of an address in backup SRAM (a literal, a macro, a
-    base + offset: the operand is evaluated with the file's macros), bounded by _Static_asserts"""
+def _lit_in(text, lo, hi):
+    """text holds a hex literal in [lo, hi)"""
+    return any(lo <= int(x, 16) < hi for x in re.findall(r"\b0[xX]([0-9a-fA-F]+)", text))
+
+
+def ram_ranges(t, path, warn, tags, lo, hi, what):
+    """the ranges of [lo, hi) (backup SRAM, patch RAM) each file uses: pointer casts of an address there (a literal,
+    a macro, a base + offset: the operand is evaluated with the file's macros), bounded by _Static_asserts; `.S`
+    words; `resources: ram at=.. size=..` tags"""
     uses = []
     for f in list(t.files.values()):
         if f.rel.endswith(".inc"):
             continue
-        bkp_names = {n for n, (body, _l, _c) in f.macro_map().items() if re.search(r"0x388[0-9a-fA-F]{5}", body)
-                     and bkp_value(f, n) is not None}
+        bkp_names = {n for n, (body, _l, _c) in f.macro_map().items() if _lit_in(body, lo, hi)
+                     and ram_value(f, n, lo, hi) is not None}
         lines = f.code_pp.split("\n")
         for m in _PTR_CAST.finditer(f.code_pp):
             ty = " ".join(m.group(1).split())
             op, _e = _cast_operand(f.code_pp, m.end())
             if not op:
                 continue
-            a = bkp_value(f, op)
+            a = ram_value(f, op, lo, hi)
             line = f.line(m.start())
             dm = re.match(r"\s*#\s*define\s+(\w+)", lines[line - 1]) if line - 1 < len(lines) else None
             if a is None:
                 hit = set(re.findall(r"[A-Za-z_]\w*", op)) & bkp_names
-                if hit or re.search(r"0x388[0-9a-fA-F]{5}", op):
-                    warn.append(f"{f.rel}:{line}: a pointer cast on backup SRAM, `({ty} *){' '.join(op.split())}`, not read")
+                if hit or _lit_in(op, lo, hi):
+                    warn.append(f"{f.rel}:{line}: a pointer cast on {what}, `({ty} *){' '.join(op.split())}`, not read")
                 continue
             size = {"uint8_t": 1, "int8_t": 1, "char": 1, "uint16_t": 2, "int16_t": 2, "uint64_t": 8, "int64_t": 8}.get(ty, 4) \
                 if not ty.startswith("struct") else None
@@ -1564,11 +1576,11 @@ def bkpsram(t, path, warn):
         for m in re.finditer(r"_Static_assert\s*\(", f.blank):
             c = match_close(f.blank, m.end() - 1)
             cond = split_top(f.code, f.blank, m.end(), c)[0]
-            mm = re.fullmatch(r"\s*\(?(?:\(\s*uint32_t\s*\))?\s*\(?\s*(0x388[0-9a-fA-F]{5}u?|[A-Za-z_]\w*)\s*\+\s*(.+?)\)?\s*<=\s*(.+?)\s*",
+            mm = re.fullmatch(r"\s*\(?(?:\(\s*uint32_t\s*\))?\s*\(?\s*(0[xX][0-9a-fA-F]+u?|[A-Za-z_]\w*)\s*\+\s*(.+?)\)?\s*<=\s*(.+?)\s*",
                               cond, re.S)
-            if not mm or bkp_value(f, mm.group(1)) is None:
+            if not mm or ram_value(f, mm.group(1), lo, hi) is None:
                 continue
-            a = bkp_value(f, mm.group(1))
+            a = ram_value(f, mm.group(1), lo, hi)
             try:
                 end = a + f.eval(mm.group(2), {})           # a size the file states: the range is that long
             except Unresolved:
@@ -1583,9 +1595,16 @@ def bkpsram(t, path, warn):
     for fn in sorted(os.listdir(s_dir)) if os.path.isdir(s_dir) else []:
         if fn.endswith(".S"):
             code, _b, _c = lex(open(os.path.join(s_dir, fn), errors="replace").read().replace("@", "//"))
-            for m in re.finditer(r"=\s*(0x388[0-9a-fA-F]{5})|\.word\s+(0x388[0-9a-fA-F]{5})", code):
-                uses.append({"file": "src/" + fn, "addr": int(m.group(1) or m.group(2), 16), "size": 4, "from": "asm",
-                             "line": code.count("\n", 0, m.start()) + 1, "cond": []})
+            for m in re.finditer(r"=\s*(0[xX][0-9a-fA-F]+)|\.word\s+(0[xX][0-9a-fA-F]+)|\.equ\s+\w+\s*,\s*(0[xX][0-9a-fA-F]+)",
+                                 code):
+                a = int(m.group(1) or m.group(2) or m.group(3), 16)
+                if lo <= a < hi:
+                    uses.append({"file": "src/" + fn, "addr": a, "size": 4, "from": "asm",
+                                 "line": code.count("\n", 0, m.start()) + 1, "cond": []})
+    for tg in tags:                                     # a word no source states: its tag
+        if tg["kind"] == "ram" and lo <= tg.get("at", -1) < hi:
+            uses.append({"file": tg["file"], "addr": tg["at"], "size": tg.get("size") or 4, "from": "tag",
+                         "line": tg["line"], "cond": []})
     # one range per (file, start): an assert's end wins, else the cast's size, else the room to the next start
     rng = {}
     for u in uses:
@@ -1615,7 +1634,7 @@ def bkpsram(t, path, warn):
     for r in rng.values():
         if r["end"] is None:
             nxt = [s for s in starts if s > r["start"]]
-            r["end"], r["from"] = (min(nxt) if nxt else BKP_HI), "room up to the next start"
+            r["end"], r["from"] = (min(nxt) if nxt else hi), "room up to the next start"
     return sorted(rng.values(), key=lambda r: (r["start"], r["file"]))
 
 
@@ -1707,23 +1726,26 @@ def check_tree(man):
         if core is not None and core != blk and a["accessor"] == "master_block" and a["offset"] + a["size"] > core:
             bad.append(("sdram", f"{a['name']} ({a['file']}) is reached through master_block() but ends at "
                                  f"{h(a['offset'] + a['size'])}, past the core's {h(core)} (the tail is absent on a unit without the payload)"))
-    # backup SRAM: ranges of two modules never overlap, unless a `resources: shares at=.. with=a,b` tag says they
-    # take turns there (one compressor runs at a time)
-    rs = man["bkpsram"]
-
+    # backup SRAM, patch RAM: ranges of two modules never overlap, unless a `resources: shares at=.. with=a,b` tag
+    # says they take turns there (one compressor runs at a time) or one reads what the other writes; none ends past
+    # its memory
     def declared(a, b):
         return any(tg["kind"] == "shares" and {a["module"], b["module"]} <= set(tg.get("with", []))
                    and max(a["start"], b["start"]) <= tg.get("at", -1) < min(a["end"], b["end"]) for tg in man["tags"])
 
-    for i, a in enumerate(rs):
-        for b in rs[i + 1:]:
-            if declared(a, b):
-                continue
-            if a["module"] != b["module"] and a["start"] < b["end"] and b["start"] < a["end"] and not exclusive(a["cond"], b["cond"], pairs):
-                if (a["start"], a["end"]) == (b["start"], b["end"]) and set(a["types"]) & set(b["types"]):
-                    continue                                    # one structure, named in two files
-                bad.append(("bkpsram", f"{a['file']} [{h(a['start'])}, {h(a['end'])}) ({a['from']}) and {b['file']} "
-                                       f"[{h(b['start'])}, {h(b['end'])}) ({b['from']}) overlap"))
+    for rule, top, what in (("bkpsram", BKP_HI, "backup SRAM"), ("patchram", PATCH_HI, "patch RAM")):
+        rs = man.get(rule, [])
+        for i, a in enumerate(rs):
+            if a["end"] > top:
+                bad.append((rule, f"{a['file']} [{h(a['start'])}, {h(a['end'])}) ({a['from']}) ends past {what}'s {h(top)}"))
+            for b in rs[i + 1:]:
+                if declared(a, b):
+                    continue
+                if a["module"] != b["module"] and a["start"] < b["end"] and b["start"] < a["end"] and not exclusive(a["cond"], b["cond"], pairs):
+                    if (a["start"], a["end"]) == (b["start"], b["end"]) and set(a["types"]) & set(b["types"]):
+                        continue                                # one structure, named in two files
+                    bad.append((rule, f"{a['file']} [{h(a['start'])}, {h(a['end'])}) ({a['from']}) and {b['file']} "
+                                      f"[{h(b['start'])}, {h(b['end'])}) ({b['from']}) overlap"))
     # stock bytes: one module per byte, unless it declares it takes the site, or its stock bytes are the other
     # module's new ones (a chain patch.py accepts: master.py on comp.py's Tools page)
     ap = [p for p in man["patches"] if p["applied"]]
@@ -1906,9 +1928,9 @@ def report(ours, theirs, base=None, stock=None):
     def ident(r):
         return {("module", r["module"])} | {("type", x) for x in r["types"]} | {("name", x) for x in r.get("names", [])}
 
-    def holds(m, r, near):
+    def holds(m, r, near, kind):
         """m has a range that is r's thing and overlaps near"""
-        return any(ident(x) & ident(r) and x["start"] < near["end"] and near["start"] < x["end"] for x in m["bkpsram"])
+        return any(ident(x) & ident(r) and x["start"] < near["end"] and near["start"] < x["end"] for x in m.get(kind, []))
 
     def shared(a, b):
         return any(tg["kind"] == "shares" and {a["module"], b["module"]} <= set(tg.get("with", []))
@@ -1919,14 +1941,15 @@ def report(ours, theirs, base=None, stock=None):
         x = r["types"] + r.get("names", [])
         return f"{r['file']} [{h(r['start'])}, {h(r['end'])}) ({r['from']}{'; ' + ', '.join(x) if x else ''})"
 
-    for a in ours["bkpsram"]:
-        for b in theirs["bkpsram"]:
-            if not (a["start"] < b["end"] and b["start"] < a["end"]) or ident(a) & ident(b) or shared(a, b):
-                continue
-            if holds(theirs, a, b) or holds(ours, b, a):
-                continue
-            add("bkpsram", f"backup SRAM {h(max(a['start'], b['start']))}", said(a), said(b),
-                "two modules on the same backup-SRAM bytes")
+    for kind, what in (("bkpsram", "backup SRAM"), ("patchram", "patch RAM")):
+        for a in ours.get(kind, []):
+            for b in theirs.get(kind, []):
+                if not (a["start"] < b["end"] and b["start"] < a["end"]) or ident(a) & ident(b) or shared(a, b):
+                    continue
+                if holds(theirs, a, b, kind) or holds(ours, b, a, kind):
+                    continue
+                add(kind, f"{what} {h(max(a['start'], b['start']))}", said(a), said(b),
+                    f"two modules on the same {what} bytes")
 
     # ---- bank 1
     bk = bank_report(ours.get("build"), theirs.get("build"), base, add)
@@ -2083,6 +2106,8 @@ def md_scan(man):
         mods.setdefault(p["module"], {}).setdefault("sdram", []).append(p)
     for r in man["bkpsram"]:
         mods.setdefault(r["module"], {}).setdefault("bkp", []).append(r)
+    for r in man.get("patchram", []):
+        mods.setdefault(r["module"], {}).setdefault("pram", []).append(r)
     objs = (man.get("build") or {}).get("objects") or {}
     for ob, v in objs.items():
         mods.setdefault(module_of(ob.replace(".o", ".c")), {}).setdefault("objs", []).append((ob, v))
@@ -2115,6 +2140,8 @@ def md_scan(man):
                      f"({p['size_from']}; {p['file']})")
         for r in d.get("bkp", []):
             L.append(f"- backup SRAM [{h(r['start'])}, {h(r['end'])}) ({r['from']}; {r['file']}:{r['line']})")
+        for r in d.get("pram", []):
+            L.append(f"- patch RAM [{h(r['start'])}, {h(r['end'])}) ({r['from']}; {r['file']}:{r['line']})")
         for p in d.get("patches", []):
             na = "" if p["applied"] else " (in no applied set)"
             if p["kind"] == "call":

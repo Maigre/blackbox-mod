@@ -7,7 +7,8 @@ What is checked, on the tree this runs in (read statically: no build needed for 
 2. the rules: one parameter per id and one id per xml name; a module's copy of its own id under another name
    (clipwin_b2.c's B2_P_SLIP, read through fw_setting) holds the value registered under the first name; SDRAM parts
    that do not overlap (unless one is declared inside the other, or their #if builds exclude each other) and stay
-   inside the block, master_block() parts inside the core; backup-SRAM ranges of two modules apart; no stock byte
+   inside the block, master_block() parts inside the core; backup-SRAM and patch-RAM ranges of two modules apart,
+   none past its memory's end (the split's dispatcher word, bench/b2split.py's VEC_RAM, declared by its tag); no stock byte
    patched by two modules unless the later one's stock bytes are the earlier one's new bytes (a chain patch.py
    accepts) or a module's TAKES names the site; no `resources: wants` site patched by another module; each tagged
    store's stock entries + ours within its cap, and no hooked stock store_add that no tag names.
@@ -18,10 +19,10 @@ What is checked, on the tree this runs in (read statically: no build needed for 
    id taken again directly, through a helper, through a function-like macro; an xml name taken again; a drifted copy
    of an id; an SDRAM part on another as mem + OFF, through a parameter, an out-parameter, master_block() + OFF and
    &mem[enum]; a backup-SRAM word on another module's, as a literal and as base macro + offset, and a `shares` tag that
-   allows it; a call site patched twice and a TAKES that allows it; a wanted site; a store pushed past its cap; a
+   allows it; a patch-RAM word on another module's and on the split's word, and a `shares` tag that allows it; a call site patched twice and a TAKES that allows it; a wanted site; a store pushed past its cap; a
    hooked store_add no tag names); each must fail the rule it targets, or pass it when allowed. Forms the reader
    cannot follow (a registrar in a function-pointer variable, an untraced block pointer, a literal block offset, a
-   backup-SRAM cast with a variable offset) must be said not read, which fails part 1. Report mutants, two copies of
+   backup-SRAM or patch-RAM cast with a variable offset) must be said not read, which fails part 1. Report mutants, two copies of
    this tree: the same free backup SRAM claimed by a module on each side (a row) or by one struct moved to another
    file (no row), a parameter added on one of our ids (a row), a trampoline on a stock function we call (a row).
 NOT checked: a table of literal ids (clipwin_b2.c's region_rows) against the registrations: only a copy under a
@@ -38,6 +39,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "bench"))
+import b2split  # noqa: E402
 import resources as R  # noqa: E402
 
 fails = 0
@@ -64,6 +66,10 @@ sd = man["sdram"]
 check(f"the SDRAM block: {R.h(sd['block'])} (core {R.h(sd['core'])}), {len(sd['parts'])} parts through "
       f"{sorted(sd['accessors'])}", sd["block"] and sd["parts"] and "master_block" in sd["accessors"])
 check(f"{len(man['bkpsram'])} backup-SRAM ranges read", len(man["bkpsram"]) > 0)
+check(f"{len(man['patchram'])} patch-RAM ranges read, the split's dispatcher word {R.h(b2split.VEC_RAM)} among them "
+      f"(bench/b2split.py's tag, the same address as its VEC_RAM)",
+      any(r["start"] == b2split.VEC_RAM and r["from"] == "tag" for r in man["patchram"]),
+      [(R.h(r["start"]), r["file"]) for r in man["patchram"]])
 check(f"{len(man['uses'])} ids read where they are used (through {', '.join(man['stock_api']['setting'])}); "
       f"{len(man['uses_unread'])} computed at run time, not read", len(man["uses"]) > 0)
 check(f"{len(man['binds'])} stock functions bound with FN() / B2_FN()", len(man["binds"]) > 0)
@@ -78,6 +84,7 @@ explain = {"param-id": "one parameter per id, every id below the registry's 500"
            "param-use": "a module's copy of its own id (B2_P_SLIP for P_SLIP) holds the registered value",
            "sdram": "SDRAM parts apart, inside the block; master_block() parts inside the core",
            "bkpsram": "backup-SRAM ranges of two modules apart",
+           "patchram": "patch-RAM ranges of two modules apart, none past 0x24060000",
            "site": "no stock byte patched by two modules (chains and TAKES aside)",
            "wants": "no planned hook site patched by another module",
            "store": "each tagged store within its cap",
@@ -138,6 +145,10 @@ def copy_tree():
                         ignore=shutil.ignore_patterns("__pycache__"))
     if os.path.isfile(os.path.join(ROOT, "check.sh")):
         shutil.copy2(os.path.join(ROOT, "check.sh"), os.path.join(d, "check.sh"))
+    for rel in R.TAG_FILES:                          # the tags that live outside src/ and patches/
+        if os.path.isfile(os.path.join(ROOT, rel)):
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            shutil.copy2(os.path.join(ROOT, rel), os.path.join(d, rel))
     return d
 
 
@@ -266,6 +277,25 @@ mutant(f"a backup-SRAM word inside {sr['file']}'s {sr['types'][0]}, written as a
 mutant(f"... the same base macro + a variable offset",
        lambda d: put(d, "src/zz_mutant.c", HEAD + "#define ZZ_BKP 0x38800000u\n"
                      "void zz_poke(int i) { *(volatile uint32_t *)(ZZ_BKP + 4u * i) = 0; }\n"), None)
+pr = next(r for r in man["patchram"] if r["types"])
+mutant(f"a patch-RAM word on {pr['file']}'s {R.h(pr['start'])}",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(pr['start'])}u)\n"
+                     "void zz_poke(void) { ZZ_WORD = 0; }\n"), "patchram")
+mutant(f"... the same, a `resources: shares` tag naming both modules",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(pr['start'])}u)\n"
+                     f"/* resources: shares at={R.h(pr['start'])} with=zz_mutant,{pr['module']} */\n"
+                     "void zz_poke(void) { ZZ_WORD = 0; }\n"), "patchram", expect=False)
+mutant(f"a patch-RAM word on the split's dispatcher word {R.h(b2split.VEC_RAM)} (known by its tag only)",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(b2split.VEC_RAM)}u)\n"
+                     "void zz_poke(void) { ZZ_WORD = 0; }\n"), "patchram")
+mutant(f"a 16-byte struct at the end of patch RAM, past 0x24060000 (its overlap on filter's park declared: only the end fires)",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + "struct zz16 { uint32_t w[4]; };\n"
+                     f"#define ZZ ((volatile struct zz16 *){R.h(R.PATCH_HI - 8)}u)\n"
+                     f"/* resources: shares at={R.h(R.PATCH_HI - 8)} with=zz_mutant,filter */\n"
+                     "void zz_poke(void) { ZZ->w[0] = 0; }\n"), "patchram")
+mutant(f"... a patch-RAM base literal + a variable offset",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + f"void zz_poke(int i) {{ *(volatile uint32_t *)({R.h(R.PATCH_LO)}u + 4u * i) = 0; }}\n"),
+       None)
 # a free gap of the reader's map, behind a range whose size is known: both trees claim it
 rs = sorted(man["bkpsram"], key=lambda r: r["start"])
 gap = next(R.h((x["end"] + 0xf) & ~0xf) for x, y in zip(rs, rs[1:]) if x["from"] != "cast" and y["start"] - ((x["end"] + 0xf) & ~0xf) >= 0x40)
