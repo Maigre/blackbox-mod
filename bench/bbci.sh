@@ -92,7 +92,8 @@ reap() {                                  # runs killed outright (no trap ran): 
     [ -f "$p" ] || continue
     d=${p%/pid}
     [ -f "$d/verdict.json" ] && continue
-    kill -0 "$(cat "$p")" 2>/dev/null && continue          # still running (or its pid taken again: left alone)
+    pid=$(cat "$p")                                          # still running (or its pid taken again): left alone;
+    { [ -d "/proc/$pid" ] || kill -0 "$pid" 2>/dev/null; } && continue    # /proc too: kill -0 fails on another user's
     rid=$(basename "$d")
     drop_worktree "$d" "$WORK/wt/$rid" "$rid" 0
     (
