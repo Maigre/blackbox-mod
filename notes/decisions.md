@@ -32,6 +32,26 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-040 (2026-11-12) — Upstream is a vendor: the PRs are frozen, `maigre` is the product** (Thomas, on the 12/11
+  review; hub log 2026-11-12). Six PRs open since 20–23/10 and the first-contact issue got no comment or review,
+  nor did another contributor's PR; JOEBOX ships squashed releases built in private (JOEBOX 2: 9 commits, 167
+  files), TapeScam took the ids the first-contact issue asked to reserve, and its Clip selection uses the Waveform
+  knobs our Region uses. So: the PRs stay open upstream but are no longer synced (`bench/pr-branches` is empty); no
+  new PR-shaped branch, no byte-identical union check, no JOEBOX commit style; `main` stays his mirror and his
+  releases keep being merged into `maigre` (`bench/sync-upstream.sh`). A closing note upstream, if any, is Thomas's
+  to send. *Replaces D-019's PR-shaped branches and D-032; D-011 (keep every JOEBOX feature) stands.* Numbers
+  D-036 to D-039 are left to the JOEBOX 2 merge branch, which was cut before this.
+- **D-041 (2026-11-12) — Bank 2 first, and autonomy on the unit** (same review). Bank 1 is full for good: upstream
+  alone has 1,067 B free, the merged dev build 363 B. Bank 1 keeps JOEBOX's code and our thin hooks; our bodies
+  live in bank 2, which installs itself from the card at boot with no button held. Scarce things shared with
+  upstream (ids, SDRAM offsets, store entries, patched sites, page slots) are read by one tool and checked before a
+  merge (hub #t-056); our files sit beside his, never inside. A dev-build bench kit (hub #t-054) and a rig on
+  mgr-ran (switchable hub, SD multiplexer, audio loop on the Fireface; hub #t-060) let a session install bank 2
+  and check on the unit alone; repeated crashes switch bank 2 off by themselves (hub #t-059). Bank-1 installs stay
+  Thomas's BACK + INFO until the bootloader read (hub #t-058) says otherwise.
+- **D-042 (2026-11-12) — The six Looper picks are taken as built** (Thomas: « go »). D-020 to D-025 stand as
+  `feat/looper` has them; corrections come at the unit, at Gate 4. The Looper comes up on the merged JOEBOX 2 base
+  with its body in bank 2 (its 673 B of bank-1 glue no longer fit).
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving

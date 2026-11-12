@@ -1,7 +1,2 @@
-# The open PR branches bench/sync-upstream.sh keeps up to date with JOEBOX (one per line; see notes/pr-map.md)
-fix/b2load-readonly
-fix/preview-cell
-fix/usbdev-debug
-fix/waveform-labels
-feat/linux-dev
-feat/munchi-bank2
+# Frozen 2026-11-12 (D-040): no PR branch is kept up to date with JOEBOX any more, so this list is empty.
+# bench/sync-upstream.sh then merges upstream into `maigre` only. The six branches offered: notes/pr-map.md.
