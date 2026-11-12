@@ -58,11 +58,12 @@ Only where nothing in the sources states a fact, in a comment of the file that d
   the class-0x4c cell 37), `patches/comp.py` (global 41), `patches/munchi.py` (delay 8), `patches/fx2.py` (reverb 3).
   Stock's counts are the `bl 0x08093ef6` of each cell's case in FUN_08093f20 and in FUN_0809481c, counted on the
   listing (no branch inside a case); the pad's 59 is the figure `test_lfo.py` already gave.
-- `resources: wants site=<addr> callee=<stock callee> by=<function>`: `patches/clipwin.py`, stage 1's capture at
-  `0x080685D2` (`notes/clip-window-audit.md`, hub #t-044).
-- `resources: shares at=<addr> with=<module>,<module>`: two modules that take turns on one backup-SRAM block
-  (upstream's `comp.c` and `compm.c` at 0x38800400: one compressor runs at a time). None in this tree yet; the
-  JOEBOX 2 merge needs that one.
+- `resources: wants site=<addr> callee=<stock callee> by=<function>`: a site a feature not written yet will hook.
+  None in the tree since the JOEBOX 2 merge: the one that stood in `patches/clipwin.py` (stage 1's capture at
+  `0x080685D2`, hub #t-044) fired there, because that call is now `slice.py`'s `sel_param`. The comment in its
+  place says how stage 1 takes the site (TAKES, ending in `sel_param`).
+- `resources: shares at=<addr> with=<module>,<module>`: two modules that take turns on one backup-SRAM block.
+  One, in `src/compm.c`: `comp.c` and `compm.c` at 0x38800400 (one compressor runs at a time).
 
 A module's `TAKES` (a list of site addresses, or a dict keyed by them) lets it patch a site another module patches;
 a module whose stock bytes are another's new bytes (master.py on comp.py's Tools page) is a chain patch.py accepts.
@@ -102,11 +103,16 @@ What it does not see, from the same merge:
   left out of the sums and said not read (report); the stock switch in FUN_08093f20 that maps a cell's class to its
   case is not decoded.
 
-On the merge branch (wip/blackbox-t-052, 4342733): `check` gives the comp.c / compm.c overlap at 0x38800400 (needs
-the `shares` tag) and its seven hooked store_add sites, which carry no tags there; TAKES (a tuple in
+On the merge branch alone (wip/blackbox-t-052, 4342733): `check` gives the comp.c / compm.c overlap at 0x38800400
+(needs the `shares` tag) and its seven hooked store_add sites, which carry no tags there; TAKES (a tuple in
 patches/clipwin.py, re-exported by filter.py) is read, so no site problem. `report wip/blackbox-t-052 upstream/main`:
 10 collisions (the five TAKES sites, the three cap bytes 0x70 against 0x60, two SDRAM rows), merged block 0x95910 =
 the branch's own; exit 2 until its stores are tagged.
+
+With this tool on that merge (the wave of 12/11): the store tags came with it, and `check` then gave two problems,
+both real. The comp.c / compm.c block: tagged `shares`. And `0x080685D2`, wanted by stage 1 and patched by
+`slice.py` -> `sel_param`: the first clash the tool found that nobody had seen by hand. `check .` is at 0 problems,
+`test_resources.py` at 0 failed.
 
 Checked against the code: on the built image of each tree, `test_resources.py` runs every registration and
 store-defaults hook under Unicorn and compares the ids with what was read: here 78 ids in 5 hooks and 80 entries

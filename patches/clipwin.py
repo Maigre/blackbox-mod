@@ -65,6 +65,9 @@ PATCHES = [
 # the bit (clipsel.c), so its setup trampoline and the rest of slice.py stay. patch.py skips slice.py's entry here.
 TAKES = (0x08064B2C, 0x08064C5A, 0x080A53B0, 0x080A582A, 0x080A5B0E)
 
-# Planned, not patched yet (bench/resources.py reports a tree that patches it): stage 1's capture of the class-B
-# param-set call (notes/clip-window-audit.md, notes/re/x3-region-data-path.md section C; hub #t-044)
-# resources: wants site=0x080685D2 callee=0x08067648 by=clipwin_param
+# Planned, not patched yet: stage 1's capture of the class-B param-set call at 0x080685D2 -> 0x08067648
+# (notes/clip-window-audit.md, notes/re/x3-region-data-path.md section C; hub #t-044). Since JOEBOX 2 that call is
+# slice.py's (sel_param, clipsel.c: a Quant / Sync change during a stopped pad's audition). The `resources: wants`
+# tag that stood here did its job on this merge (bench/resources.py named the clash) and is gone: the site is no
+# longer free to want. Stage 1 takes it the way the five sites above are taken (TAKES), and its handler ends in
+# sel_param, not in stock's FUN_08067648.

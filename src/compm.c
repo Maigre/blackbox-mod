@@ -48,6 +48,8 @@ struct comp_state {
 /* 596 bytes: up to 3.3.g this ran 4 bytes into usbdev.c's state at 0x38800650, and Limit's lookahead wrote its last
    slot over the USB SETUP packet. usbdev.c moved to 0x38800680; this keeps it from coming back. */
 _Static_assert(0x38800400u + sizeof(struct comp_state) <= 0x38800680u, "comp.c's state runs into usbdev.c's at 0x38800680");
+/* Smash (comp.c) keeps its state on this same block: one compressor runs at a time. bench/resources.py reads this:
+   resources: shares at=0x38800400 with=comp,compm */
 #define MAGIC 0x434f4d31u        /* "COM1" */
 
 /* log2 / exp2, bit tricks with quadratic correction (error ~0.005 / ~0.3%) */
