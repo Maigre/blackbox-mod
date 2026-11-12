@@ -14,7 +14,8 @@
  *     - a reset by the window watchdog (WWDG1RSTF), or one the fault recorder asked for (B2_FAULTED), is a crash:
  *       the count goes up by one;
  *     - every other reset is not a crash, and the count goes to 0: a pin reset, a restart asked for without a fault
- *       (the card loader's, after it writes bank 2: nothing else in this tree asks for one), the installer's.
+ *       (the card loader's, after it writes bank 2; in a dev build the bench kit's restart job, kit_b2.c), the
+ *       installer's.
  *     B2_FAULTED goes back down either way, so one fault counts once.
  *   During a boot (b2_crash_uptime, from the meter every 376 wakes, about once a second): once the unit has run
  *     B2_GOOD_BLOCKS audio blocks (32.8 s), a count of 1 or 2 goes to 0. Not at boot: a payload that dies at second 5
@@ -28,12 +29,13 @@
  *       restart, and the count would start over: a loop, and an erase each time round;
  *     - b2_present says there is no payload: the lists read "---", master_alloc takes no tail, no boot graphic;
  *     - Tools reads "!held" where an unpaired bank 2 reads "!" (cpu.c's compose).
- *   A HOLD ENDS with the first reset that is not a crash. A held boot runs no card loader, and nothing here restarts
- *     the unit on request (the USB poke writes RAM, never the SCB), so that is a power-cycle or the installer (BACK +
- *     INFO at power-on): hands either way, with the unit up and on USB meanwhile. A power-cycle gives the payload three
- *     boots again (the test unit's backup SRAM does not even keep the count through one). A NEW payload can only come
- *     with a new BLACKBOX.bin - the loader takes this image's id and sum alone - so through the installer, and the
- *     card loader writes it under a count of 0.
+ *   A HOLD ENDS with the first reset that is not a crash. A held boot runs no card loader, and nothing restarts a
+ *     held unit on request (the USB poke writes RAM, never the SCB; the bench kit's restart job is bank-2 code, off
+ *     with the rest), so that is a power-cycle or the installer (BACK + INFO at power-on): hands either way, or the
+ *     bench's switched USB port (bench/bbpower.py), with the unit up and on USB meanwhile. A power-cycle gives the
+ *     payload three boots again (the test unit's backup SRAM does not even keep the count through one). A NEW payload
+ *     can only come with a new BLACKBOX.bin - the loader takes this image's id and sum alone - so through the
+ *     installer, and the card loader writes it under a count of 0.
  *
  * ONLY BANK 1 DECIDES. Whatever lives in bank 2 takes no part in deciding whether bank 2 runs: this file, the token in
  * fault.c's recorder and the gate in cpu.c are all in the cave. Every write goes through bkp_put: a write held in the
