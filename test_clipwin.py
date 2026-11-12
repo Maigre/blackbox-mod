@@ -297,8 +297,10 @@ tail = img[S["duck_block"] - BASE:S["duck_block"] - BASE + sizes["duck_block"]]
 at_tick = [i for i, x in enumerate(duck) if x[1] == "bl" and int(x[2].lstrip("#"), 16) == S["clipwin_tick"]] or [1]
 r4_writes = [x for x in duck[:at_tick[0]] if x[2].split(",")[0].strip() == "r4" and not x[1].startswith(("str", "cmp", "tst"))]
 check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, before the pads) with r0 = the engine (duck_block's "
-      "own r0, kept in r4: 'mov r4, r0' is the only write to r4 before it), then the tail call into the engine's control tick (0x08053164)",
-      order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
+      "own r0, kept in r4: 'mov r4, r0' is the only write to r4 before it), then JOEBOX 2's stretch_tick and repeat_tick, then "
+      "the tail call into the engine's control tick (0x08053164)",
+      order[-5:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"], S["stretch_tick"], S["repeat_tick"]]
+      and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
 POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 6 .. 11, after JOEBOX 2's Stretch (0x14c) in slot 5
@@ -308,13 +310,17 @@ for page in (0x080EF990, 0x080EF288):
           f"(0x152), Fit (0x153), stock's Loop Fade (0xfa), TL Knob (0x154), then {31 - len(POS_ROWS)} empty slots",
           got == (0x8D, 0xD2, 0x47, 0x94, 0x14C) + POS_ROWS + (0,) * (31 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
-touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
-           "FUN_08064a94 (recompute)": (0x08064A94, 0x3C8, [0x08064B2C, 0x08064C5A]),
-           "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080668FC, 0x080669D6, 0x08066E9E, 0x08066FAC]),
+# JOEBOX 2's own hooks in the same functions are allowed too: filter.py's mk_spawn (0x080655e6), slice.py's sel_setup
+# (0x08064a94), sel_spawn (0x08066b9a, 0x08066cf2), sel_accel (0x080b0e88), sel_bind_start/end/beats (0x080a5806/12/1e)
+# and ChopShop's chop_show_wave (0x080a5a5a)
+touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C, 0x080655E6]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
+           "FUN_08064a94 (recompute; slice.py's sel_setup over its prologue)": (0x08064A94, 0x3C8, [0x08064B2C, 0x08064C5A, 0x08064A94]),
+           "FUN_080667b8 (render; filter.py's filter_voice_b at 0x080669d6)": (0x080667B8, 0x860, [0x080668FC, 0x080669D6, 0x08066E9E, 0x08066FAC, 0x08066B9A, 0x08066CF2]),
            "FUN_08066454": (0x08066454, 856, [0x08066622]), "FUN_080662e4 (stock clip reader)": (0x080662E4, 368, []),
-           "FUN_080b0728": (0x080B0728, 36, [0x080B0746]), "FUN_080b0d54": (0x080B0D54, 772, [0x080B0DDE, 0x080B0E18]),
+           "FUN_080b0728": (0x080B0728, 36, [0x080B0746]), "FUN_080b0d54": (0x080B0D54, 772, [0x080B0DDE, 0x080B0E18, 0x080B0E88]),
            "FUN_080a54a0 (the Waveform setup; slice.py's four Slicer hooks in it too)":
-               (0x080A54A0, 0x6F0, [0x080A582A, 0x080A5B0E, 0x080A58E6, 0x080A58F2, 0x080A58FE, 0x080A5B64]),
+               (0x080A54A0, 0x6F0, [0x080A582A, 0x080A5B0E, 0x080A58E6, 0x080A58F2, 0x080A58FE, 0x080A5B64,
+                0x080A5806, 0x080A5812, 0x080A581E, 0x080A5A5A]),
            "FUN_080a53a2": (0x080A53A2, 0x16, [0x080A53B0]),
            "the Clip Pos page": (0x080EF990, 72, [0x080EF998 + 2 * i for i in range(1 + len(POS_ROWS))]),
            "its class-0x4c copy": (0x080EF288, 72, [0x080EF290 + 2 * i for i in range(1 + len(POS_ROWS))])}
