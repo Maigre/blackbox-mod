@@ -121,3 +121,11 @@ declared: its mailbox inside the Clip Window's 4 KB, and three backup-SRAM words
 Checked against the code: on the built image of each tree, `test_resources.py` runs every registration and
 store-defaults hook under Unicorn and compares the ids with what was read: here 78 ids in 5 hooks and 80 entries
 in 6 chains; on da84b1b, in a built copy, 103 ids and 106 chain entries; every hook the same as read.
+
+On the unit (37.5.0d, 12/11): the boot SDRAM block the tool reads (`0x95910`, `0x96D10` in a dev build with the
+bench kit) is not the whole cost. The pool had 1 491 200 B free on 37.4.1d and has 999 920 B on 37.5.0d: 491 280 B
+more taken, where the block and JOEBOX 2's stretch area (`0x58000`) add up to 435 216 B. The other 56 064 B are
+permanent allocations the tool does not read (stock's allocator also serves large GUI objects, x2 §1; JOEBOX 2's
+new screens are the likely takers, not traced). Before a merge, read the tool's SDRAM figure as a floor, and
+`bbusb.py sdram` on a unit as the fact.
+
