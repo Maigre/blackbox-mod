@@ -90,11 +90,30 @@ check(f"the mapping symbols mark bank 2's code, and the sweep decodes all of it 
       mapsyms and swept == code_bytes, (len(mapsyms), swept, code_bytes))
 
 
+# DATA in bank 2 is not code: the boot graphic (splash_img.c, 3.3.t) is ~21 KB of run-length bytes that decode as
+# anything, branches included. Its symbols' ranges (nm -S) are skipped by the scan and the literal check.
+data = []
+for line in subprocess.run(["arm-none-eabi-nm", "-S", "out/cave.elf"], capture_output=True, text=True, check=True).stdout.splitlines():
+    p = line.split()
+    if len(p) == 4 and p[3] in ("splash_clut", "splash_colours", "splash_rle", "splash_rle_len"):   # .bank2 marks them T
+        data.append((int(p[0], 16) - B2, int(p[0], 16) - B2 + int(p[1], 16)))
+
+
+def in_data(o):
+    return any(lo <= o < hi for lo, hi in data)
+
+
+check("the boot graphic's tables are found and sit in bank 2", len(data) >= 4 and all(0 < lo < hi <= len(deployed) for lo, hi in data), data)
+
+
 def scan(payload):
     """every branch in the payload that lands in the cave, every one into stock's text (allowed), and every one that
     leaves bank 2 for anywhere else"""
     leaving, outside, stock, off = {}, {}, {}, 16
     while off < len(payload) - 4:
+        if in_data(off):
+            off += 2
+            continue
         h1, h2 = struct.unpack_from("<HH", payload, off)
         if (h1 & 0xF800) == 0xF000 and (h2 & 0xD000) in (0xD000, 0x9000, 0xC000) and B2 + off not in mid:
             ins = list(md.disasm(payload[off:off + 4], B2 + off, 1))
@@ -164,15 +183,18 @@ check("...one planted on the cave's first byte is still a cave call, and one int
 check("the reverb is in bank 2 beside its two callers", B2 <= funcs_all.get("rev4_step", 0) < B2 + len(deployed), hex(funcs_all.get("rev4_step", 0)))
 check("the old pinned jump is gone from the cave", "rev4_step_impl" not in funcs_all and funcs.get(OLD_PIN) != "rev4_step", funcs.get(OLD_PIN))
 # A word the sweep decoded as instructions is code, not a pointer: `and.w r8, r3, #15` is f003 080f, the word 0x080ff003,
-# which the cave's range takes (cw_poll, stage 3). Literal pools ($d), and anything the sweep did not decode, are still read.
+# which the cave's range takes (cw_poll, stage 3). Literal pools ($d), and anything the sweep did not decode, are still read;
+# the boot graphic's tables (data, above) are not.
 def cave_words(payload):
     return {hex(B2 + o): hex(v) for o in range(16, len(payload) - 3, 4)
             for v in [struct.unpack_from("<I", payload, o)[0]]
-            if CAVE_LO <= (v & ~1) < CAVE_HI and not all(B2 + o + i in decoded for i in range(4))}
+            if CAVE_LO <= (v & ~1) < CAVE_HI and not all(B2 + o + i in decoded for i in range(4))
+            and not in_data(o)}
 
 
 check("bank 2 holds no data pointers into the cave", not cave_words(deployed), cave_words(deployed))
-pool = next(a for a, kind in mapsyms if kind == "$d" and a % 4 == 0 and B2 + 16 <= a and a + 4 <= B2 + len(deployed))
+pool = next(a for a, kind in mapsyms if kind == "$d" and a % 4 == 0 and B2 + 16 <= a and a + 4 <= B2 + len(deployed)
+            and not in_data(a - B2))
 planted = bytearray(deployed)
 planted[pool - B2:pool - B2 + 4] = struct.pack("<I", CAVE_LO + 0x101)
 check(f"...and one planted in a literal pool ({pool:#010x}) is still found", cave_words(bytes(planted)) == {hex(pool): hex(CAVE_LO + 0x101)},
@@ -256,8 +278,8 @@ e.uc.hook_add(UC_HOOK_CODE, lambda *_: hits.__setitem__("impl", hits["impl"] + 1
 e.uc.hook_add(UC_HOOK_CODE, lambda *_: hits.__setitem__("relapse", hits["relapse"] + 1), begin=relapse, end=relapse + 1700)
 err = None
 try:
-    for _ in range(4):                                     # the first block is the one that died
-        e.call("munchi_process", OBJ, BUFS, count=200_000_000)
+    for _ in range(20):                                    # 3.3.y: the type change clears the lines over ~15 blocks,
+        e.call("munchi_process", OBJ, BUFS, count=200_000_000)   # then Confetti's first blocks (the one that died)
 except Exception as exc:
     err = exc
 check("CONFETTI'S FIRST BLOCKS RUN: the crash on the test unit does not happen", err is None, str(err))
@@ -298,13 +320,16 @@ e2.stub(0x0804F270, lambda: e2.w32(e2.arg(2), IN))
 e2.stub(0x0805F37C, value=BUS)
 e2.w32(0x38800B14, (0x4D32 << 16) | 1)                                 # Munchi ran last
 per_block = []
-for _ in range(5):
+for _ in range(24):
     events.clear()
     e2.call("munchi_process", OBJ, BUFS, count=200_000_000)
-    per_block.append((events.count("clear"), events.count("stock")))
-check(f"bank 2 off + Confetti selected: the lines are cleared ONCE, then left alone {[c for c, _ in per_block]}",
-      [c for c, _ in per_block] == [3, 0, 0, 0, 0], per_block)
-check("...and the stock delay runs every block in its place", all(st == 1 for _, st in per_block), per_block)
+    per_block.append((events.count("clear"), events.count("stock"), (e2.r32(0x38800B14) & 0xFFFFFFFF) >> 16 == 0x4D43))
+clr = [c for _, _, c in per_block]
+k = clr.index(False) if False in clr else len(clr)
+check(f"bank 2 off + Confetti selected: the lines are cleared ONCE (by the slot, over {k} blocks: 3.3.y), then left alone",
+      10 <= k <= 20 and not any(clr[k:]) and all(c == 0 for c, _, _ in per_block), per_block)
+check("...and the stock delay runs every block in its place after that", all(st == 1 for _, st, _ in per_block[k:]) and
+      all(st == 0 for _, st, _ in per_block[:k]), per_block)
 # Munchi's engine is up there too since it moved out of the cave: the same rule, the same once
 if "munchi_block" in funcs_all:
     e2.uc.mem_write(ARR, struct.pack("<HHI", 0x197, 0, 1))             # Type Munchi
@@ -314,12 +339,15 @@ if "munchi_block" in funcs_all:
     for f in ("munchi_ready", "munchi_block"):
         e2.uc.hook_add(UC_HOOK_CODE, lambda *_, f=f: entered.append(f), begin=e2.sym[f] & ~1, end=e2.sym[f] & ~1)
     per_block = []
-    for _ in range(5):
+    for _ in range(24):
         events.clear()
         e2.call("munchi_process", OBJ, BUFS, count=200_000_000)
-        per_block.append((events.count("clear"), events.count("stock")))
-    check(f"bank 2 off + Munchi selected: the lines are cleared ONCE, the stock delay every block {per_block}",
-          per_block == [(3, 1)] + [(0, 1)] * 4, per_block)
+        per_block.append((events.count("clear"), events.count("stock"), (e2.r32(0x38800B14) & 0xFFFFFFFF) >> 16 == 0x4D43))
+    clr = [c for _, _, c in per_block]
+    k = clr.index(False) if False in clr else len(clr)
+    check(f"bank 2 off + Munchi selected: the lines are cleared ONCE (by the slot, over {k} blocks: 3.3.y), the stock delay every block after that",
+          10 <= k <= 20 and not any(clr[k:]) and all(c == 0 for c, _, _ in per_block) and
+          all(st == 1 for _, st, _ in per_block[k:]) and all(st == 0 for _, st, _ in per_block[:k]), per_block)
     check("...and nothing of Munchi's engine is entered", not entered, entered[:4])
 
 # --- 5. THE FLASH HAS TO READ CLEANLY TOO (3.2.t). The payload on the test unit was byte-perfect and still misread one

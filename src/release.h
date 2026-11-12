@@ -4,7 +4,7 @@
  *   - the raw USB peek / poke (usbdev.c) is left out. It reads and writes any address in the machine, bank 1's flash
  *     controls included, which is how a unit can be killed for good; it is a development tool and nothing more.
  * The name of the first release under this scheme (2026-10-13): JOEBOX 1. Eight characters is the most a
- * knob-page header shows before it wraps (cpu.c), so the name and its number have to fit in that.
+ * knob-page header shows before it wraps (cpu.c), so the name and its number have to fit in that. The second: JOEBOX 2.
  */
 #ifndef RELEASE_H
 #define RELEASE_H

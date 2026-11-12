@@ -90,9 +90,9 @@ def f32(x):
 
 from unicorn import UC_HOOK_CODE
 BLOCK, CTX = 0xC0000000, 0x24058000
-PRISM = BLOCK + 0xC100                            # master.c's tail: behind its 0xC100-byte core
+PRISM = BLOCK + 0x1D110                           # master.c's tail: behind its 0x1D110-byte core
 PMEM, PCHECK = 0x38800F70, 0x38800F74
-e.uc.mem_map(0xC0000000, 0x90000)
+e.uc.mem_map(0xC0000000, 0x96000)               # the master block (0x94910) and a little over
 FX = [["Drive", "Sweet", "Fuzz", "Snarl", "Bloom"], ["Doubler", "Vibrato", "Phaser", "Tremolo", "Pitch"],
       ["PingPong", "Tape", "Hall", "Scatter", "Reverse"], ["Filter", "Clamp", "Cassette", "Glitch", "Static"]]
 
@@ -124,7 +124,7 @@ e.w32(STACK + 4, 1000)
 e.w32(STACK + 8, 0x080CC3F4)
 e.call("comp_register", 0x24001000, 0xB4, 4, 0x080CC3E8)
 byid = {l[0]: l for l in lists}
-check("Master FX list: Off, VHS, Prism", byid[0x1DB][2] == ["Off", "VHS", "Prism"], byid[0x1DB])
+check("Master FX list: Off, VHS, Prism, TapeScam", byid[0x1DB][2] == ["Off", "VHS", "Prism", "TapeScam"], byid[0x1DB])
 check("no Edit selector any more (3.1.A's, id 0x19c)", 0x19C not in byid)
 check("four effect lists (0x19d..0x1a0), five effects each", [byid[0x19D + b][1:3] for b in range(4)] == [(lab, FX[b]) for b, lab in enumerate(("Drive FX:", "Move FX:", "Space FX:", "Tex FX:"))], [byid[0x19D + b] for b in range(4)])
 check("Time (0x1a7): eight note lengths", byid[0x1A7][2] == ["1/32", "1/16", "1/8T", "1/8", "1/8D", "1/4", "1/4D", "1/2"], byid[0x1A7])
@@ -135,9 +135,9 @@ check("every xml name is unique", len({l[3] for l in lists} | {n[4] for n in num
 e.stub(0x08093EF6, lambda: added.append((e.arg(1), e.arg(2))))
 e.call("comp_defaults", 0x24072000, 0xB4, 1)
 d = dict(added)
-check("defaults: Sweet 30 %, Doubler 0, Tape 0, Cassette 25 %, Tilt flat, Time 1/8, Mix 100 %; 28 global entries added in all (Pre-roll, then the clipper's three)",
-      [d[i] for i in range(0x19D, 0x1A9)] == [1, 0, 1, 2, 300, 0, 0, 250, 500, 300, 3, 1000] and len(added) == 28 and len(d) == 28, added)
-check("stock has 41 global settings, ours add 27: 68 of the store's 96", 41 + len(added) - 1 == 68 and e.uc.mem_read(0x08094820, 2) == bytes.fromhex("6021"))
+check("defaults: Sweet 30 %, Doubler 0, Tape 0, Cassette 25 %, Tilt flat, Time 1/8, Mix 100 %; 41 global entries added in all (TAPESCAM's eleven, Pre-roll, Groove, Theme, then the clipper's three)",
+      [d[i] for i in range(0x19D, 0x1A9)] == [1, 0, 1, 2, 300, 0, 0, 250, 500, 300, 3, 1000] and len(added) == 41 and len(d) == 41 and d.get(0x144) == 0 and d.get(0x145) == 0, added)
+check("stock has 41 global settings, ours add 40: 81 of the store's 96", 41 + len(added) - 1 == 81 and e.uc.mem_read(0x08094820, 2) == bytes.fromhex("6021"))
 
 # --- the page
 LIST, CELL = 0x24074000, 0x24075000
@@ -162,12 +162,15 @@ e.uc.mem_write(UI, bytes([2, 1]))
 check("Prism page 2: Tilt, Rate, Time, Mix", build() == ["clear", 0x1A5, 0x1A6, 0x1A7, 0x1A8], build())
 e.uc.mem_write(UI, bytes([1, 1]))
 settings(mfx=1)
-check("VHS page unchanged: Type + its seven knobs", build() == ["clear"] + list(range(0x1DB, 0x1E3)), build())
+check("VHS page: its seven knobs, no type knob (the type is on the Tools row, as for Prism and TAPESCAM: tester report 10-25)", build() == ["clear"] + list(range(0x1DC, 0x1E3)), build())
 
 # --- memory: taken once at boot from the firmware's permanent allocator
 allocs = []
 e.stub(0x0806AA80, lambda: allocs.append(("line", e.arg(0), e.arg(1))))
-e.stub(0x0804436C, lambda: allocs.append(("perm", e.arg(0))), value=BLOCK)
+def perm():                                        # the master block, then stretch.c's area: refused here
+    allocs.append(("perm", e.arg(0)))
+    e.ret(BLOCK if allocs[-2][0] == "line" else 0)  # the block comes right after the delay's line (every boot here)
+e.stubs[0x0804436C] = perm
 e.uc.mem_write(PMEM, b"\0" * 8)
 settings(mfx=2, fx0=0, amt0=1000)
 x = [tone(i) for i in range(N)]
@@ -177,8 +180,10 @@ check("the meter is up before the boot hook runs here (the emulator starts that 
 e.call("master_alloc", 0x24076000, 192000)
 check("master_alloc is the once-a-boot hook: it wipes the meter's state, and the bank 2 verdict with it (cpu_boot)", e.r32(0x2405FFD0) == 0)
 e.meter_up()                                      # ...and the audio task's first wake sets it up again, before any block
-check("master_alloc, bank 2 holding the payload: the delay's line is allocated as before, then 0x84900 bytes (the core: 0x1000 for the LFOs + 0x6000 for the USB audio ring + 0x4000 for the S950 filters + 0x100 for the clipper + 0x1000 for the Clip Window; the tail: Prism's 0x56800 + 0x22000 for the pad inserts), pointer + check word (PRISM_KEY) stored",
-      allocs == [("line", 0x24076000, 192000), ("perm", 0x84900)] and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D, (allocs, hex(e.r32(PMEM)), hex(e.r32(PCHECK))))
+check("master_alloc, bank 2 holding the payload: the delay's line is allocated as before, then 0x95910 bytes (the core: 0x1000 for the LFOs + 0x6000 for the USB audio ring + 0x4000 for the S950 filters + 0x100 for the clipper + 0x1000 for the Clip Window + 0x10000 for the EQ screen's RTA + 0x1000 for the filter's switch crossfade + 0x10 for stretch.c's pointer; the tail: Prism's 0x56800 + 0x22000 for the pad inserts), pointer + check word (PRISM_KEY) stored",
+      allocs[:2] == [("line", 0x24076000, 192000), ("perm", 0x95910)] and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D, (allocs, hex(e.r32(PMEM)), hex(e.r32(PCHECK))))
+check("...then stretch.c's own area (a refusal here only turns the Stretch models off), its address in the core's word at 0x1D100",
+      len(allocs) == 3 and allocs[2][0] == "perm" and allocs[2][1] >= 0x40000 and e.r32(BLOCK + 0x1D100) == 0, allocs)
 check("the patched call in the delay constructor goes to master_alloc", e.uc.mem_read(0x0805462A, 4) != bytes.fromhex("16f029fa") and e.sym["master_alloc"] != 0)
 e.w32(PCHECK, 0x12345678)
 l, r = block(x)
@@ -195,8 +200,8 @@ e.call("master_block")
 core = e.uc.reg_read(UC_ARM_REG_R0)
 e.call("master_tail")
 tail = e.uc.reg_read(UC_ARM_REG_R0)
-check("master_alloc, no payload in bank 2: only the core's 0xC100 bytes (Prism's and the inserts' 0x78800 stay free for presets), check word keyed CORE",
-      allocs[-1] == ("perm", 0xC100) and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x434F5245, (allocs, hex(e.r32(PCHECK))))
+check("master_alloc, no payload in bank 2: only the core's 0x1D110 bytes (Prism's and the inserts' 0x78800, and stretch.c's area, stay free for presets), check word keyed CORE",
+      allocs[-1] == ("perm", 0x1D110) and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x434F5245, (allocs, hex(e.r32(PCHECK))))
 check("...the core-only block still serves the LFOs, the USB ring, the S950 bank, the clipper and the Clip Window (master_block), "
       "and gives Prism and the inserts nothing (master_tail)", core == BLOCK and tail == 0, (hex(core), hex(tail)))
 e.w32(PRISM, 0)
@@ -205,7 +210,7 @@ check("...and Prism, selected, passes the signal through untouched and writes no
 e.w32(B2_MARK, 0)
 e.call("master_alloc", 0x24076000, 192000)      # the next boot finds the payload again: the whole block, as before
 e.meter_up()
-check("...the next boot with the payload takes the whole block again, keyed PRISM", allocs[-1] == ("perm", 0x84900) and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D)
+check("...the next boot with the payload takes the whole block again, keyed PRISM", allocs[-2] == ("perm", 0x95910) and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D)
 
 # --- audio
 settings(mfx=2, mix=1000, tilt=500)

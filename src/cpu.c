@@ -41,6 +41,10 @@ const char fw_version[] = "3.3.i";                /* 3.3.h + USB_DIAG, for provi
 const char fw_version[] = "JOE DIAG";             /* the diagnostic build for testers (fault.c, FAULT_SHOW) */
 #elif defined(PUBLIC_BUILD)
 const char fw_version[] = RELEASE_NAME;
+#elif defined(CPU_PROF)
+const char fw_version[] = "3.5.m P";              /* 3.5.m + CPU_PROF: per-block section timings for the peak hunt (prof.c) */
+#elif defined(SLICE_DIAG)
+const char fw_version[] = "3.3.j";                /* rc4 + SLICE_DIAG: per-trigger rows for the slicer crunch bug (filter.c) */
 #elif defined(FAULT_SHOW)
 const char fw_version[] = "3.3.g";                /* 3.3.e + FAULT_SHOW (3.3.f drew nothing: ARGB1555), for proving the diagnostic on the test unit */
 #else
@@ -180,6 +184,10 @@ static void compose(char *buf)
 }
 
 void usbdev_poll(void);         /* usbdev.c: the USB device probe on the power jack, served from here */
+#ifdef CPU_PROF
+void prof_block_start(void);    /* prof.c */
+void prof_block_end(uint32_t busy, uint32_t nom);
+#endif
 
 /* Replaces the audio task's queue wait (bl @0x080414e4). */
 int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
@@ -187,6 +195,10 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
     if (M->magic != MAGIC)
         start();
     uint32_t idle_from = DWT_CYCCNT, busy = idle_from - M->woke;
+#ifdef CPU_PROF
+    if (M->armed)
+        prof_block_end(busy, M->nom);
+#endif
     int got = fw_receive(queue, item, ticks, peek);
     usbdev_poll();
     uint32_t now = DWT_CYCCNT, period = now - M->woke;
@@ -231,6 +243,10 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
             M->status = STATUS_NO_CLOCK;
         M->wakes = 0;
     }
+#ifdef CPU_PROF
+    prof_block_start();
+    now = DWT_CYCCNT;                                        /* the block starts after the profiler's own setup */
+#endif
     M->woke = now;
     M->armed = 1;
     return got;

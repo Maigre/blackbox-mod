@@ -25,7 +25,8 @@ F = ctypes.POINTER(ctypes.c_float)
 
 def lib():
     os.makedirs(os.path.dirname(LIB), exist_ok=True)
-    subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-shared", "-fPIC", "-o", LIB, os.path.join(HERE, "..", "src", "insert_dsp.c")], check=True)
+    subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-shared", "-fPIC", "-o", LIB, os.path.join(HERE, "..", "src", "insert_dsp.c"),
+                    os.path.join(HERE, "..", "src", "transient.c")], check=True)    # the Transient type (3.3.u)
     return ctypes.CDLL(LIB)
 
 

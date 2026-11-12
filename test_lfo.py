@@ -68,12 +68,15 @@ e.stub(0x08093EF6, lambda: added.append((e.arg(1), e.arg(2))))
 e.call("lfo_defaults", 0x24073000, 0xDC, 0)
 check("pad defaults: stock's last entry, then LFO 2 = Sine, 1 bar, Free; LFO 3 = Random, 1/4, Retrig",
       added[:9] == [(0xDC, 0), (0x1A9, 4), (0x1AA, 5), (0x1AB, 0), (0x1AC, 0), (0x1AD, 8), (0x1AE, 8), (0x1AF, 1), (0x1B0, 0)], added)
-check("...then the pad's insert: Off, Pebble, Electra, the six shared knobs, the Gate's five, Input Off, and Region Auto, "
-      "Slip 0, Loop Len Off, Fit Off, TL Knob Loop Start (clipwin.c)",
+check("...then the pad's insert: Off, Pebble, Electra, the six shared knobs, the Gate's five, Input Off, the Transient's seven, "
+      "the Clip Window's Region Auto, Slip 0, Loop Len Off, Fit Off, TL Knob Loop Start (clipwin.c), then Stretch = Stock, no clip "
+      "selection (Start 0, End 0, Beats Auto), not ChopShop (0x14d = 0)",
       added[9:] == [(0x1B6, 0), (0x1B7, 0), (0x1B8, 0), (0x1B9, 330), (0x1BA, 750), (0x1BB, 500), (0x1BC, 350), (0x1BD, 250), (0x1BE, 500),
-                    (0x1C2, 800), (0x1C3, 0), (0x1C4, 0), (0x1C5, 200), (0x1C6, 0), (0x1C7, 0), (0x150, 0), (0x151, 0), (0x152, 0),
-                    (0x153, 0), (0x154, 0)], added[9:])
-check("a pad's settings store holds 96 entries (stock 64, of which 59 used; ours make 87): both places that size one",
+                    (0x1C2, 800), (0x1C3, 0), (0x1C4, 0), (0x1C5, 200), (0x1C6, 0), (0x1C7, 0),
+                    (0x170, 0), (0x171, 400), (0x172, 0), (0x173, 500), (0x174, 500), (0x175, 0), (0x176, 1000),
+                    (0x150, 0), (0x151, 0), (0x152, 0), (0x153, 0), (0x154, 0),
+                    (0x14C, 0), (0x15C, 0), (0x15D, 0), (0x15E, 0), (0x14D, 0)], added[9:])
+check("a pad's settings store holds 96 entries (stock 64, of which 59 used; JOEBOX 2's make 94, ours 5 more): both places that size one",
       img[0x08093F26 - BASE:0x08093F28 - BASE] == bytes.fromhex("6021") and img[0x080949F0 - BASE:0x080949F2 - BASE] == bytes.fromhex("6021"))
 check("page 3 of the Sample and Multisample pad pages lists the eight knobs",
       words(img, 0x080EFCF0, 9, "H") == list(range(0x1A9, 0x1B1)) + [0] and words(img, 0x080EFB88, 9, "H") == list(range(0x1A9, 0x1B1)) + [0])
@@ -190,7 +193,7 @@ e.w32(0x38800F74, BLOCKMEM ^ 0x5052534D)
 L = lambda pad, k: LFOS + 0x18 + (pad * 2 + k) * 28          # struct lfo is 28 bytes; state header 24
 e.call("env_mod_attach", PAD2, VOICE)
 check("with memory: the voice's parameter 0x5c reads pad 10's LFO 2 (state + header + 9 * 2 lfos)", has_source(VOICE + 0x288, L(9, 0)), [hex(e.r32(VOICE + 0x288 + 4 * k) & 0xFFFFFFFF) for k in range(13)])
-check("...the state is started (magic LFO2) and pad 10's LFO 2 and LFO 3 are marked in use", e.r32(LFOS) == 0x4C464F32 and e.r32(LFOS + 8) == 3 << 18, hex(e.r32(LFOS + 8)))
+check("...the state is started (magic LFOs) and pad 10's LFO 2 and LFO 3 are marked in use", e.r32(LFOS) == 0x4C464F73 and e.r32(LFOS + 8) == 3 << 18, hex(e.r32(LFOS + 8)))
 
 
 def pad_settings(pad, **kw):
@@ -388,6 +391,47 @@ h = e.uc.hook_add(UC_HOOK_CODE, lambda uc, a_, s_, u: cnt.__setitem__(0, cnt[0] 
 tick(256)
 e.uc.hook_del(h)
 print(f"     cost: {cnt[0]} instructions per engine tick with one pad's two LFOs in use")
+
+# ---- unrouting (3.5.m): the in-use flag used to stay set until a reboot
+ACT = lambda: e.r32(LFOS + 8)
+e.w32(LFOS + 8, 0)
+slot_cmd(0x5C, 2, 5, 500)                     # pad 10: LFO2 on slot 2, LFO3 on slot 1 (recorded now there is memory)
+slot_cmd(4, 1, 6, -250)
+e.call("env_mod_attach", PAD2, VOICE)
+check("pad 10 routed again: LFO 2 and LFO 3 in use", ACT() >> 18 & 3 == 3, hex(ACT()))
+slot_cmd(0x5C, 2, 0, 0)
+check("LFO2's only slot set to none: LFO 2 is no longer worked on, LFO 3 still is", ACT() >> 18 & 3 == 2, hex(ACT()))
+slot_cmd(4, 1, 0xD, 300)
+check("LFO3's slot moved to velocity (a stock source): LFO 3 off too", ACT() >> 18 & 3 == 0, hex(ACT()))
+slot_cmd(0x5C, 2, 6, 500)
+slot_cmd(0x3C, 3, 6, 500)
+e.call("env_mod_attach", PAD2, VOICE)
+slot_cmd(0x5C, 2, 0, 0)
+check("LFO3 on two slots, one unrouted: still in use", ACT() >> 18 & 3 == 2, hex(ACT()))
+slot_cmd(0x3C, 3, 0, 0)
+check("...the second unrouted: off", ACT() >> 18 & 3 == 0, hex(ACT()))
+slot_cmd(0x5C, 2, 0, 0)
+slot_cmd(0x5C, 1, 6, 500)
+slot_cmd(0x3C, 1, 6, 500)
+e.call("env_mod_attach", PAD2, VOICE)
+slot_cmd(0x5C, 1, 0xD, 300)
+check("stock keys a slot by target AND slot: Filter slot 1 to velocity leaves LFO3 on slot 1 of another target in use", ACT() >> 18 & 3 == 2, hex(ACT()))
+slot_cmd(0x3C, 1, 0, 0)
+check("...and that one unrouted: off", ACT() >> 18 & 3 == 0, hex(ACT()))
+slot_b(0x5C, 2, 5, -200)                      # pad 15 (class B): LFO2 on Filter slot 2 (also on 0xa2 slot 1, above)
+slot_b(0xA2, 1, 0, 0)
+check("class B: LFO 2 still routed on Filter slot 2: in use", ACT() >> 28 & 1 == 1, hex(ACT()))
+slot_b(0x5C, 2, 1, 400)
+check("class B: that slot moved to ENV: pad 15's LFO 2 off", ACT() >> 28 & 1 == 0, hex(ACT()))
+e.w32(LFOS + 8, 1 << 28)
+slot_cmd(0x5C, 9, 0, 0)
+check("an unrecorded flag (set by a voice, slot never seen routed) is left alone", ACT() == 1 << 28, hex(ACT()))
+cnt[0] = 0
+e.w32(LFOS + 8, 0)
+h = e.uc.hook_add(UC_HOOK_CODE, lambda uc, a_, s_, u: cnt.__setitem__(0, cnt[0] + 1))
+tick(256)
+e.uc.hook_del(h)
+print(f"     cost after unrouting everything: {cnt[0]} instructions per engine tick")
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

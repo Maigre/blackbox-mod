@@ -1,36 +1,39 @@
 /*
- * Munchi Delay's engine, in flash bank 2. Original 1010music Blackbox, firmware 3.1.9.
- *
- * Everything of Munchi that is DSP on its own state: TEMPO's granular delay, the reverb and the ducker (src/munchi,
- * MIT, see munchi.cpp's header for whose), started on the stock delay's lines and run one block at a time. The delay
- * slot's glue - the Type list, the knob page, the process hook, the send gate, the settings, the bus write - stays in
- * the cave (munchi.cpp) and calls the two entry points below, and only while bank 2 is live.
- *
- * Moved up from munchi.cpp as it was, code and memory layout unchanged: the same output, sample for sample, from the
- * same settings (test_munchi.py holds it to the bytes). What changed is where it runs, and that the settings arrive
- * as numbers (struct munchi_params) instead of being read from the store here: the store lookup is stock's code.
- *
- * LEAF CODE ONLY, like everything up here (test_bank2.py): nothing in this file may call outside bank 2. TEMPO's
- * classes are header-only and get compiled in here, and nothing else includes them, so none of their code can end
- * up in the cave. The one call the compiler would make on its own is memset, for value-initialising Munchi - and the
- * only memset is the cave's (munchi.cpp) - so the state is zeroed by hand and constructed without it.
+ * Munchi Delay's engine (delay slot Type 1): Charles Vestal's port of CHOMPI TEMPO's dual delay (src/munchi, MIT; see
+ * munchi.cpp for what it does and where its memory comes from). munchi.cpp has the hooks and the settings; this is the
+ * DSP, moved out in 3.3.y so it lives in flash bank 2 (build.sh BANK2_OBJS): bank 1 was down to ~1.8 KB. No calls out
+ * of bank 2 except to stock firmware (the settings lookup); delay_slot only calls in when bank 2 is live, and plays the
+ * stock delay without it.
  */
 #include <stddef.h>
 #include <stdint.h>
 #include <new>
-#include "munchi_dsp.h"
 
-#pragma GCC optimize("Os", "no-tree-loop-distribute-patterns")
+#pragma GCC optimize("O2", "no-tree-loop-distribute-patterns")   /* bank 2: built for speed (3.3.y: -5 % instructions measured) */
 
+#ifndef MUNCHI_OFF
 #include "munchi/tempo/granularDelay.h"
 #include "munchi/tempo/reverb.h"
 #include "munchi/tempo/SimpleCompressor.h"
 
-#define MAGIC 0x4d554e31u                                 /* "MUN1" */
-#define MAXN MUNCHI_MAXN
+#define FN(addr) ((addr) | 1u)
+typedef int (*setting_fn)(const void *store, unsigned param);
+#define fw_setting       ((setting_fn)FN(0x08093e9c))
 
+#define LINE_LIVE    0x30        /* the stock delay's three lines (munchi.cpp) */
+#define LINE_STATE   0x4c
+#define LINE_FREEZE  0x68
+#define P_FEEDBK 0x38
+#define P_WAND   0x1d1
+#define P_RANDOM 0x1d2
+#define P_FREEZE 0x1d3
+#define P_CLOCK  0x1d4
+#define P_WIDTH  0x1d5
+#define P_DUCK   0x1d6
 static const float clock_mul[3] = {1.f, .5f, 2.f};
 static const float width_mul[4] = {1.f, 0.f, 2.5f, 5.f};
+#define MAGIC 0x4d554e31u                                 /* "MUN1" */
+#define MAXN 128
 
 struct Munchi {
     uint32_t magic;
@@ -49,6 +52,16 @@ struct Munchi {
 
 static_assert(sizeof(Munchi) <= 96000 * 4, "Munchi's state must fit the stock delay's 2 s line");
 
+static inline void *line_ptr(uint8_t *obj, int line)
+{
+    return *(void **)(obj + line);
+}
+
+static inline uint32_t line_floats(uint8_t *obj, int line)
+{
+    return *(uint32_t *)(obj + line + 0x14);
+}
+
 static void zero(void *p, uint32_t bytes)
 {
     uint32_t *w = (uint32_t *)p;
@@ -56,19 +69,24 @@ static void zero(void *p, uint32_t bytes)
         w[i] = 0;
 }
 
-static Munchi *start(void *st, uint32_t st_floats, mbuf_t *live, uint32_t live_floats, mbuf_t *frozen, uint32_t frozen_floats)
+static Munchi *start(uint8_t *obj, int cleared)
 {
-    if (!live || !frozen || !st || st_floats * 4 < sizeof(Munchi))
+    void *live = line_ptr(obj, LINE_LIVE), *frozen = line_ptr(obj, LINE_FREEZE), *st = line_ptr(obj, LINE_STATE);
+    if (!live || !frozen || !st || line_floats(obj, LINE_STATE) * 4 < sizeof(Munchi))
         return nullptr;
-    uint32_t frames = live_floats;                              /* floats -> 16-bit stereo frames: same count */
-    if (frozen_floats < frames)
-        frames = frozen_floats;
-    zero(live, frames * 4);
-    zero(frozen, frames * 4);
-    zero(st, sizeof(Munchi));
-    Munchi *m = new (st) Munchi;                    /* TEMPO's classes expect zeroed memory: zero() has just done it */
-    m->live = live;
-    m->frozen = frozen;
+    uint32_t frames = line_floats(obj, LINE_LIVE);              /* floats -> 16-bit stereo frames: same count */
+    if (line_floats(obj, LINE_FREEZE) < frames)
+        frames = line_floats(obj, LINE_FREEZE);
+    if (!cleared) {                 /* 3.3.y: after a type change the slot has just cleared the lines, block by block */
+        zero(live, frames * 4);
+        zero(frozen, frames * 4);
+        zero(st, sizeof(Munchi));
+    }
+    /* TEMPO's classes expect zeroed memory. Value-initialising zeroes all of it again (byte by byte, the reverb's 64 KB
+       included: ~0.8 ms); after the slot's own clear it already is, so the constructors alone do (3.3.y) */
+    Munchi *m = cleared ? new (st) Munchi : new (st) Munchi();
+    m->live = (mbuf_t *)live;
+    m->frozen = (mbuf_t *)frozen;
     m->reverb.Init(48000.f);
     m->reverb.SetAmount(0.f);
     m->reverb.SetInputGain(.3f);
@@ -99,12 +117,12 @@ static void set_main(Munchi *m, float val)
     }
 }
 
-static void controls(Munchi *m, const munchi_params *p)
+static void controls(Munchi *m, const void *store)
 {
-    int wand = p->wand, random = p->random;
-    int feedback = p->feedback, freeze = p->freeze != 0;
-    unsigned clock = (unsigned)p->clock, width = (unsigned)p->width;
-    int duck = p->duck;
+    int wand = fw_setting(store, P_WAND), random = fw_setting(store, P_RANDOM);
+    int feedback = fw_setting(store, P_FEEDBK), freeze = fw_setting(store, P_FREEZE) != 0;
+    unsigned clock = (unsigned)fw_setting(store, P_CLOCK), width = (unsigned)fw_setting(store, P_WIDTH);
+    int duck = fw_setting(store, P_DUCK);
     m->clock_mul = clock_mul[clock < 3 ? clock : 0];
     MUNCHI_SPREAD = width_mul[width < 4 ? width : 0];
     if (wand != m->last_wand)
@@ -163,27 +181,37 @@ static inline void process48(Munchi *m, float xl, float xr, float *ol, float *or
     *orr = yr;
 }
 
+
 extern "C" {
 
-/*
- * The state in line 2 if it is Munchi's and still on these lines, else Munchi started afresh: all three lines are
- * cleared when the type changes either way (fresh), and a magic word guards the rest - if anything else ever clears
- * the lines, the next block starts over instead of following zeroed pointers.
- */
-void *munchi_ready(void *st, uint32_t st_floats, int16_t *live, uint32_t live_floats, int16_t *frozen, uint32_t frozen_floats,
-                   int fresh)
+/* The compiler's own zeroing (value-initialising Munchi) calls memset, and the one in munchi.cpp is in bank 1, which
+   bank 2 must not call. This copy is made LOCAL to this object after the compile (build.sh: objcopy
+   --localize-symbol), so the two never clash and the calls in here resolve to it. */
+void *memset(void *d, int c, size_t n)
 {
-    Munchi *m = (Munchi *)st;
-    if (fresh || !m || m->magic != MAGIC || m->live != live || m->frozen != frozen)
-        m = start(st, st_floats, live, live_floats, frozen, frozen_floats);
+    uint8_t *p = (uint8_t *)d;
+    while (n--)
+        *p++ = (uint8_t)c;
+    return d;
+}
+
+/* The state in the delay's second line, started afresh when it is not Munchi's (or the type just changed); 0 = the
+   lines are not there or too small, and the slot plays the stock delay. */
+void *munchi_ready(uint8_t *obj, int fresh)
+{
+    Munchi *m = (Munchi *)line_ptr(obj, LINE_STATE);
+    if (fresh || !m || m->magic != MAGIC || m->live != line_ptr(obj, LINE_LIVE) ||
+        m->frozen != line_ptr(obj, LINE_FREEZE))
+        m = start(obj, fresh);
     return m;
 }
 
-void munchi_block(void *state, const munchi_params *p, float bpm, const float *il, const float *ir, int n,
-                  const float **wl, const float **wr)
+/* One block: the knobs, the clock, the samples. The wet comes back in *wl / *wr (n frames, n <= MAXN). */
+void munchi_run(void *state, const void *store, float bpm, const float *il, const float *ir, int n, float **wl,
+                float **wr)
 {
     Munchi *m = (Munchi *)state;
-    controls(m, p);
+    controls(m, store);
     run_clock(m, bpm, n);
     for (int i = 0; i < n; i++)
         process48(m, il[i], ir[i], &m->wl[i], &m->wr[i]);
@@ -191,4 +219,5 @@ void munchi_block(void *state, const munchi_params *p, float bpm, const float *i
     *wr = m->wr;
 }
 
-}  /* extern "C" */
+}
+#endif
