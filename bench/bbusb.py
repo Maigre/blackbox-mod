@@ -102,8 +102,11 @@ def print_crash():
     aud, gui = words(0x388003A4, 4), words(0x388003B4, 4)
     print(f"delay-dispatch SP lowest {sp[0]:#010x} last {sp[1]:#010x}; trail into the last reset: "
           f"audio {' '.join(f'{x:08x}' for x in aud)} | gui {' '.join(f'{x:08x}' for x in gui)}")
-    b2 = words(0x388003C8, 3)
+    b2 = words(0x388003C8, 5)
     print(f"bank-2 words {b2[0]:#010x} {b2[1]:#010x} {b2[2]:#010x}")
+    # src/b2safe.h: boots in a row that ended in a crash (3 and over = bank 2 held off, Tools reads "!held"), and the
+    # fault recorder's token ("FLT1" between a fault and the next boot, 0 otherwise)
+    print(f"crashed boots in a row {b2[3]}{' - BANK 2 HELD OFF' if b2[3] >= 3 else ''}, fault token {b2[4]:#010x}")
 
 
 def read_wav(path):
