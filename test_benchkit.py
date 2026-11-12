@@ -664,6 +664,17 @@ k.job(SCREEN, 0x04, 2)
 check(f"a tap while job 4's contact is down: -7, no hit test, no widget call; that contact still lifts where it went down "
       f"({r['result']}, {during}, {k.calls})", r["result"] == -7 and not during and r["state"] == 0
       and [c[:3] for c in k.calls] == [("find", 0x280, 0x77), ("up", WID, (100, 50))], (r, during, k.calls))
+k.calls.clear()
+s = k.ask(0x05, 40, 60, 10)                                # a tap held 10 passes ...
+k.run(SCREEN)
+r = k.job(SCREEN, 0x08, seq=s + 1)                         # ... cancelled in its second
+calls = [c[:3] for c in k.calls]
+r2 = k.job(SCREEN, 0x04, 0, 100, 50)
+k.job(SCREEN, 0x04, 2)
+check(f"a cancel of a tap lifts its contact where it went down first: r0 5, r1 the widget; then a touch down works "
+      f"({calls})", r["answered"] and r["result"] == 0 and r["r"][:2] == (5, 0x77) and calls == [
+          ("hit", 0x280, (40, 60)), ("down", WID, (40, 60)), ("find", 0x280, 0x77), ("up", WID, (40, 60))]
+      and r2["result"] == 0 and k.e.r32(MB + 0x28) != s, (r, calls, r2))
 
 # ====================================================================================================== 7. a restart
 # The card task's job 0x4f: answered, the box's two cache lines written out, then SYSRESETREQ (AIRCR 0x05fa0004) - only
