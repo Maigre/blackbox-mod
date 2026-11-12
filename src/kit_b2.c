@@ -63,10 +63,20 @@ struct kit_box {
     uint32_t version;                 /* +0x44 */
     /* the unit's own from here */
     uint32_t screen_boot;             /* +0x48: the boot the screen task's state below belongs to */
+    uint32_t run_seq;                 /* +0x4c: the seq of the job spanning passes */
+    uint8_t run;                      /* +0x50: that job's index, 0 = none */
+    uint8_t touch_down;               /* +0x51: the kit's own contact is down */
+    uint16_t run_wait;                /* +0x52: passes until its next step */
+    int32_t run_left;                 /* +0x54: events (knob) still to post */
+    int32_t run_arg[2];               /* +0x58: knob: code, counts; tap: - */
+    int32_t run_gap;                  /* +0x60: knob: passes between events */
+    int32_t run_count;                /* +0x64: events posted */
+    int32_t touch_x, touch_y;         /* +0x68: where the contact is */
+    uint32_t touch_wid;               /* +0x70: the widget it went down on (its id, gui widget + 0x28) */
 };
 _Static_assert(__builtin_offsetof(struct kit_box, seq) == 0x24 && __builtin_offsetof(struct kit_box, r) == 0x30 &&
-               __builtin_offsetof(struct kit_box, screen_boot) == 0x48 && sizeof(struct kit_box) <= 0x100u,
-               "the mailbox's layout is bench/bbkit.py's");
+               __builtin_offsetof(struct kit_box, screen_boot) == 0x48 && __builtin_offsetof(struct kit_box, touch_wid) == 0x70 &&
+               sizeof(struct kit_box) <= 0x100u, "the mailbox's layout is bench/bbkit.py's");
 
 struct mbx {                          /* MBX1, as usbdev.c had it */
     uint32_t magic, seq;
@@ -142,6 +152,15 @@ static void mbx(volatile struct mbx *x)
 /* ---- the jobs ---- */
 
 typedef int (*job_fn)(volatile struct kit_box *b);
+#define KIT_JOBS 0x60u
+
+static void reply(volatile struct kit_box *b, int r, uint32_t seq)
+{
+    b->result = r;
+    b->version = KIT_VERSION << 16 | KIT_JOBS;
+    barrier();
+    b->done = seq;
+}
 
 /* 0x00 info: the table, the screen showing (app + 0x8ca4), the GUI's ms clock, the boot count */
 static int job_info(volatile struct kit_box *b)
@@ -161,11 +180,216 @@ static int job_row(volatile struct kit_box *b)
     return r < 0 ? R_ARG : R_OK;
 }
 
-#define KIT_JOBS 0x60u
+/* ---- knobs (x6 §3.1): one event {0x32, code, counts} appended to the knob ring right after stock's scan, in the
+   same task; stock's drain that follows delivers it to FUN_080a1718 (case 0x32 -> the UI ring -> the view) in the same
+   pass, after any real knob's events. One event a pass at most, as stock posts, so the views' accelerator sees a
+   hand's pace (a burst in one pass reads as a zero span). ---- */
+#define HW          ((uint8_t *)0x24000170u)               /* the hardware object (FUN_080405a0) */
+#define KNOB_RING   0xc70u                                 /* 64 entries x 0x18 */
+#define KNOB_READ   (*(volatile uint32_t *)(HW + 0x1270u))
+#define KNOB_WRITE  (*(volatile uint32_t *)(HW + 0x1274u))
+#define KNOBS_ON    (*(const volatile uint8_t *)(HW + 0x18e1u))   /* the scan posts only while this is set */
+
+/* 0 posted, 1 the ring is full (next pass), R_REFUSED knobs off */
+static int knob_post(int32_t code, int32_t counts)
+{
+    if (!KNOBS_ON)
+        return R_REFUSED;
+    uint32_t w = KNOB_WRITE;
+    if (w - KNOB_READ >= 64u)
+        return 1;
+    volatile uint8_t *e = HW + KNOB_RING + (w & 63u) * 0x18u;     /* stock's own five stores (FUN_08040724) */
+    *(volatile uint16_t *)e = 0x32;
+    *(volatile uint16_t *)(e + 8) = 0;
+    *(volatile int32_t *)(e + 0xc) = code;
+    *(volatile int32_t *)(e + 0x10) = counts;
+    *(volatile uint32_t *)(e + 0x14) = 0;
+    barrier();                                     /* as FUN_08040bac: the entry before the index */
+    KNOB_WRITE = w + 1u;
+    return 0;
+}
+
+/* ---- touch (x6 §4): the kit's own contact, run through what stock's tracker FUN_0808b050 does for a finger - the
+   hit test, then the widget's down / move / up virtuals - from the screen task. Stock's tracker never sees it, so the
+   panel's "no contact" cannot lift it, and it stays down until the computer lifts it. ---- */
+#define GUI         (*(uint8_t *const volatile *)0x24002e6cu)
+#define TOUCH_ID    15                             /* the contact's id: the controller's are 0 .. 9 */
+typedef int (*hit_fn)(void *container, int32_t pt[2], void **widget);
+typedef int (*find_fn)(void *container, uint32_t id, void **widget);
+typedef void (*touch_fn)(void *widget, int32_t pt[2], int id);
+#define fw_hit      ((hit_fn)B2_FN(0x080ab5f2))   /* the current screen's hit test, then the container's children */
+#define fw_find     ((find_fn)B2_FN(0x080aecda))  /* a widget by its id (it may be gone) */
+
+/* down (0), move (1), up (2) at x, y; the widget's id or 0 */
+static uint32_t touch(volatile struct kit_box *b, unsigned what, int32_t x, int32_t y)
+{
+    uint8_t *gui = GUI;
+    int32_t pt[2] = {x, y};
+    void *w = 0;
+    if (what == 0) {
+        b->touch_wid = fw_hit(gui + 0x280, pt, &w) ? *(uint32_t *)((uint8_t *)w + 0x28) : 0;
+        b->touch_down = 1;
+    } else if (!fw_find(gui + 0x280, b->touch_wid, &w))
+        w = 0;
+    if (w)
+        (*(touch_fn *)(*(uint8_t **)w + 0x10u + 4u * what))(w, pt, TOUCH_ID);  /* vt + 0x10 / + 0x14 / + 0x18 */
+    b->touch_x = x;
+    b->touch_y = y;
+    if (what == 2)
+        b->touch_down = 0;
+    return b->touch_wid;
+}
+
+static int screen_xy(int32_t x, int32_t y)
+{
+    return x >= 0 && x < 320 && y >= 0 && y < 240;
+}
+
+/* ---- jobs that span passes: the screen task steps the one running, once a pass, before it looks at anything new ---- */
+static void finish(volatile struct kit_box *b, int r)
+{
+    b->r[0] = b->run == 0x03 ? b->run_count : (int32_t)b->touch_wid;
+    b->run = 0;
+    b->state = 0;
+    reply(b, r, b->run_seq);
+}
+
+static void step(volatile struct kit_box *b)
+{
+    if (b->run_wait) {
+        b->run_wait--;
+        return;
+    }
+    if (b->run == 0x05) {                          /* the tap's hold is over: up where it went down */
+        touch(b, 2, b->touch_x, b->touch_y);
+        finish(b, R_OK);
+        return;
+    }
+    int p = knob_post(b->run_arg[0], b->run_arg[1]);
+    if (p == 1)
+        return;                                    /* ring full: the next pass */
+    if (p < 0) {
+        finish(b, p);
+        return;
+    }
+    b->run_count++;
+    b->run_wait = (uint16_t)b->run_gap;
+    if (--b->run_left <= 0)
+        finish(b, R_OK);
+}
+
+/* the job in the box goes on over the next passes; R_LATER, or R_DONE when its first step ended it (answered already) */
+#define R_DONE 2
+static int start(volatile struct kit_box *b, unsigned index, uint32_t wait, int now)
+{
+    b->run_seq = b->seq;
+    b->run = (uint8_t)index;
+    b->run_wait = (uint16_t)wait;
+    b->state = 1;
+    if (now)
+        step(b);
+    return b->run ? R_LATER : R_DONE;
+}
+
+/* 0x03 knob (code 0 TL, 1 BL, 2 TR, 3 BR; counts per event, +-1 .. 32 767; events 1 .. 10 000; passes between, 0 .. 1 000):
+   r0 the events posted. -4 (r0 = 1) while stock has the knobs off. */
+static int job_knob(volatile struct kit_box *b)
+{
+    int32_t code = b->arg[0], counts = b->arg[1], n = b->arg[2], gap = b->arg[3];
+    if ((uint32_t)code > 3u || !counts || counts > 32767 || counts < -32767 || n < 1 || n > 10000 || gap < 0 || gap > 1000)
+        return R_ARG;
+    if (!KNOBS_ON) {
+        b->r[0] = 1;
+        return R_REFUSED;
+    }
+    b->run_arg[0] = code;
+    b->run_arg[1] = counts;
+    b->run_left = n;
+    b->run_gap = gap;
+    b->run_count = 0;
+    return start(b, 0x03, 0, 1);                   /* the first event in this pass */
+}
+
+/* 0x04 touch (0 down, 1 move, 2 up; x 0 .. 319, y 0 .. 239, the screenshot's pixels): r0 the widget's id (0: none
+   there). -7 a down on a contact already down, a move or up with none down. */
+static int job_touch(volatile struct kit_box *b)
+{
+    unsigned what = (unsigned)b->arg[0];
+    if (what > 2u || (what < 2u && !screen_xy(b->arg[1], b->arg[2])))
+        return R_ARG;
+    if (!GUI)
+        return R_REFUSED;
+    if ((what == 0) == (b->touch_down != 0))
+        return R_STATE;
+    b->r[0] = (int32_t)touch(b, what, what == 2u ? b->touch_x : b->arg[1], what == 2u ? b->touch_y : b->arg[2]);
+    return R_OK;
+}
+
+/* 0x05 tap (x, y, passes held 1 .. 1 000): down in this pass, up that many passes later at the same place; r0 the
+   widget's id */
+static int job_tap(volatile struct kit_box *b)
+{
+    int32_t held = b->arg[2];
+    if (!screen_xy(b->arg[0], b->arg[1]) || held < 1 || held > 1000)
+        return R_ARG;
+    if (!GUI)
+        return R_REFUSED;
+    if (b->touch_down)
+        return R_STATE;
+    touch(b, 0, b->arg[0], b->arg[1]);
+    return start(b, 0x05, (uint32_t)held - 1u, 0);
+}
+
+/* ---- buttons (x6 §3.2): the press, release or hold code of the button's own row in stock's table, written as stock's
+   scan FUN_080437d4 writes it, into both of the panel's rings - G, which the GUI's app pass drains (FUN_080a2e60: the
+   screens, BACK, INFO), then E, which the audio block drains (FUN_0804cb1c: REC, STOP, PLAY on the clock). From the
+   audio task, the scan's own, between two blocks. PLAY is button 10, STOP 9, REC 8. ---- */
+#define PANEL       ((uint8_t *)0x240021bcu)
+#define BUTTONS     ((const uint8_t *)0x24009ab0u)  /* 13 rows x 0x18: +8 press, +0xa release, +0xc hold (u16, 0 = none) */
+
+static void panel_put(uint32_t ring, uint32_t write_at, uint16_t code, int32_t index)
+{
+    volatile uint32_t *w = (volatile uint32_t *)(PANEL + write_at);
+    uint32_t at = *w;
+    volatile uint8_t *e = PANEL + ring + (at & 63u) * 0x18u;
+    *(volatile uint16_t *)e = code;
+    *(volatile uint16_t *)(e + 8) = 0;
+    *(volatile int32_t *)(e + 0xc) = index;
+    *(volatile uint32_t *)(e + 0x10) = 0;
+    *(volatile uint32_t *)(e + 0x14) = 0;
+    barrier();
+    *w = at + 1u;
+}
+
+/* 0x20 button (0 PADS 1 KEYS 2 SEQS 3 SONG 4 FX 5 MIX 6 PSET 7 TOOLS 8 REC 9 STOP 10 PLAY 11 BACK 12 INFO; 0 press,
+   1 release, 2 hold): r0 the code posted. -3 a button that has no such code (r0 0); -4 a ring full (r0 1). */
+static int job_button(volatile struct kit_box *b)
+{
+    uint32_t i = (uint32_t)b->arg[0], what = (uint32_t)b->arg[1];
+    if (i > 12u || what > 2u)
+        return R_ARG;
+    uint16_t code = *(const volatile uint16_t *)(BUTTONS + i * 0x18u + 8u + 2u * what);
+    b->r[0] = code;
+    if (!code)
+        return R_ARG;
+    if (*(volatile uint32_t *)(PANEL + 0x604) - *(volatile uint32_t *)(PANEL + 0x600) >= 64u ||
+        *(volatile uint32_t *)(PANEL + 0xc0c) - *(volatile uint32_t *)(PANEL + 0xc08) >= 64u) {
+        b->r[0] = 1;
+        return R_REFUSED;
+    }
+    panel_put(0x000, 0x604, code, (int32_t)i);
+    panel_put(0x608, 0xc0c, code, (int32_t)i);
+    return R_OK;
+}
+
 static const job_fn JOBS[KIT_JOBS] = {
     [0x00] = job_info,
     [0x01] = job_row,
     [0x02] = job_row,
+    [0x03] = job_knob,
+    [0x04] = job_touch,
+    [0x05] = job_tap,
+    [0x20] = job_button,
 };
 
 /*
@@ -189,18 +413,22 @@ __attribute__((noinline)) int kit_gate(unsigned task, volatile struct kit_box *b
     return (int)index;
 }
 
-static void reply(volatile struct kit_box *b, int r, uint32_t seq)
-{
-    b->result = r;
-    b->version = KIT_VERSION << 16 | KIT_JOBS;
-    barrier();
-    b->done = seq;
-}
-
 /* Bank 1's kit_poll, from each of the three tasks, with the boot-time SDRAM block, once bank 2 is live. */
 void kit_run(unsigned task, uint8_t *block)
 {
     volatile struct kit_box *b = (volatile struct kit_box *)(block + KIT_AT);
+    if (task == KIT_SCREEN) {
+        if (b->screen_boot != BOOTS) {             /* SDRAM keeps the box through a reset: a job or a contact of the */
+            b->screen_boot = BOOTS;                /* boot before is not this boot's */
+            b->run = 0;
+            b->touch_down = 0;
+            b->state = 0;
+        }
+        if (b->run) {                              /* a job spanning passes: one step, and nothing new meanwhile */
+            step(b);
+            return;
+        }
+    }
     if (b->magic == MBX_MAGIC) {
         if (task == KIT_SCREEN)
             mbx((volatile struct mbx *)b);
@@ -211,7 +439,7 @@ void kit_run(unsigned task, uint8_t *block)
     if (g == KIT_NONE)
         return;
     int r = g < 0 ? g : JOBS[g](b);
-    if (r != R_LATER)
+    if (r <= R_OK)                                 /* R_LATER: its done comes when it ends; R_DONE: it ended already */
         reply(b, r, seq);
 }
 #endif
