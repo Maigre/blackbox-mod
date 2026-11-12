@@ -382,6 +382,55 @@ else:
           mid and taken == 7 and r == bytes.fromhex("44332211") + struct.pack("<I", 0x12345678) and not core.get(0x81C) & 1,
           (mid, taken, r))
 
+    # The long poke (0x40 / 0x54, dev builds, bank 2 live): wLength bytes, up to 4 096, written into one of the RAMs the
+    # poke may write, as the host's 64-byte packets arrive (bank 2's part of the interrupt keeps them and re-arms
+    # endpoint 0 OUT), then the status stage: one empty packet back, only after the last.
+    def long_poke(addr, payload, n=None):
+        core.sent.clear()
+        core.stalled = False
+        n = len(payload) if n is None else n
+        core.rx += [(6, struct.pack("<BBHHH", 0x40, 0x54, addr & 0xFFFF, addr >> 16, n)), (4, b"")]
+        drain()
+        e.call("usbdev_poll")
+        drain()
+        if core.stalled:
+            return "STALL", None
+        early = list(core.sent)
+        for i in range(0, len(payload), 64):
+            core.rx += [((2, 0), payload[i:i + 64]), ((3, 0), b"")]
+            drain()
+        e.call("usbdev_poll")
+        drain()
+        return early, list(core.sent)
+
+    data = bytes((i * 13 + 5) & 0xFF for i in range(4096))
+    early, sent = long_poke(0xC0103000, data)
+    check(f"long poke: 4 096 bytes into SDRAM as 64 packets, nothing sent back before the last, then the empty status "
+          f"packet once ({sent})", early == [] and sent == [b""] and bytes(e.uc.mem_read(0xC0103000, 4096)) == data
+          and not core.get(0x81C) & (1 << 16), (early, sent))
+    early, sent = long_poke(0xC0103000, data[:200][::-1])
+    check("  ...200 bytes: 64, 64, 64, 8; the bytes after them untouched", sent == [b""] and
+          bytes(e.uc.mem_read(0xC0103000, 204)) == data[:200][::-1] + data[200:204], sent)
+    refused = [long_poke(a_, b"x" * 64, n_)[0] for a_, n_ in ((0x08100000, 64), (0x500010AC, 4), (0xC0103000, 4100),
+                                                               (0xC0103000, 0), (0xC0103002, 64), (0x2407FFC0, 128))]
+    check(f"  ...stalled, nothing written, into flash, a register, above 4 096 bytes, for none, unaligned, past AXI SRAM's end "
+          f"({refused})", refused == ["STALL"] * 6 and e.r32(0x08100000) != 0x78787878 and not core.get(0x81C) & (1 << 16), refused)
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x02")
+    r = long_poke(0xC0103000, b"y" * 64)[0]
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x01")
+    check("  ...without bank 2 live: stalled, nothing written", r == "STALL" and e.r32(0xC0103000) != 0x79797979, r)
+    core.sent.clear()
+    core.rx += [(6, struct.pack("<BBHHH", 0x40, 0x54, 0x3000, 0xC010, 200)), (4, b"")]
+    drain()
+    e.call("usbdev_poll")
+    core.rx += [((2, 0), b"z" * 64), ((3, 0), b"")]         # the endpoint NAKs the data until the setup is answered
+    drain()
+    mid = core.get(0x81C) & (1 << 16)
+    r = control(struct.pack("<BBHHH", 0xC0, 0x50, 0x0800, 0x2407, 8))
+    check("  ...one given up after a packet is ended by the next setup, which is answered as itself",
+          mid and not core.get(0x81C) & (1 << 16) and r == bytes.fromhex("44332211") + struct.pack("<I", 0x12345678)
+          and bytes(e.uc.mem_read(0xC0103000, 64)) == b"z" * 64, (mid, r))
+
 # --- MIDI from the computer: through stock's own USB event parser (real firmware code) into its "from USB" queue
 
 

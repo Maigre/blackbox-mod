@@ -177,8 +177,9 @@ check("the meter is up before the boot hook runs here (the emulator starts that 
 e.call("master_alloc", 0x24076000, 192000)
 check("master_alloc is the once-a-boot hook: it wipes the meter's state, and the bank 2 verdict with it (cpu_boot)", e.r32(0x2405FFD0) == 0)
 e.meter_up()                                      # ...and the audio task's first wake sets it up again, before any block
-check("master_alloc, bank 2 holding the payload: the delay's line is allocated as before, then 0x84900 bytes (the core: 0x1000 for the LFOs + 0x6000 for the USB audio ring + 0x4000 for the S950 filters + 0x100 for the clipper + 0x1000 for the Clip Window; the tail: Prism's 0x56800 + 0x22000 for the pad inserts), pointer + check word (PRISM_KEY) stored",
-      allocs == [("line", 0x24076000, 192000), ("perm", 0x84900)] and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D, (allocs, hex(e.r32(PMEM)), hex(e.r32(PCHECK))))
+KIT = 0x1400 if "kit_run" in e.sym else 0              # a dev build's bench kit area at the tail's end (src/master.c)
+check(f"master_alloc, bank 2 holding the payload: the delay's line is allocated as before, then {0x84900 + KIT:#x} bytes (the core: 0x1000 for the LFOs + 0x6000 for the USB audio ring + 0x4000 for the S950 filters + 0x100 for the clipper + 0x1000 for the Clip Window; the tail: Prism's 0x56800 + 0x22000 for the pad inserts{' + 0x1400 for the bench kit, a dev build' if KIT else ''}), pointer + check word (PRISM_KEY) stored",
+      allocs == [("line", 0x24076000, 192000), ("perm", 0x84900 + KIT)] and e.r32(PMEM) & 0xFFFFFFFF == BLOCK and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D, (allocs, hex(e.r32(PMEM)), hex(e.r32(PCHECK))))
 check("the patched call in the delay constructor goes to master_alloc", e.uc.mem_read(0x0805462A, 4) != bytes.fromhex("16f029fa") and e.sym["master_alloc"] != 0)
 e.w32(PCHECK, 0x12345678)
 l, r = block(x)
@@ -205,7 +206,7 @@ check("...and Prism, selected, passes the signal through untouched and writes no
 e.w32(B2_MARK, 0)
 e.call("master_alloc", 0x24076000, 192000)      # the next boot finds the payload again: the whole block, as before
 e.meter_up()
-check("...the next boot with the payload takes the whole block again, keyed PRISM", allocs[-1] == ("perm", 0x84900) and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D)
+check("...the next boot with the payload takes the whole block again, keyed PRISM", allocs[-1] == ("perm", 0x84900 + KIT) and e.r32(PCHECK) & 0xFFFFFFFF == BLOCK ^ 0x5052534D)
 
 # --- audio
 settings(mfx=2, mix=1000, tilt=500)

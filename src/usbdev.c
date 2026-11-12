@@ -41,8 +41,8 @@
  *
  * DEBUG (3.1.N; compiled OUT of a public build, PUBLIC_BUILD - see release.h): two vendor requests on endpoint 0 let the computer read memory and
  * write a word (peek 0xc0 / 0x50, poke 0x40 / 0x51 + 0x52), so registers and counters can be read on the running unit.
- * With the bench kit and this build's bank 2 live, the peek also reads up to 4 096 bytes a request: the bench kit's
- * (kit_b2.c moves its packets), for bench/bbshot.py.
+ * With the bench kit and this build's bank 2 live, the peek also reads up to 4 096 bytes a request and a long poke (0x40 /
+ * 0x54) writes as many: the bench kit's (kit_b2.c moves their packets), for bench/bbshot.py and the card files.
  */
 #include <stdint.h>
 
@@ -50,12 +50,13 @@ void bkp_enable(void);           /* od.c */
 uint8_t *master_block(void);     /* master.c: the SDRAM block taken at boot, or 0 */
 #ifndef PUBLIC_BUILD
 /* The bench kit (dev builds; kit.c, kit_b2.c): its jobs from this task, and the long peek and poke, whose packets bank 2
-   moves once b2_live() has said yes. Their flags are DAINTMSK bits, which every reset clears: endpoint 0 IN's
-   interrupt (on while a long peek runs); endpoint 0 OUT's is kept for the long poke. */
+   moves once b2_live() has said yes. Their two flags are DAINTMSK bits, which every reset clears: endpoint 0 IN's
+   interrupt (on while a long peek runs) and endpoint 0 OUT's, which GINTMSK never lets through (a long poke runs). */
 int b2_live(void);               /* cpu.c */
 void kit_poll(unsigned task);    /* kit.c */
 void kit_long(uint32_t at, uint32_t end, unsigned out);   /* kit_b2.c: a long transfer's rest, [at, end) */
 void kit_usb_in(void);           /* kit_b2.c: the interrupt, a long peek running */
+void kit_usb_out(uint32_t status);                        /* kit_b2.c: the interrupt, a long poke's packet */
 #define KIT_IN  (1u << 0)
 #define KIT_OUT (1u << 16)
 #endif
@@ -432,6 +433,12 @@ static void receive(void)
 {
     for (int guard = 0; guard < 8 && (GINTSTS & RXFLVL); guard++) {
         uint32_t st = GRXSTSP, bytes = (st >> 4) & 0x7ffu, kind = (st >> 17) & 0xfu, ep = st & 0xfu;
+#ifndef PUBLIC_BUILD
+        if (!ep && kind - 2u < 2u && (DAINTMSK & KIT_OUT)) {   /* a long poke's packet, or its end: bank 2's */
+            kit_usb_out(st);
+            continue;
+        }
+#endif
         for (uint32_t i = 0; i < bytes; i += 4) {
             uint32_t w = FIFO0;
             if (kind == 6 && i < 8)                          /* a setup packet's eight bytes, for the poll */
@@ -629,6 +636,10 @@ static void request(void)
             *(volatile uint32_t *)S->poke_at = v;
         ok |= req == 0x51;                                   /* a poke outside the RAMs: stalled, nothing written */
         data = 0;
+    } else if (type == 0x40 && req == 0x54) {                /* the bench kit's long poke: wLength bytes into one RAM */
+        uint32_t a = lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24;
+        if ((ok = want - 1u < 4096u && inside(a, MEM_RAMS) && inside(a + want - 4u, MEM_RAMS) && b2_live()))
+            kit_long(a, a + want, 1);                        /* its data from the interrupt, its status from bank 2 */
 #endif
     } else if (type == 0x00 && req == 5) {                   /* SET_ADDRESS: the core applies it after the status */
         DCFG = (DCFG & ~(0x7fu << 4)) | ((lo & 0x7fu) << 4);
@@ -669,6 +680,10 @@ static void request(void)
     }
     if (data)
         DOEPCTL0 |= EPENA | CNAK;                            /* the host's empty status packet after our data */
+#ifndef PUBLIC_BUILD
+    if (DAINTMSK & KIT_OUT)
+        return;                                              /* a long poke: the computer's data first */
+#endif
     if (len > want)
         len = want;
     if (from && len > 64) {                                  /* the rest follows, a packet per block (serve) */

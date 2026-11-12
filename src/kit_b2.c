@@ -73,9 +73,13 @@ struct kit_box {
     int32_t run_count;                /* +0x64: events posted */
     int32_t touch_x, touch_y;         /* +0x68: where the contact is */
     uint32_t touch_wid;               /* +0x70: the widget it went down on (its id, gui widget + 0x28) */
+    uint32_t card_boot;               /* +0x74: the boot the card task's state below belongs to */
+    uint32_t file_ms;                 /* +0x78: the GUI clock at the last file job */
+    uint8_t file_open;                /* +0x7c: the kit's file: 0 none, 1 open to read, 2 open to write */
 };
 _Static_assert(__builtin_offsetof(struct kit_box, seq) == 0x24 && __builtin_offsetof(struct kit_box, r) == 0x30 &&
                __builtin_offsetof(struct kit_box, screen_boot) == 0x48 && __builtin_offsetof(struct kit_box, touch_wid) == 0x70 &&
+               __builtin_offsetof(struct kit_box, file_open) == 0x7c &&
                sizeof(struct kit_box) <= 0x100u, "the mailbox's layout is bench/bbkit.py's");
 
 struct mbx {                          /* MBX1, as usbdev.c had it */
@@ -163,6 +167,9 @@ static void mbx(volatile struct mbx *x)
 #define DIEPCTL0    USBREG(0x900)
 #define DIEPINT0    USBREG(0x908)
 #define DIEPTSIZ0   USBREG(0x910)
+#define DOEPCTL0    USBREG(0xb00)
+#define DOEPTSIZ0   USBREG(0xb10)
+#define SETUP_ARM   ((3u << 29) | (1u << 19) | 64u)   /* usbdev.c's: one 64-byte packet (or three setups) */
 #define FIFO0       USBREG(0x1000)
 #define EPENA       (1u << 31)
 #define CNAK        (1u << 26)
@@ -208,6 +215,32 @@ void kit_usb_in(void)
     DIEPCTL0 |= EPENA | CNAK;
     for (const volatile uint32_t *p = (const volatile uint32_t *)at; n; n -= 4u)
         FIFO0 = *p++;                              /* a word at a time, as the peek reads: the LTDC's registers want it */
+}
+
+/* usbaud_isr's receive(), a long poke running: one entry of endpoint 0's receive FIFO - a packet's words, kept while
+   they fit, or "that packet is in": arm for the next, or, the last one in, the status stage (an empty packet back) */
+void kit_usb_out(uint32_t status)
+{
+    uint32_t bytes = (status >> 4) & 0x7ffu, at = LONG->at, end = LONG->end;
+    if (((status >> 17) & 0xfu) == 2u) {
+        for (uint32_t i = 0; i < bytes; i += 4u) {
+            uint32_t w = FIFO0;
+            if (at < end) {
+                *(volatile uint32_t *)at = w;
+                at += 4u;
+            }
+        }
+        LONG->at = at;
+        return;
+    }
+    if (at < end) {
+        DOEPTSIZ0 = SETUP_ARM;
+        DOEPCTL0 |= EPENA | CNAK;
+        return;
+    }
+    DAINTMSK &= ~KIT_OUT;
+    DIEPTSIZ0 = 1u << 19;
+    DIEPCTL0 |= EPENA | CNAK;
 }
 
 /* ---- the jobs ---- */
@@ -443,6 +476,247 @@ static int job_button(volatile struct kit_box *b)
     return R_OK;
 }
 
+/* ---- the card's files (x6 §6): stock's FatFs (R0.13-style, exFAT, tiny, long names) from the card task only - it
+   takes no lock, and every stock caller runs in this task (b2load.c's header). One file at a time, its FIL in the kit's
+   data area; a file left open 10 s with no job is closed, so a computer that went away leaves no open write behind.
+   The data area (dev builds: master.c's KIT_BYTES at the tail's end, block + 0x84900):
+     +0x000 FIL (0x58)   +0x058 DIR (0x58)   +0x0b0 FILINFO (0x120)   +0x200 a path or name, 256 B, the computer's
+     +0x400 the chunk, 4 096 B: a file's bytes either way, a listing's records ---- */
+#define KIT_DATA    0x84900u                       /* CORE_BYTES + PRISM_BYTES + 0x22000 */
+#define D_FIL       0x000u
+#define D_DIR       0x058u
+#define D_FNO       0x0b0u
+#define D_NAME      0x200u
+#define D_CHUNK     0x400u
+#define CHUNK       4096u
+#define PRISM_MEM   (*(const volatile uint32_t *)0x38800f70u)   /* master.c: the block, and its check word */
+#define PRISM_CHECK (*(const volatile uint32_t *)0x38800f74u)
+#define CARD_FOUND  (*(const volatile uint8_t *)(0x240021a4u + 0x15u))   /* stock's "the root opened" (b2load.c) */
+#define GUI_MS      (*(const volatile uint32_t *)0x2402eee0u)
+#define WDG_DISK    (*(volatile uint32_t *)0x2400a584u)                 /* the card task's watchdog stamp ... */
+#define WDG_NOW     (*(const volatile uint32_t *)0x2400a58cu)           /* ... and the counter it copies */
+#define IDLE_MS     10000u
+
+typedef int (*f_open_fn)(void *fp, const char *path, unsigned mode);
+typedef int (*f_rw_fn)(void *fp, void *buf, unsigned n, unsigned *done);
+typedef int (*f_fp_fn)(void *fp);
+typedef int (*f_lseek_fn)(void *fp, uint64_t ofs);                 /* the offset in r2:r3 (checked at stock's calls) */
+typedef int (*f_path_fn)(const char *path, void *fno);
+typedef int (*f_dir_fn)(void *dp, const char *path);
+typedef int (*f_readdir_fn)(void *dp, void *fno);
+typedef int (*f_unlink_fn)(const char *path);
+#define fw_f_open     ((f_open_fn)B2_FN(0x08086534))
+#define fw_f_read     ((f_rw_fn)B2_FN(0x08086866))
+#define fw_f_write    ((f_rw_fn)B2_FN(0x08086a06))
+#define fw_f_close    ((f_fp_fn)B2_FN(0x08086d76))
+#define fw_f_lseek    ((f_lseek_fn)B2_FN(0x08086d96))
+#define fw_f_stat     ((f_path_fn)B2_FN(0x0808724a))
+#define fw_f_opendir  ((f_dir_fn)B2_FN(0x080870f6))
+#define fw_f_readdir  ((f_readdir_fn)B2_FN(0x080871a0))
+#define fw_f_closedir ((f_fp_fn)B2_FN(0x0808718c))
+#define fw_f_unlink   ((f_unlink_fn)B2_FN(0x0808748e))
+#define FA_READ 1u
+#define FA_WRITE 2u
+#define FA_CREATE_NEW 4u                           /* fails with FR_EXIST (8) on a file that is there */
+#define FA_CREATE_ALWAYS 8u
+#define FA_OPEN_ALWAYS 0x10u
+
+/* the data area: the block's tail is there (master.c's check word keyed PRISM), or 0 */
+static uint8_t *data_area(volatile struct kit_box *b)
+{
+    uint32_t block = (uint32_t)b - KIT_AT;
+    return PRISM_MEM == block && PRISM_CHECK == (block ^ 0x5052534du) ? (uint8_t *)block + KIT_DATA : 0;
+}
+
+static uint64_t fil_u64(const uint8_t *fil, unsigned at)
+{
+    return *(const volatile uint32_t *)(fil + at) | (uint64_t) * (const volatile uint32_t *)(fil + at + 4u) << 32;
+}
+
+/* a FatFs result as the job's: 0, or -6 with FatFs's code in r0 */
+static int fatfs(volatile struct kit_box *b, int res)
+{
+    if (!res)
+        return R_OK;
+    b->r[0] = res;
+    return R_FATFS;
+}
+
+/* What every file job needs first: the data area, a card, a name that ends inside its 256 bytes when it takes one, and
+   the kit's file open (want 1) or not (want 0) or either (want 2). 0, or the job's refusal. */
+static int file_ready(volatile struct kit_box *b, const uint8_t *d, int name, unsigned want)
+{
+    if (!d || CARD_FOUND != 1u) {
+        b->r[0] = 6;
+        return R_REFUSED;
+    }
+    if (name) {
+        unsigned i = 0;
+        while (i < 256u && d[D_NAME + i])
+            i++;
+        if (i == 0 || i == 256u)
+            return R_ARG;
+    }
+    if (want < 2u && (b->file_open != 0) != want)
+        return R_STATE;
+    b->file_ms = GUI_MS;
+    return R_OK;
+}
+
+/* 0x40 open (0 read, 1 write a new file - refused with FatFs's FR_EXIST (8) if it is there, 2 write replacing it, 3
+   append; the path at +0x200): r0, r1 the file's size */
+static int job_open(volatile struct kit_box *b)
+{
+    static const uint8_t MODES[4] = {FA_READ, FA_WRITE | FA_CREATE_NEW, FA_WRITE | FA_CREATE_ALWAYS, FA_WRITE | FA_OPEN_ALWAYS};
+    uint8_t *d = data_area(b);
+    uint32_t mode = (uint32_t)b->arg[0];
+    int r = mode > 3u ? R_ARG : file_ready(b, d, 1, 0);
+    if (r)
+        return r;
+    for (unsigned i = 0; i < 0x58u / 4u; i++)      /* stock clears the FIL before each f_open */
+        ((volatile uint32_t *)(d + D_FIL))[i] = 0;
+    r = fw_f_open(d + D_FIL, (const char *)d + D_NAME, MODES[mode]);
+    if (!r && mode == 3u && (r = fw_f_lseek(d + D_FIL, fil_u64(d + D_FIL, 0x10u))) != 0)
+        fw_f_close(d + D_FIL);
+    if (r)
+        return fatfs(b, r);
+    b->file_open = mode ? 2u : 1u;
+    uint64_t size = fil_u64(d + D_FIL, 0x10u);    /* the FIL's object size */
+    b->r[0] = (int32_t)(uint32_t)size;
+    b->r[1] = (int32_t)(uint32_t)(size >> 32);
+    return R_OK;
+}
+
+/* 0x41 read (bytes, 1 .. 4 096, into the chunk), 0x42 write (bytes from the chunk): r0 the bytes moved (a read short of
+   what was asked is the file's end) */
+static int job_rw(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    uint32_t n = (uint32_t)b->arg[0];
+    int r = n - 1u >= CHUNK ? R_ARG : file_ready(b, d, 0, 1);
+    if (r)
+        return r;
+    unsigned done = 0;
+    r = (b->index == 0x41 ? fw_f_read : fw_f_write)(d + D_FIL, d + D_CHUNK, n, &done);
+    b->r[0] = (int32_t)done;
+    return r ? fatfs(b, r) : R_OK;
+}
+
+/* 0x43 seek (the offset, low and high words): r0, r1 where the file is now */
+static int job_seek(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    int r = file_ready(b, d, 0, 1);
+    if (r)
+        return r;
+    r = fw_f_lseek(d + D_FIL, (uint32_t)b->arg[0] | (uint64_t)(uint32_t)b->arg[1] << 32);
+    if (r)
+        return fatfs(b, r);
+    uint64_t at = fil_u64(d + D_FIL, 0x38u);       /* the FIL's position */
+    b->r[0] = (int32_t)(uint32_t)at;
+    b->r[1] = (int32_t)(uint32_t)(at >> 32);
+    return R_OK;
+}
+
+static int file_close(volatile struct kit_box *b, uint8_t *d)
+{
+    b->file_open = 0;
+    return fw_f_close(d + D_FIL);
+}
+
+/* 0x44 close */
+static int job_close(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    int r = file_ready(b, d, 0, 1);
+    return r ? r : fatfs(b, file_close(b, d));
+}
+
+/* 0x45 stat (the path): r0, r1 the size, r2 the attributes (0x10 a folder), r3 date << 16 | time (FAT's) */
+static int job_stat(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    int r = file_ready(b, d, 1, 2);
+    if (r)
+        return r;
+    if ((r = fw_f_stat((const char *)d + D_NAME, d + D_FNO)) != 0)
+        return fatfs(b, r);
+    uint64_t size = fil_u64(d + D_FNO, 0);
+    b->r[0] = (int32_t)(uint32_t)size;
+    b->r[1] = (int32_t)(uint32_t)(size >> 32);
+    b->r[2] = d[D_FNO + 0xc];
+    b->r[3] = (int32_t)((uint32_t)*(volatile uint16_t *)(d + D_FNO + 8) << 16 | *(volatile uint16_t *)(d + D_FNO + 0xa));
+    return R_OK;
+}
+
+/* 0x46 list (the folder's path, "" the root; the first entry to give, the most to give): records into the chunk, each
+   {u32 size low, u32 size high, u8 attributes, u8 name length, the name, zeros to a whole word}; r0 the records, r1 1
+   when more entries follow, r2 the chunk's bytes used */
+static int job_list(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    int32_t skip = b->arg[0], max = b->arg[1];
+    int r = skip < 0 || max < 1 ? R_ARG : file_ready(b, d, 0, 2);
+    if (r)
+        return r;
+    if ((r = fw_f_opendir(d + D_DIR, (const char *)d + D_NAME)) != 0)
+        return fatfs(b, r);
+    uint32_t used = 0, count = 0, more = 0;
+    uint8_t *fno = d + D_FNO;
+    for (;;) {
+        WDG_DISK = WDG_NOW;                        /* a long folder: this task's watchdog stamp, as stock's loops do */
+        if ((r = fw_f_readdir(d + D_DIR, fno)) != 0 || !fno[0x1a])
+            break;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        unsigned len = 0;
+        while (len < 255u && fno[0x1a + len])
+            len++;
+        uint32_t rec = (10u + len + 3u) & ~3u;
+        if ((int32_t)count == max || used + rec > CHUNK) {
+            more = 1;
+            break;
+        }
+        uint8_t *o = d + D_CHUNK + used;
+        for (unsigned i = 0; i < 8u; i++)
+            o[i] = fno[i];
+        o[8] = fno[0xc];
+        o[9] = (uint8_t)len;
+        for (unsigned i = 0; i < rec - 10u; i++)
+            o[10u + i] = i < len ? fno[0x1a + i] : 0;
+        used += rec;
+        count++;
+    }
+    fw_f_closedir(d + D_DIR);
+    b->r[0] = (int32_t)count;
+    b->r[1] = (int32_t)more;
+    b->r[2] = (int32_t)used;
+    return fatfs(b, r);
+}
+
+/* 0x47 delete (the path): refused while the kit's file is open */
+static int job_delete(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    int r = file_ready(b, d, 1, 0);
+    return r ? r : fatfs(b, fw_f_unlink((const char *)d + D_NAME));
+}
+
+/* The card task's own upkeep, every call: a file of the boot before is no file (its FIL meant that boot's volume),
+   and one left open IDLE_MS with no job is closed. */
+__attribute__((noinline)) static void card_upkeep(volatile struct kit_box *b)
+{
+    if (b->card_boot != BOOTS) {
+        b->card_boot = BOOTS;
+        b->file_open = 0;
+    }
+    uint8_t *d;
+    if (b->file_open && GUI_MS - b->file_ms > IDLE_MS && (d = data_area(b)) != 0)
+        file_close(b, d);
+}
+
 /* ---- a restart (x6 §7): stock 3.1.9 never resets itself in software, so the kit does it as b2load.c and fault.c do,
    SYSRESETREQ behind a dsb, from the card task between two file command steps (no FatFs call half done), and only
    while stock is idle on the card and nothing is being recorded. Not found yet: a flag that says a take is being
@@ -479,6 +753,8 @@ static int job_restart(volatile struct kit_box *b)
 {
     if ((uint32_t)b->arg[0] != 0x52455354u)
         return R_ARG;
+    if (b->file_open)
+        return R_STATE;                            /* the kit's own file first: close it (0x44) */
     int why = busy();
     if (why) {
         b->r[0] = why;
@@ -501,6 +777,14 @@ static const job_fn JOBS[KIT_JOBS] = {
     [0x04] = job_touch,
     [0x05] = job_tap,
     [0x20] = job_button,
+    [0x40] = job_open,
+    [0x41] = job_rw,
+    [0x42] = job_rw,
+    [0x43] = job_seek,
+    [0x44] = job_close,
+    [0x45] = job_stat,
+    [0x46] = job_list,
+    [0x47] = job_delete,
     [0x4f] = job_restart,
 };
 
@@ -541,6 +825,8 @@ void kit_run(unsigned task, uint8_t *block)
             return;
         }
     }
+    if (task == KIT_CARD)
+        card_upkeep(b);
     if (b->magic == MBX_MAGIC) {
         if (task == KIT_SCREEN)
             mbx((volatile struct mbx *)b);

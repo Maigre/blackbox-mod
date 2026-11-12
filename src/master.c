@@ -121,9 +121,14 @@ int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, t
 #define PRISM_KEY   0x5052534du   /* the check word's key: the block has its tail */
 #define CORE_KEY    0x434f5245u   /* "CORE": the block is the core alone (no payload in bank 2 at boot) */
 #define CORE_BYTES  0xc100u       /* first, on every unit: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.c's S950 bank (0x4000), comp.c's clipper (0x100), clipwin.c's bank (0x1000 since Fit) */
-#define TAIL_BYTES  (PRISM_BYTES + 0x22000u)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000) */
+#ifdef PUBLIC_BUILD
+#define KIT_BYTES   0u
+#else
+#define KIT_BYTES   0x1400u       /* dev builds: the bench kit's data area, at the tail's end (kit_b2.c; fork-only) */
+#endif
+#define TAIL_BYTES  (PRISM_BYTES + 0x22000u + KIT_BYTES)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000) */
 _Static_assert(0xb100u + 0x1000u <= CORE_BYTES, "clipwin.c's bank (0x1000 at 0xb100) fits the core");
-_Static_assert(CORE_BYTES + TAIL_BYTES == 0x84900u, "the reorder moves parts, it does not grow the block (x2: a boot-time SDRAM overflow hangs the unit)");
+_Static_assert(CORE_BYTES + TAIL_BYTES == 0x84900u + KIT_BYTES, "the reorder moves parts, it does not grow the block (x2: a boot-time SDRAM overflow hangs the unit)");
 
 /* which master page the knob screen shows, and whether it is showing one (backup SRAM, next to munchi's words) */
 struct master_ui {

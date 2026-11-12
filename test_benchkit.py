@@ -225,6 +225,14 @@ def gate_suite(k):
     k.e.w32(BOOTS_AT, BOOTS)
     k.e.w32(MB + 0x48, BOOTS)                              # (back to this rig's boot for the cases after)
     out.append(("a job running when the unit reset does not go on: its request is stale (-2)", r["answered"] and r["result"] == -2))
+    closes = []                                            # a file the card task left open, idle 10 s: only that task closes it
+    k.e.stub(0x08086D76, lambda: closes.append(1), value=0)
+    k.e.uc.mem_write(MB + 0x74, struct.pack("<IIB", BOOTS, 123456 - 10001, 1))
+    k.run(SCREEN)
+    k.run(AUDIO)
+    c0 = len(closes)
+    k.run(CARD)
+    out.append(("the card upkeep (an idle file closed) is the card task's only", c0 == 0 and len(closes) == 1 and k.e.r8(MB + 0x7C) == 0))
     k.store[(PAD12, 0x1C9)] = 11
     for task in (AUDIO, CARD):
         x = mbx(k, 1, 1, 2, 0x1C9, 11, task=task)
@@ -682,6 +690,282 @@ check(f"restart with stock idle: answered (done, result 0) and the box's two cac
       f"0x05fa0004 (SYSRESETREQ), from the card task ({got}, {[hex(x) for x in resets]}, {[hex(x) for x in cleaned]})",
       got == "reset" and resets == [0x05FA0004] and r["answered"] and r["result"] == 0 and cleaned == [MB, MB + 0x20]
       and order == ["done", "clean", "clean", "reset"], (got, r, order))
+
+# ====================================================================================================== 8. the card's files
+# The card task's jobs 0x40 - 0x47 against a stubbed FatFs (a dict of files behind stock's ten entry points, at their
+# addresses): the FIL, DIR and FILINFO in the kit's data area (block + 0x84900, a dev build's), the name at +0x200, the
+# bytes through the chunk at +0x400.
+DATA = BLOCK + 0x84900
+D_FIL, D_DIR, D_FNO, D_NAME, D_CHUNK = DATA, DATA + 0x58, DATA + 0xB0, DATA + 0x200, DATA + 0x400
+FR_OK, FR_NO_FILE, FR_NO_PATH, FR_DENIED, FR_EXIST = 0, 4, 5, 7, 8
+
+
+class FakeFs:
+    def __init__(self, k):
+        self.k, e = k, k.e
+        self.files, self.open, self.dirs, self.calls = {}, {}, {}, []
+        for a, fn in ((0x08086534, self.f_open), (0x08086866, self.f_read), (0x08086A06, self.f_write),
+                      (0x08086D76, self.f_close), (0x08086D96, self.f_lseek), (0x0808724A, self.f_stat),
+                      (0x080870F6, self.f_opendir), (0x080871A0, self.f_readdir), (0x0808718C, self.f_closedir),
+                      (0x0808748E, self.f_unlink)):
+            e.stub(a, lambda fn=fn: self.k.e.uc.reg_write(66, fn() & 0xFFFFFFFF))
+
+    def cstr(self, a):
+        return bytes(self.k.e.uc.mem_read(a, 256)).split(b"\0")[0].decode()
+
+    def a(self, n):
+        return self.k.e.arg(n)
+
+    def fil(self, fp):
+        name, pos, mode = self.open[fp]
+        e = self.k.e
+        e.uc.mem_write(fp + 0x10, struct.pack("<Q", len(self.files[name])))
+        e.uc.mem_write(fp + 0x38, struct.pack("<Q", pos))
+
+    def f_open(self):
+        fp, name, mode = self.a(0), self.cstr(self.a(1)), self.a(2)
+        self.calls.append(("open", fp, self.a(1), name, mode))
+        if name in self.files and mode & 4:
+            return FR_EXIST
+        if name not in self.files:
+            if not mode & 0x1C:
+                return FR_NO_FILE
+            self.files[name] = bytearray()
+        if mode & 8:
+            self.files[name] = bytearray()
+        self.open[fp] = [name, 0, mode]
+        self.fil(fp)
+        return FR_OK
+
+    def f_read(self):
+        fp, buf, n, got = (self.a(i) for i in range(4))
+        self.calls.append(("read", fp, buf, n))
+        name, pos, mode = self.open[fp]
+        if not mode & 1:
+            return FR_DENIED
+        data = bytes(self.files[name][pos:pos + n])
+        self.k.e.uc.mem_write(buf, data)
+        self.k.e.w32(got, len(data))
+        self.open[fp][1] += len(data)
+        self.fil(fp)
+        return FR_OK
+
+    def f_write(self):
+        fp, buf, n, put = (self.a(i) for i in range(4))
+        self.calls.append(("write", fp, buf, n))
+        name, pos, mode = self.open[fp]
+        if not mode & 2:
+            return FR_DENIED
+        f = self.files[name]
+        f[pos:pos + n] = bytes(self.k.e.uc.mem_read(buf, n))
+        self.k.e.w32(put, n)
+        self.open[fp][1] += n
+        self.fil(fp)
+        return FR_OK
+
+    def f_lseek(self):
+        fp, ofs = self.a(0), self.a(2) | self.a(3) << 32
+        self.calls.append(("lseek", fp, ofs))
+        name, pos, mode = self.open[fp]
+        self.open[fp][1] = ofs if mode & 2 else min(ofs, len(self.files[name]))
+        if mode & 2 and ofs > len(self.files[name]):
+            self.files[name] += bytes(ofs - len(self.files[name]))
+        self.fil(fp)
+        return FR_OK
+
+    def f_close(self):
+        self.calls.append(("close", self.a(0)))
+        self.open.pop(self.a(0), None)
+        return FR_OK
+
+    def f_stat(self):
+        name, fno = self.cstr(self.a(0)), self.a(1)
+        self.calls.append(("stat", self.a(0), name, fno))
+        if name not in self.files:
+            return FR_NO_FILE
+        self.k.e.uc.mem_write(fno, struct.pack("<QHHB13x", len(self.files[name]), 0x5A6C, 0x8421, 0x20) + name.encode() + b"\0")
+        return FR_OK
+
+    def f_opendir(self):
+        dp, path = self.a(0), self.cstr(self.a(1))
+        self.calls.append(("opendir", dp, self.a(1), path))
+        names = sorted(n[len(path) + 1:] if path else n for n in self.files if (n.startswith(path + "/") if path else "/" not in n))
+        if path and not names:
+            return FR_NO_PATH
+        self.dirs[dp] = [names, 0, path]
+        return FR_OK
+
+    def f_readdir(self):
+        dp, fno = self.a(0), self.a(1)
+        names, i, path = self.dirs[dp]
+        if i >= len(names):
+            self.k.e.uc.mem_write(fno + 0x1A, b"\0")
+            return FR_OK
+        self.dirs[dp][1] += 1
+        full = f"{path}/{names[i]}" if path else names[i]
+        self.k.e.uc.mem_write(fno, struct.pack("<QHHB13x", len(self.files[full]), 0, 0, 0x20) + names[i].encode() + b"\0")
+        return FR_OK
+
+    def f_closedir(self):
+        self.calls.append(("closedir", self.a(0)))
+        return FR_OK
+
+    def f_unlink(self):
+        name = self.cstr(self.a(0))
+        self.calls.append(("unlink", self.a(0), name))
+        if name not in self.files:
+            return FR_NO_FILE
+        del self.files[name]
+        return FR_OK
+
+
+def card_kit():
+    k = Kit()
+    k.fs = FakeFs(k)
+    k.e.uc.mem_write(0x240021A4 + 0x15, b"\x01")           # stock has found a card
+    return k
+
+
+def name(k, text):
+    k.e.uc.mem_write(D_NAME, text.encode() + b"\0")
+
+
+def chunk(k, data=None, n=None):
+    if data is not None:
+        k.e.uc.mem_write(D_CHUNK, data)
+    return bytes(k.e.uc.mem_read(D_CHUNK, n)) if n else None
+
+
+k = card_kit()
+fs = k.fs
+blob = bytes((i * 7 + 3) & 0xFF for i in range(5000))
+name(k, "A.BIN")
+r_open = k.job(CARD, 0x40, 1)
+chunk(k, blob[:4096])
+r_w1 = k.job(CARD, 0x42, 4096)
+chunk(k, blob[4096:])
+r_w2 = k.job(CARD, 0x42, 5000 - 4096)
+r_close = k.job(CARD, 0x44)
+check(f"put (open new, write 4 096, write 904, close): the file holds the bytes; FatFs is called with the kit's FIL, its "
+      f"name and its chunk ({fs.calls[0]})", fs.files.get("A.BIN") == blob and r_open["result"] == 0 and r_w1["r"][0] == 4096
+      and r_w2["r"][0] == 904 and r_close["result"] == 0 and fs.calls[0] == ("open", D_FIL, D_NAME, "A.BIN", 2 | 4)
+      and fs.calls[1] == ("write", D_FIL, D_CHUNK, 4096), (r_open, r_w1, r_w2, r_close, fs.calls[:3]))
+r = k.job(CARD, 0x40, 1)
+check("...a second put of a new file onto it is refused by FatFs (FR_EXIST, 8): -6, r0 8, the file unchanged, none open",
+      r["result"] == -6 and r["r"][0] == 8 and fs.files["A.BIN"] == blob and k.e.r8(MB + 0x7C) == 0, r)
+k.job(CARD, 0x40, 2)
+chunk(k, b"new!")
+k.job(CARD, 0x42, 4)
+k.job(CARD, 0x44)
+check("...open to replace (mode 2) writes it anew", fs.files["A.BIN"] == b"new!" and fs.calls[-3][4] == 2 | 8, fs.calls[-4:])
+fs.files["B.WAV"] = bytearray(blob)
+name(k, "B.WAV")
+r = k.job(CARD, 0x40, 0)
+got, reads = b"", []
+while True:
+    rr = k.job(CARD, 0x41, 4096)
+    reads.append(rr["r"][0])
+    got += chunk(k, n=rr["r"][0]) if rr["r"][0] else b""
+    if rr["r"][0] < 4096:
+        break
+k.job(CARD, 0x44)
+check(f"get (open to read, reads of 4 096 until a short one): the file's bytes; open's r0 the size ({r['r'][0]}), the "
+      f"reads {reads}", got == blob and r["r"][0] == 5000 and reads == [4096, 904], (r, reads))
+k.job(CARD, 0x40, 0)
+rs = k.job(CARD, 0x43, 4000)
+k.job(CARD, 0x41, 8)
+at = chunk(k, n=8)
+k.job(CARD, 0x44)
+check("seek (job 0x43) to 4 000, then read 8: those bytes; r0 the position", rs["r"][:2] == (4000, 0) and at == blob[4000:4008]
+      and ("lseek", D_FIL, 4000) in fs.calls, (rs, at))
+k.job(CARD, 0x40, 3)
+chunk(k, b"tail")
+k.job(CARD, 0x42, 4)
+k.job(CARD, 0x44)
+check("append (mode 3): opened always, moved to its end, written there", fs.files["B.WAV"] == blob + b"tail"
+      and ("lseek", D_FIL, 5000) in fs.calls, len(fs.files["B.WAV"]))
+r = k.job(CARD, 0x45)
+check("stat (job 0x45): r0 r1 the size, r2 the attributes, r3 date << 16 | time", r["result"] == 0 and r["r"] == (5004, 0, 0x20, 0x5A6C8421), r)
+for n_ in ("C1", "C2", "C3", "a-long-name-of-forty-characters-0123.wav"):
+    fs.files[n_] = bytearray(len(n_))
+fs.files["DIR/X"] = bytearray(3)
+
+
+def records(n):
+    raw, out, o = chunk(k, n=n), [], 0
+    while o < n:
+        lo, hi, attr, ln = struct.unpack_from("<IIBB", raw, o)
+        out.append((raw[o + 10:o + 10 + ln].decode(), lo | hi << 32, attr))
+        o += (10 + ln + 3) & ~3
+    return out
+
+
+name(k, "")
+k.e.uc.mem_write(D_NAME, b"\0")
+r1 = k.job(CARD, 0x46, 0, 3)
+l1 = records(r1["r"][2])
+r2 = k.job(CARD, 0x46, 3, 10)
+l2 = records(r2["r"][2])
+check(f"list the root (job 0x46, the empty path): 3 records and 'more', then from the 4th the other 3 and no more; each "
+      f"record name, size, attributes ({l1 + l2})", r1["r"][:2] == (3, 1) and r2["r"][:2] == (3, 0)
+      and [x[0] for x in l1 + l2] == sorted(n_ for n_ in fs.files if "/" not in n_)
+      and dict((x[0], x[1]) for x in l1 + l2)["B.WAV"] == 5004 and fs.calls[-1][0] == "closedir", (r1, r2, l1, l2))
+name(k, "DIR")
+r = k.job(CARD, 0x46, 0, 10)
+name(k, "NOPE")
+rn = k.job(CARD, 0x46, 0, 10)
+check("...a folder by its path; one that is not there: -6 (FR_NO_PATH, 5)", records(r["r"][2]) == [("X", 3, 0x20)]
+      and rn["result"] == -6 and rn["r"][0] == 5, (r, rn))
+name(k, "C1")
+r = k.job(CARD, 0x47)
+r2 = k.job(CARD, 0x47)
+check("delete (job 0x47): gone; again: -6 (FR_NO_FILE, 4)", r["result"] == 0 and "C1" not in fs.files and r2["result"] == -6
+      and r2["r"][0] == 4, (r, r2))
+name(k, "C2")
+k.job(CARD, 0x40, 0)
+st = [k.job(CARD, 0x40, 0)["result"], k.job(CARD, 0x47)["result"], k.job(CARD, 0x4F, 0x52455354)["result"]]
+k.job(CARD, 0x44)
+st += [k.job(CARD, 0x44)["result"], k.job(CARD, 0x41, 4)["result"], k.job(CARD, 0x42, 4)["result"], k.job(CARD, 0x43, 0)["result"]]
+check(f"one file at a time: with one open, a second open, a delete and a restart are refused (-7); with none, close, "
+      f"read, write and seek are ({st})", st == [-7] * 7 and "C2" in fs.files, st)
+bad = [k.job(CARD, 0x41, 0)["result"], k.job(CARD, 0x40, 4)["result"], k.job(CARD, 0x46, -1, 1)["result"], k.job(CARD, 0x46, 0, 0)["result"]]
+k.job(CARD, 0x40, 0)
+bad += [k.job(CARD, 0x41, 4097)["result"], k.job(CARD, 0x42, 0)["result"]]
+k.job(CARD, 0x44)
+k.e.uc.mem_write(D_NAME, b"\0")
+bad.append(k.job(CARD, 0x40, 0)["result"])
+k.e.uc.mem_write(D_NAME, b"x" * 256)
+bad.append(k.job(CARD, 0x45)["result"])
+check(f"bad arguments (-3): 0 or 4 097 bytes, mode 4, a negative first entry, no entries, an empty name, a name with no "
+      f"end in its 256 bytes ({bad})", bad == [-3] * 8, bad)
+name(k, "C3")
+k.job(CARD, 0x40, 0)
+k.e.w32(GUI_MS, 123456 + 10001)
+n0 = len(fs.calls)
+k.run(CARD)
+check("a file left open more than 10 s with no job is closed by the card task", fs.calls[n0:] == [("close", D_FIL)]
+      and k.e.r8(MB + 0x7C) == 0, fs.calls[n0:])
+k.e.w32(GUI_MS, 123456)
+k.job(CARD, 0x40, 0)
+k.e.w32(BOOTS_AT, BOOTS + 1)                               # a reset: SDRAM kept the box, not the volume
+n0 = len(fs.calls)
+k.run(CARD)
+r = k.job(CARD, 0x40, 0, epoch=BOOTS + 1)
+check("after a reset the file of the boot before is forgotten, not closed (its FIL meant that boot's volume); a new open "
+      "works", fs.calls[n0:n0 + 1] == [("open", D_FIL, D_NAME, "C3", 1)] and r["result"] == 0, (fs.calls[n0:], r))
+k.e.w32(BOOTS_AT, BOOTS)
+k.job(CARD, 0x44, epoch=BOOTS)
+r = [k.job(t, 0x45) for t in (SCREEN, AUDIO)]
+check("a card job is the card task's: the screen and audio tasks leave it", all(x["unset"] for x in r), r)
+k.e.uc.mem_write(0x240021A4 + 0x15, b"\x00")
+n0 = len(fs.calls)
+r = k.job(CARD, 0x45)
+k.e.uc.mem_write(0x240021A4 + 0x15, b"\x01")
+k.e.w32(PCHECK, BLOCK ^ 0x434F5245)                        # the block without its tail (keyed CORE): no data area
+r2 = k.job(CARD, 0x45)
+k.e.w32(PCHECK, BLOCK ^ PKEY)
+check("no card, or no data area (the block without its tail): -4, r0 6, FatFs not called",
+      r["result"] == -4 and r["r"][0] == 6 and r2["result"] == -4 and r2["r"][0] == 6 and len(fs.calls) == n0, (r, r2, fs.calls[n0:]))
 
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and

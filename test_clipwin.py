@@ -332,9 +332,10 @@ e.stub(0x0804436C, lambda: allocs.append(("perm", e.arg(0))), value=BLOCK)
 e.w32(BANK, CW_MAGIC)
 e.call("master_alloc", 0x24076000, 192000)
 e.meter_up()
-check(f"master_alloc: one 0x84900-byte block (bank 2 holds the payload here), cw_bank's {B_BYTES:#x} bytes at the end of its "
+KIT = 0x1400 if "kit_run" in S else 0                 # a dev build's bench kit area at the tail's end (src/master.c)
+check(f"master_alloc: one {0x84900 + KIT:#x}-byte block (bank 2 holds the payload here), cw_bank's {B_BYTES:#x} bytes at the end of its "
       f"0xC100-byte core (+0xB100; it uses {B_SIZE:#x}), its magic cleared each boot",
-      allocs[-1] == ("perm", 0x84900) and BANK + B_BYTES == BLOCK + 0xC100 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
+      allocs[-1] == ("perm", 0x84900 + KIT) and BANK + B_BYTES == BLOCK + 0xC100 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
 del e.stubs[0x0806AA80], e.stubs[0x0804436C]
 
 # ====================================================================================================== 2. registration
