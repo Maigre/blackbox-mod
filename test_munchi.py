@@ -338,11 +338,12 @@ check(f"Duck Heavy pulls the repeats down under a busy send (energy {e_heavy:.1f
 store(duck=0)
 
 # --- THE FINGERPRINT: what Munchi plays, to the bit. A fixed run over every control, from a clean start; the digest is
-# over every sample Munchi put on the bus and, at the end, the three lines and its words in backup SRAM. It is the same
-# for the engine in the cave (rc4) and in bank 2, and for JOEBOX 1 rc4's release image as published, built on another
-# machine: so it does not depend on whose compiler, and any change to the sound, or to where the state sits in the
-# lines, shows here. A change to the sound that is meant updates FINGERPRINT.
-FINGERPRINT = ("5d146c1047a43b26", "e7dff53b990107b1")
+# over every sample Munchi put on the bus and, at the end, the three lines and its words in backup SRAM. Any change to
+# the sound, or to where the state sits in the lines, shows here. A change to the sound that is meant updates FINGERPRINT.
+# Since JOEBOX 2 (upstream da84b1b) the engine is upstream's rewrite, and this is what it plays: the same two digests on
+# upstream's own tree built alone and on this one (2026-11-12), so the merge adds nothing to the sound. JOEBOX 1's
+# engine, in the cave (rc4), in bank 2 and in rc4's release image as published, was 5d146c1047a43b26 / e7dff53b990107b1.
+FINGERPRINT = ("c02e82de7405bcd4", "3d4a2ae587d1d4b3")
 clicks = lambda t: (1.0, 0.7) if t % 24000 == 0 else (0.0, 0.0)
 bursts = lambda t: steady(t) if t % 48000 < 4800 else (0.0, 0.0)
 tone = lambda t: ((((t * 37) % 400) - 200) / 400.0, (((t * 53) % 300) - 150) / 300.0)
@@ -384,9 +385,9 @@ fp_mem = hashlib.sha256()
 for a, n in ((LIVE, 192256 * 4), (STATE, 96256 * 4), (FRZ, 192256 * 4), (0x38800B10, 12)):
     fp_mem.update(bytes(e.uc.mem_read(a, n)))
 got = (fp_out.hexdigest()[:16], fp_mem.hexdigest()[:16])
-check(f"the fingerprint: {fp_blocks} blocks of Munchi over every control, bit for bit what it has always played", got[0] == FINGERPRINT[0],
+check(f"the fingerprint: {fp_blocks} blocks of Munchi over every control, bit for bit what JOEBOX 2 plays", got[0] == FINGERPRINT[0],
       got[0])
-check("  ... and its state in the lines and backup SRAM, byte for byte where it has always been", got[1] == FINGERPRINT[1], got[1])
+check("  ... and its state in the lines and backup SRAM, byte for byte where JOEBOX 2 has it", got[1] == FINGERPRINT[1], got[1])
 e.w32(0x38800B10, rng)                                 # the rest of this file as it ran before the fingerprint
 bpm(120.0)
 store(type=1, wand=250, random=0, fb=300, freeze=0, clock=0, width=0, duck=0)   # as the Duck checks left them
