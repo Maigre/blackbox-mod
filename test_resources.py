@@ -112,21 +112,47 @@ else:
 
 
 # ---- 4. mutants
-def mutant(name, edit, rule, expect=True):
+def copy_tree():
     d = tempfile.mkdtemp(prefix="bbres-mut-")
+    for item in ("src", "patches"):
+        shutil.copytree(os.path.join(ROOT, item), os.path.join(d, item), symlinks=True,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+    if os.path.isfile(os.path.join(ROOT, "check.sh")):
+        shutil.copy2(os.path.join(ROOT, "check.sh"), os.path.join(d, "check.sh"))
+    return d
+
+
+def mutant(name, edit, rule, expect=True):
+    """rule = None: the reader must say it could not read the mutant (a warning), not stay silent"""
+    d = copy_tree()
     try:
-        for item in ("src", "patches"):
-            shutil.copytree(os.path.join(ROOT, item), os.path.join(d, item), symlinks=True,
-                            ignore=shutil.ignore_patterns("__pycache__"))
-        if os.path.isfile(os.path.join(ROOT, "check.sh")):
-            shutil.copy2(os.path.join(ROOT, "check.sh"), os.path.join(d, "check.sh"))
         edit(d)
         m = R.scan(d, name, False, stock)
+        if rule is None:
+            check(f"mutant: {name} -> not read, and said so", bool(m["warnings"]), m["warnings"])
+            return
         hits = [t for r, t in R.check_tree(m) if r == rule]
         check(f"mutant: {name} -> the {rule} rule " + ("fires" if expect else "stays silent"),
               bool(hits) == expect and not m["warnings"], hits or m["warnings"])
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def report_mutant(name, edit_ours, edit_theirs, kind, expect=True):
+    """two copies of this tree, each edited: the two-tree report must (or must not) give a row of this kind"""
+    a, b = copy_tree(), copy_tree()
+    try:
+        edit_ours(a)
+        edit_theirs(b)
+        mo, mt = R.scan(a, "ours", False, stock), R.scan(b, "theirs", False, stock)
+        rep = R.report(mo, mt, None, stock)
+        hits = [c for c in rep["collisions"] if c["kind"] == kind]
+        unread = rep["unread"]["ours"] + rep["unread"]["theirs"]
+        check(f"report mutant: {name} -> " + (f"a {kind} row" if expect else f"no {kind} row"),
+              bool(hits) == expect and not unread, hits or unread or [c["kind"] for c in rep["collisions"]])
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
 
 
 def put(d, rel, text, mode="w"):
@@ -172,6 +198,31 @@ mutant(f"... the same, a `resources: shares` tag naming both modules",
                      f"/* resources: shares at={R.h(bk['start'])} with=zz_mutant,{bk['module']} */\n"
                      "void zz_poke(void) { ZZ_WORD = 0; }\n"),
        "bkpsram", expect=False)
+sr = next(r for r in man["bkpsram"] if r["types"] and r["end"] - r["start"] >= 8)
+BKP = (f"#define ZZ_BKP {R.h(R.BKP_LO)}u\n"
+       f"#define ZZ_W (*(volatile uint32_t *)(ZZ_BKP + {R.h(sr['start'] + 4 - R.BKP_LO)}u))\n")
+mutant(f"a backup-SRAM word inside {sr['file']}'s {sr['types'][0]}, written as a base macro + offset",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + BKP + "void zz_poke(void) { ZZ_W = 0; }\n"), "bkpsram")
+mutant(f"... the same base macro + a variable offset",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + "#define ZZ_BKP 0x38800000u\n"
+                     "void zz_poke(int i) { *(volatile uint32_t *)(ZZ_BKP + 4u * i) = 0; }\n"), None)
+# a free gap of the reader's map, behind a range whose size is known: both trees claim it
+rs = sorted(man["bkpsram"], key=lambda r: r["start"])
+gap = next(R.h((x["end"] + 0xf) & ~0xf) for x, y in zip(rs, rs[1:]) if x["from"] != "cast" and y["start"] - ((x["end"] + 0xf) & ~0xf) >= 0x40)
+
+
+def claim(fname, struct, macro, member):
+    return lambda d: put(d, f"src/{fname}.c", HEAD + f"struct {struct} {{ {member}[16]; }};\n"
+                         f"#define {macro} ((volatile struct {struct} *){gap}u)\n"
+                         f"_Static_assert({gap}u + sizeof(struct {struct}) <= {gap}u + 0x40u, \"{struct}\");\n"
+                         f"void {fname}_poke(void) {{ {macro}->w[0] = 0; }}\n")
+
+
+report_mutant(f"each tree's own module on the free backup SRAM at {gap}, one range in both",
+              claim("zz_ours", "zza", "ZZA", "uint32_t w"), claim("zz_theirs", "zzb", "ZZB", "float w"), "bkpsram")
+report_mutant(f"... the same structure in another file on the other side (code moved)",
+              claim("zz_ours", "zza", "ZZA", "uint32_t w"), claim("zz_moved", "zza", "ZZA", "uint32_t w"), "bkpsram",
+              expect=False)
 call = next(p for p in man["patches"] if p["applied"] and p["kind"] == "call" and p["callee"])
 
 

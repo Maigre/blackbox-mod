@@ -1074,7 +1074,7 @@ def scan(path, label, do_build=False, stock=None):
     man["sdram"] = sdram(t, warn, roles)
 
     # ---- backup SRAM
-    man["bkpsram"] = bkpsram(t, path)
+    man["bkpsram"] = bkpsram(t, path, warn)
 
     # ---- build
     man["build"] = build_info(path, do_build)
@@ -1297,26 +1297,67 @@ def sdram(t, warn, roles):
     return res
 
 
-def bkpsram(t, path):
-    """the backup-SRAM ranges each file uses: casts of 0x388xxxxx addresses, bounded by _Static_asserts"""
+_PTR_CAST = re.compile(r"\(\s*(?:(?:volatile|const)\s+)*(struct\s+\w+|u?int(?:8|16|32|64)_t|float|unsigned|int|char)"
+                       r"\s*(?:(?:volatile|const)\s+)*\*\s*\)")
+_OPERAND = re.compile(r"\s*([A-Za-z_]\w*|0[xX][0-9a-fA-F]+[uUlL]*|\d+[uUlL]*)")
+
+
+def _cast_operand(s, i):
+    """the operand of a cast ending at s[i]: a parenthesised group or one token, as (text, end)"""
+    j = i
+    while j < len(s) and s[j] in " \t":
+        j += 1
+    if j < len(s) and s[j] == "(":
+        e = match_close(s, j)
+        return s[j:e + 1], e + 1
+    m = _OPERAND.match(s, i)
+    return (m.group(1), m.end()) if m else (None, i)
+
+
+def bkp_value(f, expr):
+    """expr's value when it is an address in backup SRAM (macros and enums of f evaluated), else None"""
+    try:
+        v = f.eval(expr, {})
+    except (Unresolved, RecursionError, ValueError, TypeError, ZeroDivisionError):
+        return None
+    return v if BKP_LO <= v < BKP_HI else None
+
+
+def bkpsram(t, path, warn):
+    """the backup-SRAM ranges each file uses: pointer casts of an address in backup SRAM (a literal, a macro, a
+    base + offset: the operand is evaluated with the file's macros), bounded by _Static_asserts"""
     uses = []
     for f in list(t.files.values()):
         if f.rel.endswith(".inc"):
             continue
-        for m in re.finditer(r"\(\s*(?:volatile\s+|const\s+)*(struct\s+\w+|u?int(?:8|16|32|64)_t|float|unsigned|int)"
-                             r"\s*(?:volatile\s+)?\*\s*\)\s*\(?\s*(0x388[0-9a-fA-F]{5})u?", f.code_pp):
-            ty, a = m.group(1), int(m.group(2), 16)
-            size = {"uint8_t": 1, "int8_t": 1, "uint16_t": 2, "int16_t": 2, "uint64_t": 8, "int64_t": 8}.get(ty, 4) \
+        bkp_names = {n for n, (body, _l, _c) in f.macro_map().items() if re.search(r"0x388[0-9a-fA-F]{5}", body)
+                     and bkp_value(f, n) is not None}
+        lines = f.code_pp.split("\n")
+        for m in _PTR_CAST.finditer(f.code_pp):
+            ty = " ".join(m.group(1).split())
+            op, _e = _cast_operand(f.code_pp, m.end())
+            if not op:
+                continue
+            a = bkp_value(f, op)
+            line = f.line(m.start())
+            dm = re.match(r"\s*#\s*define\s+(\w+)", lines[line - 1]) if line - 1 < len(lines) else None
+            if a is None:
+                hit = set(re.findall(r"[A-Za-z_]\w*", op)) & bkp_names
+                if hit or re.search(r"0x388[0-9a-fA-F]{5}", op):
+                    warn.append(f"{f.rel}:{line}: a pointer cast on backup SRAM, `({ty} *){' '.join(op.split())}`, not read")
+                continue
+            size = {"uint8_t": 1, "int8_t": 1, "char": 1, "uint16_t": 2, "int16_t": 2, "uint64_t": 8, "int64_t": 8}.get(ty, 4) \
                 if not ty.startswith("struct") else None
-            uses.append({"file": f.rel, "addr": a, "type": ty, "size": size, "from": "cast", "line": f.line(m.start()),
-                         "cond": list(f.cond(m.start()))})
+            uses.append({"file": f.rel, "addr": a, "type": ty, "size": size, "from": "cast", "line": line,
+                         "cond": list(f.cond(m.start())), "name": dm.group(1) if dm else None})
         for m in re.finditer(r"_Static_assert\s*\(", f.blank):
             c = match_close(f.blank, m.end() - 1)
             cond = split_top(f.code, f.blank, m.end(), c)[0]
-            mm = re.fullmatch(r"\s*\(?(?:\(\s*uint32_t\s*\))?\s*\(?\s*(0x388[0-9a-fA-F]{5})u?\s*\+\s*(.+?)\)?\s*<=\s*(.+?)\s*", cond, re.S)
-            if not mm:
+            mm = re.fullmatch(r"\s*\(?(?:\(\s*uint32_t\s*\))?\s*\(?\s*(0x388[0-9a-fA-F]{5}u?|[A-Za-z_]\w*)\s*\+\s*(.+?)\)?\s*<=\s*(.+?)\s*",
+                              cond, re.S)
+            if not mm or bkp_value(f, mm.group(1)) is None:
                 continue
-            a = int(mm.group(1), 16)
+            a = bkp_value(f, mm.group(1))
             try:
                 end = a + f.eval(mm.group(2), {})           # a size the file states: the range is that long
             except Unresolved:
@@ -1339,9 +1380,11 @@ def bkpsram(t, path):
     for u in uses:
         k = (u["file"], u["addr"])
         r = rng.setdefault(k, {"file": u["file"], "module": module_of(u["file"]), "start": u["addr"], "end": None,
-                               "from": None, "line": u["line"], "cond": u["cond"], "types": []})
+                               "from": None, "line": u["line"], "cond": u["cond"], "types": [], "names": []})
         if u.get("type", "") and u["type"].startswith("struct") and u["type"] not in r["types"]:
             r["types"].append(" ".join(u["type"].split()))
+        if u.get("name") and u["name"] not in r["names"]:
+            r["names"].append(u["name"])                # the macro that names it: the same thing in another file
         if u.get("end") is not None and (r["from"] != "assert" or u["end"] < r["end"]):
             r["end"], r["from"] = u["end"], "assert"
         elif u.get("size") and r["from"] not in ("assert",) and (r["end"] is None or u["addr"] + u["size"] > r["end"]):
@@ -1593,26 +1636,33 @@ def report(ours, theirs, base=None, stock=None):
     # ---- SDRAM
     sd = sdram_report(ours["sdram"], theirs["sdram"], add)
 
-    # ---- backup SRAM
-    ext_o = {(x["start"], x["end"]) for x in ours["bkpsram"]}
-    ext_t = {(x["start"], x["end"]) for x in theirs["bkpsram"]}
-    common = ext_o & ext_t                              # a structure both trees place the same way
+    # ---- backup SRAM: two ranges that overlap are one thing when they share a module, a struct type or the macro
+    # that names them (code moved between files: master.c's GLBUF is vhs.c's upstream); a pair the other tree
+    # already holds side by side is that tree's own (its check judges it); anything else collides, equal ranges too
+    def ident(r):
+        return {("module", r["module"])} | {("type", x) for x in r["types"]} | {("name", x) for x in r.get("names", [])}
 
-    def inside_common(r):
-        return any(s <= r["start"] and r["end"] <= e for s, e in common)
+    def holds(m, r, near):
+        """m has a range that is r's thing and overlaps near"""
+        return any(ident(x) & ident(r) and x["start"] < near["end"] and near["start"] < x["end"] for x in m["bkpsram"])
+
+    def shared(a, b):
+        return any(tg["kind"] == "shares" and {a["module"], b["module"]} <= set(tg.get("with", []))
+                   and max(a["start"], b["start"]) <= tg.get("at", -1) < min(a["end"], b["end"])
+                   for tg in ours["tags"] + theirs["tags"])
+
+    def said(r):
+        x = r["types"] + r.get("names", [])
+        return f"{r['file']} [{h(r['start'])}, {h(r['end'])}) ({r['from']}{'; ' + ', '.join(x) if x else ''})"
 
     for a in ours["bkpsram"]:
         for b in theirs["bkpsram"]:
-            if a["start"] < b["end"] and b["start"] < a["end"] and (a["start"], a["end"]) != (b["start"], b["end"]):
-                if a["module"] == b["module"]:
-                    continue                            # one module's own words, seen wider or narrower
-                if (b["start"], b["end"]) in ext_o or (a["start"], a["end"]) in ext_t:
-                    continue                            # the other tree has that very range too
-                if inside_common(a) or inside_common(b):
-                    continue                            # a word inside a structure both trees place alike
-                add("bkpsram", f"backup SRAM {h(max(a['start'], b['start']))}",
-                    f"{a['file']} [{h(a['start'])}, {h(a['end'])}) ({a['from']})",
-                    f"{b['file']} [{h(b['start'])}, {h(b['end'])}) ({b['from']})")
+            if not (a["start"] < b["end"] and b["start"] < a["end"]) or ident(a) & ident(b) or shared(a, b):
+                continue
+            if holds(theirs, a, b) or holds(ours, b, a):
+                continue
+            add("bkpsram", f"backup SRAM {h(max(a['start'], b['start']))}", said(a), said(b),
+                "two modules on the same backup-SRAM bytes")
 
     # ---- bank 1
     bk = bank_report(ours.get("build"), theirs.get("build"), base, add)
