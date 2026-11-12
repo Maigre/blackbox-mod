@@ -10,10 +10,15 @@ non-zero exit). Run from the tree's root by check.sh, with the interpreter the s
 
 Each job's wall and CPU seconds (user + sys, from the kernel's rusage of that process) go to out/check-times.tsv.
 bench/shards/times.tsv holds, per suite, the seconds measured on mgr-ran (the queue's order: longest first) and how
-many shards it runs as (at most JOBS); a suite it does not know runs whole, queued as if it took UNKNOWN_S (120) s.
+many shards it should run as; a suite it does not know runs whole, queued as if it took UNKNOWN_S (120) s.
 A suite shards only where its plan (bench/shard.py SUITE --plan N) shows shards that cost less than the whole: one
 whose statements all hang on the ones before (one emulator, its state carried on) gains nothing from it.
+And it shards only with a plan bench/shard.py --prove found equal to the whole run, as it stands (its digest in
+bench/shards/proven.tsv): the smallest proven count at or over min(times.tsv's, JOBS), else the largest under it.
+Any other way (the suite edited since, the planner changed what a shard runs) it runs whole, and says so.
+One run per tree at a time (out/.suites.lock): a second one waits.
 """
+import fcntl
 import os
 import subprocess
 import sys
@@ -23,6 +28,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TIMES = os.path.join(HERE, "shards", "times.tsv")
 UNKNOWN_S = 120.0
 LAST = "out/check-times.tsv"
+sys.path.insert(0, HERE)
+import shard  # noqa: E402  (bench/shard.py: the proven plans and their digests)
 
 
 def known_times():
@@ -38,23 +45,50 @@ def known_times():
     return t
 
 
-def jobs(width):
+def shards_for(s, want):
+    """(the shard count suite s runs as, why it runs whole): a proven plan that stands as it was proven"""
+    if want <= 1:
+        return 1, None
+    proven = shard.proven_plans(s)
+    if not proven:
+        return 1, f"no plan of it is proven (bench/shard.py {s} --prove {want})"
+    order = sorted(n for n in proven if n >= want) + sorted((n for n in proven if n < want), reverse=True)
+    try:
+        su = shard.Suite(s)
+        for n in order:
+            if n > 1 and su.digest(n) == proven[n]:
+                return n, None
+    except Exception as e:                       # a suite the planner cannot read: its own run shows why
+        return 1, f"the planner cannot read it ({type(e).__name__}: {e})"
+    return 1, (f"it or its plan changed since its proof (bench/shard.py {s} --prove "
+               f"{order[0] if order else want})")
+
+
+def jobs(width, say=None):
     """[(est. CPU s, suite, shard i, of n)], longest first"""
     suites = sorted(f for f in os.listdir(".") if f.startswith("test_") and f.endswith(".py"))
     known = known_times()
     out = []
     for s in suites:
-        cpu, n = known.get(s, (UNKNOWN_S, 1))
-        n = max(1, min(n, width))
+        cpu, want = known.get(s, (UNKNOWN_S, 1))
+        n, why = shards_for(s, min(want, width))
+        if why and say:
+            say(f"{s} runs whole: {why}")
         for i in range(1, n + 1):
             out.append((cpu / n, s, i, n))
     return sorted(out, key=lambda j: (-j[0], j[1], j[2]))
 
 
 def run(width):
-    todo = jobs(width)
-    py = sys.executable
     os.makedirs("out", exist_ok=True)
+    lock = open("out/.suites.lock", "w")         # held until this process ends: a second run waits, never mixes logs
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("suites.py: another run in this tree holds out/.suites.lock; waiting for it", flush=True)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    todo = jobs(width, say=lambda m: print(m, flush=True))
+    py = sys.executable
     for s in {j[1] for j in todo}:
         for ext in (".rc", ".log"):
             try:
@@ -92,11 +126,28 @@ def run(width):
 
 
 def merge(s, n, done):
-    """the shards of one suite: one log (theirs in order), one exit status (the first that is not 0)"""
+    """the shards of one suite: one log, the suite's own lines in order as one run prints them (each shard's header
+    and verdict left out, so check.sh's 20-line excerpt reads as it would; a shard that failed with no FAIL line of
+    its own, a crash or a kill, keeps its verdict and says so), then one verdict line; one exit status (the first
+    that is not 0). Each shard's own log stays in out/<suite>.<i>of<n>.log"""
     mine = sorted((d for d in done if d[0] == s), key=lambda d: d[1])
+    fails = 0
     with open(f"out/{s}.log", "w") as out:
         for d in mine:
-            out.write(open(d[3]).read())
+            try:
+                ls = open(d[3]).read().splitlines(True)
+            except OSError:
+                ls = []
+            at = next((j for j, l in enumerate(ls) if l.startswith("     shard ")
+                       and l.rstrip("\n").endswith(": its verdict")), len(ls))
+            own = [l for l in ls[:at] if not l.startswith("     shard ")]
+            out.writelines(own)
+            f = sum(l.startswith("FAIL") for l in own)
+            fails += f
+            if d[4] != 0 and not f:
+                out.write(f"     shard {d[1]}/{n} exited {d[4]} with no FAIL line of its own ({d[3]})\n")
+                out.writelines(ls[at + 1:])
+        out.write(f"{fails} failed  ({n} shards, bench/suites.py; their exits: {' '.join(str(d[4]) for d in mine)})\n")
     rc = next((d[4] for d in mine if d[4] != 0), 0)
     with open(f"out/{s}.rc", "w") as r:
         r.write(f"{rc}\n")
@@ -127,13 +178,18 @@ def main(argv):
     if len(argv) < 2:
         print(__doc__)
         return 2
-    if argv[1] == "--plan":
-        for est, s, i, n in jobs(int(argv[2])):
-            print(f"{est:7.1f} s  {s}" + (f"  shard {i}/{n}" if n > 1 else ""))
-    elif argv[1] == "--table":
+    if argv[1] == "--table":
         table()
+        return 0
+    width = int(argv[2] if argv[1] == "--plan" else argv[1])
+    if width < 1:                               # nothing would run, and every log would be gone
+        print(f"suites.py: the pool must be at least 1 wide (got {width})")
+        return 2
+    if argv[1] == "--plan":
+        for est, s, i, n in jobs(width, say=print):
+            print(f"{est:7.1f} s  {s}" + (f"  shard {i}/{n}" if n > 1 else ""))
     else:
-        run(int(argv[1]))
+        run(width)
     return 0
 
 
