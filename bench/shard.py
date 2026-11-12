@@ -344,6 +344,13 @@ class Walk:
                     self.expr(d, bound)
             if not top:                         # a def inside a loop or an if: count its body as run here
                 self.nested(s, bound)
+            elif isinstance(s, ast.ClassDef):    # a class body runs when it is defined: what it reads, it needs
+                cw = Walk(self.modules, self.pmut)
+                for b in s.body:
+                    if not isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        cw.stmt(b, set(), False)
+                self.uses |= cw.uses - bound
+                self.mutates |= cw.mutates - bound
             self.binds.add(s.name)
             if top:
                 self.strong.add(s.name)
