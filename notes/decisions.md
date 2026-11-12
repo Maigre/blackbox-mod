@@ -79,8 +79,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
 - **D-042 (2026-11-12) — The six Looper picks are taken as built** (Thomas: « go »). D-020 to D-025 stand as
   `feat/looper` has them; corrections come at the unit, at Gate 4. The Looper comes up on the merged JOEBOX 2 base
   with its body in bank 2 (its 673 B of bank-1 glue no longer fit).
-- **D-043 (2026-11-12) — Crash-safe bank 2** (hub #t-059; built, not on a unit yet; three points below are
-  Thomas's to confirm). Three boots in a row ended by a fault (the recorder's « FLT1 » token at `0x388003d8`) or by
+- **D-043 (2026-11-12) — Crash-safe bank 2** (hub #t-059; the hold and its end proven on the unit the same day,
+  `notes/bench/2026-11-12-37.5.0d.md`; three points below are Thomas's to confirm). Three boots in a row ended by a fault (the recorder's « FLT1 » token at `0x388003d8`) or by
   the window watchdog hold bank 2 off from the next boot on: no pairing scan, no card loader, `b2_present` says no
   payload, Tools reads « !held » (« ! » alone in a `USB_DIAG` build, whose label is the USB line). A power-on, a
   brown-out and every other reset that is not a crash set the count (`0x388003d4`) to 0 and end a hold; a boot
@@ -103,8 +103,8 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   an exit 2 (something not read) is never taken as clean. On the JOEBOX 2 merge it named the clashes the merge had
   met by hand, the one still ahead included: the call at `0x080685D2`, which the Clip Window's stage 1 planned to
   hook, is JOEBOX 2's `sel_param` now (found by reading on 11/11, hub #t-044; `notes/resources.md`).
-- **D-045 (2026-11-12) — The bench kit lives in bank 2 of dev builds only: two payloads** (hub #t-054; built, not on
-  a unit yet). A release's bank 1 holds its payload's sum and id, so one shared payload would have changed the
+- **D-045 (2026-11-12) — The bench kit lives in bank 2 of dev builds only: two payloads** (hub #t-054; every job
+  run on the unit the same day, `notes/re/x6` §13.2). A release's bank 1 holds its payload's sum and id, so one shared payload would have changed the
   release image; a `RELEASE=1` build has none of the kit, in either bank. Cost: going from a dev build to a release or
   back rewrites bank 2 (one restart). The kit's data area is `0x1400` B behind the block in dev builds only
   (`0x96D10` against a release's `0x95910`), so Prism, the inserts and the Clip Window keep a release's offsets. Its
