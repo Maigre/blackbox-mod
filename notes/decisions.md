@@ -32,6 +32,30 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   FMA; the Cortex-M7 fuses multiply-adds, so the S950 Lo recursion drifts a few ulp between the two builds (misses
   at 2e-6, passes at 1e-5; a wrong coefficient misses by 1e-3+). `host/build.sh` and the `render_*.py` helpers take
   `CC`, then clang, then cc; the `.dylib` name stays (dlopen does not care). Candidate upstream PR `feat/host-linux`.
+- **D-036 (2026-11-12) — JOEBOX 2 is merged; the Clip Window's ids move to `0x150..0x154`** (hub #t-047, #t-052).
+  JOEBOX 2's TapeScam registers `0x1c8..0x1cf` as global settings, where Region, Slip, Loop Len, Fit and TL Knob
+  sat. The registry keeps one entry per id and the later registration wins, so one of the two would have become the
+  other's control. Ours move, same order, into the `0x13c..0x17b` gap stock registers nothing in and upstream uses
+  only at `0x143..0x14d`, `0x15c..0x162` and from `0x170`. Presets key on the xml names (`clipregion`, `clipslip`,
+  ...), which do not move: a saved preset loads as before. The Pos page rows, the bench mailbox, `bbusb.py` and the
+  suites follow.
+- **D-037 (2026-11-12) — On a Clip pad a Region wins; with no Region the pad plays JOEBOX 2's selection** (Thomas:
+  « selection-unless-region », hub #t-052). JOEBOX 2's Clip selection and the Clip Window send the same five calls
+  elsewhere (the two file-length calls of stock setup's recompute, the Waveform's zoom, its Clip knob bind, its
+  redraw). `patch.py` lets a module name such sites in `TAKES`: only it writes there, the other module's entry is
+  skipped and printed. `patches/clipwin.py` takes the five, so on a Clip pad the Waveform screen and its four knobs
+  stay the Clip Window's, and `slice.py` stays byte for byte upstream's. Where no Region is set, the two length
+  sites answer the selection's length; with no selection either, the file's.
+- **D-038 (2026-11-12) — What the merge cost in scarce room** (hub #t-052). Bank 1: JOEBOX 2 alone leaves 1,067 B, so
+  ChopShop's bodies went to bank 2 by hand (`chop.c` whole, `chopmode_b2.c`), its hooks staying in bank 1 as stubs
+  that fall back to stock: 331 B free in the merged dev build. A unit with no bank 2 therefore has no ChopShop, on
+  top of what upstream's own layout already keeps up there (since JOEBOX 2 Motion and Relapse too, with Munchi and
+  Confetti). Settings stores:
+  a Sample pad needs 99 entries (JOEBOX 2's 94 + ours 5) and held 96; stock's add returns silently when full, so
+  three rows were dropped without a word. All three sizing sites go from `0x60` to `0x70` together, because stock's
+  store copy never reads the destination's size. The boot SDRAM block: `0x84900` → `0x95910`, past D-030's bound,
+  and JOEBOX 2's stretch takes another `0x58000` at boot: a unit's boot is the proof, not the suites. *D-039 is not
+  used.*
 - **D-040 (2026-11-12) — Upstream is a vendor: the PRs are frozen, `maigre` is the product** (Thomas, on the 12/11
   review; hub log 2026-11-12). Six PRs open since 20–23/10 and the first-contact issue got no comment or review,
   nor did another contributor's PR; JOEBOX ships squashed releases built in private (JOEBOX 2: 9 commits, 167
@@ -52,6 +76,40 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
 - **D-042 (2026-11-12) — The six Looper picks are taken as built** (Thomas: « go »). D-020 to D-025 stand as
   `feat/looper` has them; corrections come at the unit, at Gate 4. The Looper comes up on the merged JOEBOX 2 base
   with its body in bank 2 (its 673 B of bank-1 glue no longer fit).
+- **D-043 (2026-11-12) — Crash-safe bank 2** (hub #t-059; built, not on a unit yet; three points below are
+  Thomas's to confirm). Three boots in a row ended by a fault (the recorder's « FLT1 » token at `0x388003d8`) or by
+  the window watchdog hold bank 2 off from the next boot on: no pairing scan, no card loader, `b2_present` says no
+  payload, Tools reads « !held » (« ! » alone in a `USB_DIAG` build, whose label is the USB line). A power-on, a
+  brown-out and every other reset that is not a crash set the count (`0x388003d4`) to 0 and end a hold; a boot
+  clears a count below three once both of stock's watchdog stamps (the disk task's and the screen task's) have
+  passed 12,288 blocks (32.8 s). The rule is `src/b2safe.c`, bank 1 only, release builds too; +48 B of bank 1.
+  To confirm: (1) *a hold ends at a power-cycle or an install*, not only at a new payload: the loader takes this
+  image's payload alone, so a different one always comes through the installer, which clears the count; on the
+  bench the switched USB port does it with no hands. (2) `bkp_put` moves out of line in upstream's `b2.h` (112 B
+  back; without it the feature costs 160 B). (3) Upstream's card loader keeps its try count after a clean write:
+  the same payload is written twice per power-on at most. Before, a payload that paired on the rescan and failed
+  the next boot was erased, written and restarted at every boot; four of upstream's `test_b2load.py` checks
+  follow. Worth offering upstream as its own change (his to send).
+- **D-044 (2026-11-12) — Scarce resources are checked, not remembered** (hub #t-056). `test_resources.py` refuses
+  two modules on one parameter id, xml name, SDRAM or backup-SRAM range, or stock byte; a store past its cap; a
+  hooked stock `store_add` that no `resources: store` tag names; and a module's copy of its own id that has drifted
+  from the registered value. A module that takes another's call site says so in its `TAKES`; two modules on one
+  backup-SRAM range say so in a `resources: shares` tag (taking turns, as `comp.c` and `compm.c`, or one reading
+  the other's word, as the bench kit). Stock facts the sources do not state are `resources:` tag comments beside
+  the patch they describe. `bench/resources.py report . upstream/main` is run and read before every upstream merge;
+  an exit 2 (something not read) is never taken as clean. On the JOEBOX 2 merge it named, unprompted, a clash
+  nobody had seen: the call at `0x080685D2`, which the Clip Window's stage 1 planned to hook, is JOEBOX 2's
+  `sel_param` now (`notes/resources.md`).
+- **D-045 (2026-11-12) — The bench kit lives in bank 2 of dev builds only: two payloads** (hub #t-054; built, not on
+  a unit yet). A release's bank 1 holds its payload's sum and id, so one shared payload would have changed the
+  release image; a `RELEASE=1` build has none of the kit, in either bank. Cost: going from a dev build to a release or
+  back rewrites bank 2 (one restart). The kit's data area is `0x1400` B behind the block in dev builds only
+  (`0x96D10` against a release's `0x95910`), so Prism, the inserts and the Clip Window keep a release's offsets. Its
+  mailbox is where `usbdev.c`'s parameter mailbox was (the last `0x100` B of the Clip Window's 4 KB), and the old
+  13-row request is still served there, from bank 2: `bbusb.py set` / `get` need this build's `BBEXTRA.BIN`. The
+  long peek is the dev peek with a length of 65..4096; the long poke is its own request. Their flags are bits of
+  the USB core's own interrupt mask, which every reset clears, so the interrupt reaches bank 2 only during a
+  transfer this boot began behind `b2_live()`. Net bank 1: 4 B less than before the kit.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving
@@ -281,6 +339,11 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   Rule for every feature from now on: no atomics or exclusives on patch RAM or anything in 0x24050000..0x2407ffff.
   *Superseded by D-027 for the fix itself: since JOEBOX 1 rc4 it is upstream's own `b2_step` (PRIMASK saved and
   restored), and PR #2 is superseded (Thomas closes it); the rule stands.*
+  *Addendum (2026-11-12, `notes/re/x7` §5):* the Device mapping at `0x24050000..0x2405FFFF` comes from bootloader
+  1.0.22's MPU region 3, which stock 3.1.9 never rewrites (the app sets only regions 4, 5, 8, 9). A unit whose
+  bootloader leaves region 3 unset maps it Normal and survives the LDREXB: the candidate for « why other units
+  survive » (inferred: no other bootloader has been read). The « 1.7.F » above matches nothing in the dump, whose
+  version is 1.0.22.
 - **D-012 (2026-10-15) — Release names are 37.x.y** (Thomas): `RELEASE_NAME` "37.<feature step>.<build>", dev builds
   the same with a `d` (`DEV_NAME`, USB peek / poke compiled in). 37.0.x = JOEBOX 1's code with none of the fork's
   features; 37.1.x will be Slip (P2). Replaces D-007's `MAIGRE 1`. Fork-only, never in a `feat/*` branch.

@@ -11,8 +11,8 @@ Thomas's fork of [JOEBOX](https://github.com/j3threejay/blackbox-mod) — the un
 2. **A KP3-style looper on the XY page**: touch catches the bar that was playing, X sets the loop length, Y an HPF,
    lifting the finger returns to the live signal.
 
-Everything JOEBOX 1 has stays (D-011). Every feature is built so that it can go back to JOEBOX as its own pull request,
-in JOEBOX's layout and conventions; the maintainer chooses what he takes.
+Everything JOEBOX has stays (D-011): since 37.5.0 that is JOEBOX 2. Upstream is merged in as a vendor (D-040): `main`
+mirrors it, `maigre` is the product, and the pull requests offered until 12/11 are frozen.
 
 Same rules as upstream: no 1010music firmware, images, disassembly or manuals in this repository. You bring your own
 stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
@@ -36,6 +36,7 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 | 37.3.3 | Gate 3b F-a: **a step 0 inside the audio fades in** (at Attack 0, stock's default, stock starts each pass's step 0 and each launch hard; slipped, on a Region past frame 0, in Loop Len's window or on a seamless wrap that clicked or doubled: it now gets stock's 256-sample fade-in at its first read, its timing unchanged; D-028). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.2 |
 | 37.4.0 | 37.3.3 + **Munchi's engine in bank 2** (`feat/munchi-bank2`, D-029): 6.4 KB of bank 1 back for the Looper and MIDI, Munchi's output bit for bit rc4's. Munchi now needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot) | branch `rc4-sync` (local), on 37.3.3 |
 | 37.4.1 | after Gate 3b part 4: **a take loaded into a playing Clip pad plays its own window** (F-p: the pad's Sync sent again after the open when its step came from the closed slot); **Fit's two Autos**, Auto (Bars) and Auto (Beats) (D-031: a saved Auto loads as Auto (Bars)); **the Waveform view goes to the marker you turn**; the boot SDRAM block core first (D-030). Needs this build's `BBEXTRA.BIN` (bank 2 changed: one restart at the first boot). **Gate 3 passed on 37.4.1d** (21/10): the Clip Window is proven on the unit | `maigre` |
+| 37.5.0 | 37.4.1 on **JOEBOX 2** (upstream `da84b1b`; D-036 to D-038): the Clip Window's ids at `0x150..0x154` (saved presets load as before); on a Clip pad a Region wins and, with none, JOEBOX 2's selection plays; ChopShop's bodies in bank 2. **Crash-safe bank 2** (D-043): if bank 2 crashes the unit three boots in a row, the fourth comes up without it and Tools reads « !held »; a power-cycle or the next install gives the payload its three boots again; the card loader writes the same `BBEXTRA.BIN` twice per power-on at most. Dev builds: the **bench kit** (D-045), jobs a computer sends over USB, so a session can turn a knob, press a button, load a preset, move files on the card, restart and take a screenshot with nobody at the unit. **Built and green in the suites, never on a unit**: the next install, with this build's `BBEXTRA.BIN` | `maigre` |
 | — | **Looper FX** (P4) | branch `feat/looper` (on origin, built, never on a unit): next, now that Gate 3 has passed |
 
 ## Upstream pull requests (one feature each, from upstream `main`)
@@ -76,6 +77,17 @@ reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when
   a JDK 21). `./check.sh` must print `N suites, 0 failed`.
 - Install: copy the patched `BLACKBOX.bin` (and `BBEXTRA.BIN` when a build has one) to the card root, hold BACK + INFO
   while powering on, on the unit's normal power supply. Back to stock the same way with 1010music's file.
+- Before an upstream merge: `python3 bench/resources.py report . upstream/main` (add `--build --base $(git merge-base
+  HEAD upstream/main)` for bank 1) lists where the release collides with the fork: parameter ids and their reads, call
+  sites, calls into stock the release hooks, page slots, settings stores, the SDRAM block, backup SRAM, flash
+  ([`notes/resources.md`](notes/resources.md), D-044). Exit 1 = collisions; exit 2 = something was not read, so read
+  its « Not read » list before trusting the result. `test_resources.py` keeps one tree free of them.
+- The unit's power from mgr-ran: [`bench/bbpower.py`](bench/bbpower.py) `off | on | cycle` (the hub port it is
+  plugged in; the cut is proven by the unit's own uptime counter).
+- Bench kit (dev builds, 37.5.0d on; needs that build's `BBEXTRA.BIN`): [`bench/bbkit.py`](bench/bbkit.py) sends
+  jobs through a mailbox: knob, button, play, stop, touch, tap, preset, presets, ls, stat, get, put, rm, restart,
+  shot, row. `bbshot.py` and `bbusb.py peek` read 4 KB a request on such a build (`notes/re/x6` sections 9 and 13).
+  `bench/bbusb.py crash` also prints the crashed-boot count and the fault token (`BANK 2 HELD OFF` from 3).
 - Bench over USB: [`bench/bbusb.py`](bench/bbusb.py) — the power jack of a modded unit is a USB device: audio of
   Outs 1–3 (measure a feature in samples), MIDI, and on dev builds the memory (the crash recorder, the Clip Window's
   state). Gate reports: [`notes/bench/`](notes/bench/).

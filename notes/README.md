@@ -20,7 +20,11 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
 - [`upstream-first-contact.md`](upstream-first-contact.md) — the first-contact issue sent to JOEBOX (#4, 18/10);
   [`upstream-input-resample.md`](upstream-input-resample.md) — an issue text on a JOEBOX bug (F-m), Thomas's to send.
 - [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root.
-- [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X3) and the hand-off index (`re/README.md`).
+- [`resources.md`](resources.md) — the scarce things (parameter ids and where they are read, stock functions our code
+  calls, settings-store entries, the boot SDRAM block, backup SRAM, patched stock bytes, bank 1), where
+  `bench/resources.py` reads each, the `resources:` tags, and the report to run at every upstream release, with its
+  proof against JOEBOX 2 and what it does not see.
+- [`re/`](re/README.md) — the reverse-engineering notes (A0–A7, X1–X7) and the hand-off index (`re/README.md`).
 - `features/` — one doc per feature: what it does on the unit, how it is implemented, how to bench it:
   [`features/clip-window.md`](features/clip-window.md) (Slip, Region, Loop Len, Fit, Loop Fade, the Clip-mode
   Waveform knobs; its §6–§7 are the Gate 3 and Gate 3b bench recipes).
