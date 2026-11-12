@@ -34,11 +34,13 @@ PATCHES = [
     (0x080B7994, bytes.fromhex("0820"), bytes.fromhex("1020")),          # modulation screen loop: movne r0,#8 -> #16
     # LFO 2 / 3 (src/lfo.c): pad defaults, the pad store's size (64 -> 96 entries; stock uses 59), the tab bar, page 3
     hook(0x0809423C, 0x08093EF6, "lfo_defaults"),
-    (0x08093F26, bytes.fromhex("4021"), bytes.fromhex("6021")),
+    # 112 since the JOEBOX 2 merge (#t-047): its rows (Stretch, the Clip selection, ChopShop) plus our Clip Window make 99
+    # in a Sample pad's store; at 96 stock's store_add (FUN_08093ef6) silently drops the last three (ChopShop's own among them)
+    (0x08093F26, bytes.fromhex("4021"), bytes.fromhex("7021")),
     # ... and the same size where a cell is first created (FUN_080949e4): this is the one a pad's store really gets.
     # 3.1.C..F missed it, so a sample pad's store filled up at 64 and LFO 3's Rate / Trig / Offset had nowhere to live
     # (the report: those three knobs do not move).
-    (0x080949F0, bytes.fromhex("4021"), bytes.fromhex("6021")),
+    (0x080949F0, bytes.fromhex("4021"), bytes.fromhex("7021")),
     hook(0x080B8844, 0x080B8724, "lfo_tabs"),
     hook(0x080B8BCC, 0x080B8724, "lfo_tabs"),
     (0x080EFCF0, bytes(16), struct.pack("<8H", *range(0x1A9, 0x1B1))),   # Sample pads, page 3

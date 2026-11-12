@@ -76,8 +76,8 @@ check("...then the pad's insert: Off, Pebble, Electra, the six shared knobs, the
                     (0x170, 0), (0x171, 400), (0x172, 0), (0x173, 500), (0x174, 500), (0x175, 0), (0x176, 1000),
                     (0x150, 0), (0x151, 0), (0x152, 0), (0x153, 0), (0x154, 0),
                     (0x14C, 0), (0x15C, 0), (0x15D, 0), (0x15E, 0), (0x14D, 0)], added[9:])
-check("a pad's settings store holds 96 entries (stock 64, of which 59 used; JOEBOX 2's make 94, ours 5 more): both places that size one",
-      img[0x08093F26 - BASE:0x08093F28 - BASE] == bytes.fromhex("6021") and img[0x080949F0 - BASE:0x080949F2 - BASE] == bytes.fromhex("6021"))
+check("a pad's settings store holds 112 entries (stock 64, of which 59 used; JOEBOX 2's make 94, ours 5 more): both places that size one",
+      img[0x08093F26 - BASE:0x08093F28 - BASE] == bytes.fromhex("7021") and img[0x080949F0 - BASE:0x080949F2 - BASE] == bytes.fromhex("7021"))
 check("page 3 of the Sample and Multisample pad pages lists the eight knobs",
       words(img, 0x080EFCF0, 9, "H") == list(range(0x1A9, 0x1B1)) + [0] and words(img, 0x080EFB88, 9, "H") == list(range(0x1A9, 0x1B1)) + [0])
 check("...and so does page 3 of the Clip and Slicer pad pages", words(img, 0x080EF948 + 3 * 0x48, 9, "H") == list(range(0x1A9, 0x1B1)) + [0] and words(img, 0x080EF7E0 + 3 * 0x48, 9, "H") == list(range(0x1A9, 0x1B1)) + [0])

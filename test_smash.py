@@ -107,7 +107,7 @@ e.w32(STACK + 8, 0x080CC3F4)
 e.stub(0x0808C12C, lambda: nums.append((e.arg(1), e.arg(2), e.cstr(e.arg(3)), e.r32(e.uc.reg_read(UC_ARM_REG_SP)), e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4), e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 8)))))
 e.call("comp_register", 0x24001000, 0xB4, 4, 0x080CC3E8)
 check("Depth (0x1ea) and Time (0x1eb) registered as 0..100 % knobs", nums[1:3] == [(0x1EA, 8, "Depth:", 0, 1000, "smashdepth"), (0x1EB, 8, "Time:", 0, 1000, "smashtime")], nums[:3])
-check("the global settings store is allocated with 96 entries (stock 64; stock + ours had reached 50)", e.uc.mem_read(0x08094820, 2) == bytes.fromhex("6021"))
+check("the global settings store is allocated with 112 entries, as the pad stores (stock 64; stock + ours had reached 50)", e.uc.mem_read(0x08094820, 2) == bytes.fromhex("7021"))
 
 setup(depth=0)
 x_rms = rms_db(sine(0.25, 1000, 48 * N)[-8 * N:])

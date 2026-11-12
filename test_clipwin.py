@@ -426,7 +426,7 @@ ids = [x[0] for x in entries]
 check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, Loop Len 0 (Off), Fit 0 (Off) and TL Knob 0 (Loop Start) "
       f"once each ({count} of {cap} entries used)",
       all(ids.count(p_) == 1 and entries[ids.index(p_)][2] == 0 for p_ in (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_TLKNOB))
-      and cap == 96 and count < cap,
+      and cap == 112 and count < cap,
       (count, cap, ids[-4:]))
 
 fade_reg = [r for r in regs if r[0] == P_FADE]

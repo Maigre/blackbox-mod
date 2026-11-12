@@ -137,7 +137,7 @@ e.call("comp_defaults", 0x24072000, 0xB4, 1)
 d = dict(added)
 check("defaults: Sweet 30 %, Doubler 0, Tape 0, Cassette 25 %, Tilt flat, Time 1/8, Mix 100 %; 41 global entries added in all (TAPESCAM's eleven, Pre-roll, Groove, Theme, then the clipper's three)",
       [d[i] for i in range(0x19D, 0x1A9)] == [1, 0, 1, 2, 300, 0, 0, 250, 500, 300, 3, 1000] and len(added) == 41 and len(d) == 41 and d.get(0x144) == 0 and d.get(0x145) == 0, added)
-check("stock has 41 global settings, ours add 40: 81 of the store's 96", 41 + len(added) - 1 == 81 and e.uc.mem_read(0x08094820, 2) == bytes.fromhex("6021"))
+check("stock has 41 global settings, ours add 40: 81 of the store's 112", 41 + len(added) - 1 == 81 and e.uc.mem_read(0x08094820, 2) == bytes.fromhex("7021"))
 
 # --- the page
 LIST, CELL = 0x24074000, 0x24075000
