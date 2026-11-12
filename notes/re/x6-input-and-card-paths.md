@@ -414,3 +414,67 @@ the card call-out ~16, the long peek ~70 (`request()` branch + interrupt refill)
 | 6 | the card task's loop rate (latency of a card job) | files | a counter in `kit_run`, peeked |
 | 7 | the long peek's real rate on this host | shot | measure in pass 2 |
 | 8 | why the unit lost power twice on the new hub | bench | Thomas: the unit back on its own supply or a powered port |
+
+## 13. Pass 2: what was built, and where it left §9
+
+Built 12/11 on `wip/blackbox-t-054` (`src/kit.c`, `src/kit_b2.c`, call-outs in `src/usbdev.c`, `src/b2load_thunk.S`,
+`src/master.c`, `patches/cpu.py`; `bench/bbkit.py`; `test_benchkit.py`, long transfers in `test_usbdev.py`). Every
+claim here ran under Unicorn on the patched image; none has run on the unit (it runs 37.4.1d until Thomas installs).
+
+- **Two payloads, not one** (§9.1 said one). The release's bank 1 holds the payload's sum (`b2_expect_sum`) and id
+  (`B2_ID`, `header_ok`, `b2_ok`), so any kit code in a release's bank 2 changes the release's `BLACKBOX.bin`. `build.sh`
+  puts `kit_b2` in bank 2 for dev builds only, after every other object: a dev `BBEXTRA.BIN` is the release's code
+  plus the kit, and a `RELEASE=1` image is byte for byte the base's (checked against `d23b389`'s, sha256). The cost:
+  a dev ↔ release install rewrites bank 2 (one restart at the first boot).
+- **The data area sits at the tail's end, not in a grown core** (§9.2 said `CORE_BYTES` + `0x2000`). Dev builds only:
+  `master.c`'s `KIT_BYTES` = `0x1400` at block + `0x84900`, so Prism, the inserts and `cw_bank` keep the offsets a
+  release has; only `master_alloc`'s size changes (`0x85D00`). It exists only with the tail (the check word keyed
+  PRISM), which is what a live bank 2 implies; `kit_b2.c`'s `data_area()` checks the key anyway. Layout: `+0x000`
+  `FIL`, `+0x058` `DIR`, `+0x0B0` `FILINFO`, `+0x200` a name or path (256 B), `+0x300` the preset job's scratch name,
+  `+0x400` the 4 096-B chunk.
+- **The mailbox** is §9.2's at block + `0xC000`; the unit's own state from `+0x48`: the screen task's boot stamp and
+  the job spanning passes (`+0x4C` seq, `+0x50` index, `+0x52` wait, `+0x54`..`+0x67` its counts), the kit's touch
+  (`+0x51` down, `+0x68` x, `+0x6C` y, `+0x70` widget id), the card task's boot stamp `+0x74`, the last file job's GUI
+  ms `+0x78`, the open file `+0x7C` (0 none, 1 read, 2 write). Each task resets its own part when the boot count moved.
+  `+0x44` = version 1 << 16 | `0x60` slots.
+- **The gate**: bank 1's `kit_poll(task)` (`master_block()` and `b2_live()`, 32 B) then bank 2's `kit_gate`: magic
+  `KIT1`, seq ≠ done, index < `0x60` with a job (else the screen task answers −1), `index >> 5` = the task, epoch =
+  the boot count (else −2). A job spanning passes (knob, tap) blocks new requests until it ends.
+- **The jobs** (§9.3's table, as built): `0x00` info, `0x01` / `0x02` row set / get, `0x03` knob, `0x04` touch,
+  `0x05` tap, `0x06` preset load by name, `0x07` the preset list by index (r0 count, r1 pending, r2 queued, the name to
+  `+0x200`), `0x20` button, `0x40`..`0x47` open, read, write, seek, close, stat, list, delete, `0x4F` restart. Not
+  built: §9.3's "preset state" with the current preset's name (its place in the app was not found).
+- **Touch**: the kit's contact runs through the tracker's own three calls from the knob-scan hook (§4's first choice);
+  under Unicorn its calls are the same, in the same order, with the same points, as `FUN_0808B050`'s for a finger
+  (down, two moves, up), and the tracker's state at `gui+0x214` stays untouched.
+- **Buttons**: the entries the kit writes are byte for byte what stock's `FUN_080437D4` writes for that pin held low
+  (run for real on the same table, all 13 buttons, REC's release, BACK's hold). Stock's two consumers ran for real
+  on them: the GUI's `FUN_080A2E60` (TOOLS → screen `0x25`) and the audio block's ring loop (`0x0804CCC4`..
+  `0x0804CE3A`: PLAY → `FUN_08051EB8`, STOP → `FUN_08052010`, REC → `FUN_080524CC(clock, 1 / 0)`).
+- **Knobs**: stock's drain (`0x080A2CDA`..`0x080A2D36`) ran for real after `kit_scan` and handed `FUN_080A1718` the
+  kit's `{0x32, code, counts}` once a pass.
+- **Preset load**: `FUN_080A1718`'s case `0x18` ran for real: `LoadBank(app, index, 1)`, then screen 2.
+- **Restart**: refused (−4, r0 the reason) while the transport plays (clock + `0x38`), REC is held (clock +
+  `0x128D4`), file commands are queued (F + `0x120` ≠ + `0x124`), a load is pending (`*(F + 0x390)` not empty) or
+  `FUN_0807125C` says the streamer is busy; −7 while the kit's file is open. Otherwise: answered, the box's two cache
+  lines cleaned, `AIRCR` = `0x05FA0004`. Still no flag found for a take being written (§12 #5).
+- **The long peek is the old peek (`0xC0` / `0x50`) with wLength 65..4 096**, not a new request `0x53`: usbdev.c sends
+  the first 64 bytes as ever and hands the rest to bank 2 (`kit_long`), whose `kit_usb_in` loads each next packet from
+  the interrupt. A long peek it cannot take (range leaving its region, bank 2 not live, not whole words, over 4 096)
+  is now **stalled**: a full 64-byte answer would leave the computer waiting for the rest. An older build does exactly
+  that, so `bbusb.peek` asks once with a 0.25 s timeout and falls back to 64-B requests for that process.
+- **The long poke is `0x40` / `0x54`**, wLength 4..4 096 bytes into the RAMs the word poke may write; usbdev.c's
+  `receive()` hands endpoint 0's OUT entries to `kit_usb_out` while it runs, which keeps the words, re-arms the
+  endpoint, and after the last sends the empty status packet.
+- **Their flags are `DAINTMSK` bits**, which every reset clears (backup SRAM and SDRAM would not): bit 0 (endpoint 0
+  IN's interrupt, on only while a long peek runs) and bit 16 (endpoint 0 OUT's, which `GINTMSK` never lets through:
+  the long poke's flag). The interrupt calls bank 2 only while one is up, so it never does in a boot that did not
+  start a transfer behind `b2_live()`. Every SETUP clears both: a transfer the computer gave up on ends there.
+  The transfer's cursor is at `0x388006B8` (backup SRAM, 8 B, behind `usbdiag`, before `rotate.c`'s `ACC`).
+- **Bank 1, measured** (`arm-none-eabi-size -A out/cave.elf`): base dev `.cave` 51 874 B; the dispatcher and the rows
+  moved (step 1) 51 666; with everything 51 878 (+4 net). Out: `usbdev_mailbox_scan` 248 + `MBOX_IDS` 26. In:
+  `kit_poll` 32, `kit_scan` 16, `usbdev_poll` +188 (the audio call-out, the SETUP's flag clear, the long peek's and
+  the long poke's branches), `usbaud_isr` +32 (the two interrupt call-outs), `b2load_thunk` +6. `B2_ID` is a hash and
+  its encoding moves `b2_ok` / `header_ok` by 4 B each from one id to another: this build's costs 8 B more than the
+  base's. Release `.cave` 51 258, unchanged.
+- **Bank 2**: base `.bank2` 24 656 B (both builds); dev with the kit 28 416 B; release 24 656 B, unchanged.

@@ -1027,6 +1027,72 @@ for i in range(5):
 check(f"presets (job 7): r0 the count, each name by its index into the name area, none past the end ({names_back})",
       names_back == PRESETS + [None] and r["r"][:3] == (4, 0, 0), (names_back, r))
 
+# ====================================================================================================== 8c. the host client
+# bench/bbkit.py's own code against an emulated unit: its peek, word and long poke land in the emulator's memory, and
+# each of its 20 ms waits runs the three tasks' hooks once. So the client's requests (layout, epoch, seq last), its
+# reading of the answers and its file, listing and preset loops are the ones the unit will see.
+sys.path.insert(0, "bench")
+import bbkit  # noqa: E402
+import bbusb  # noqa: E402
+
+k = card_kit()
+preset_rig(k)
+k.e.w32(PMEM, BLOCK)
+host_waits = []
+bbusb.word = lambda a: k.e.r32(a) & 0xFFFFFFFF
+bbusb.peek = lambda a, n=4: bytes(k.e.uc.mem_read(a, n))
+bbusb.poke_bytes = lambda a, data: k.e.uc.mem_write(a, bytes(data))
+
+
+class _Clock:
+    time = staticmethod(__import__("time").time)
+
+    @staticmethod
+    def sleep(_):
+        host_waits.append(1)
+        for task in (SCREEN, AUDIO, CARD):
+            k.run(task)
+
+
+bbkit.time = _Clock
+info = bbkit.job(0x00)
+check(f"bbkit.py job: info comes back through the client (r0 0x10060, the boot count {BOOTS})", info[0] == 0x10060 and info[3] == BOOTS, info)
+with tempfile.TemporaryDirectory() as tmp:
+    src, dst = os.path.join(tmp, "in.bin"), os.path.join(tmp, "out.bin")
+    payload = bytes((i * 31 + 7) & 0xFF for i in range(9000))
+    open(src, "wb").write(payload)
+    n, _ = bbkit.put(src, "K/IT.BIN")
+    stored = bytes(k.fs.files.get("K/IT.BIN", b""))
+    try:
+        bbkit.put(src, "K/IT.BIN")
+        again = None
+    except bbkit.KitError as e_:
+        again = (e_.result, e_.r[0], str(e_))
+    n2, size, _ = bbkit.get("K/IT.BIN", dst)
+    back = open(dst, "rb").read()
+check(f"bbkit.py put then get: 9 000 bytes in three chunks onto the card and back the same; a second put of it refused "
+      f"({again})", stored == payload and back == payload and n == n2 == size == 9000 and again and again[:2] == (-6, 8)
+      and "exists" in again[2], (len(stored), len(back), again))
+k.fs.files.update({"B.WAV": bytearray(5004), "C3": bytearray(2)})
+listing = bbkit.ls("")
+check(f"bbkit.py ls: the root's names and sizes ({listing})", ("B.WAV", 5004, 0x20) in listing and ("C3", 2, 0x20) in listing
+      and not any("/" in n_ for n_, *_ in listing), listing)
+check(f"bbkit.py presets: the list by index ({bbkit.presets()})", bbkit.presets() == PRESETS)
+k.e.stub(0x080A1718, lambda: k.msgs.append(tuple(struct.unpack("<6I", bytes(k.e.uc.mem_read(k.e.arg(1), 24))))))
+k.msgs.clear()
+bbkit.main(["preset", "DRUMS-01"])
+check("bbkit.py preset DRUMS-01: the Load button's message with index 2", k.msgs == [(0x18, 0, 0, 2, 0, 0)], k.msgs)
+k.msgs.clear()
+bbkit.main(["knob", "br", "-3", "2", "1"])
+check("bbkit.py knob br -3 2 1: two knob events through the ring (the client waits while the job spans passes)",
+      k.e.r32(HW + 0x1274) - k.e.r32(HW + 0x1270) == 2 and k.e.r32(MB + 0x30) == 2, (k.e.r32(HW + 0x1274), k.e.r32(HW + 0x1270)))
+panel(k)
+bbkit.main(["play"])
+bbkit.main(["button", "rec", "release"])
+codes = [k.e.r16(PANEL + i * 0x18) for i in range(2)]
+check(f"bbkit.py play, button rec release: PLAY's and REC's release codes in the GUI's ring ({[hex(c) for c in codes]})",
+      codes == [0xF7, 0xF5], codes)
+
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and
 # b2load_thunk.S do not call it, build.sh leaves kit_b2 out of bank 2 (so the release's bank 2, and the bank 1 that

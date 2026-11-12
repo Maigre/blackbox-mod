@@ -98,6 +98,18 @@ def poke(addr, value):
     d.ctrl_transfer(0x40, 0x52, value & 0xFFFF, (value >> 16) & 0xFFFF, None)
 
 
+def poke_bytes(addr, data):
+    """whole words into the unit's RAM (aligned): the bench kit's long poke (0x40 / 0x54, a DEV build with the kit
+    and its BBEXTRA.BIN), 4 096 bytes a request, each written in ascending order (the kit's mailbox puts its seq last)"""
+    import usb.core
+    d = dev()
+    for at in range(0, len(data), 4096):
+        try:
+            d.ctrl_transfer(0x40, 0x54, (addr + at) & 0xFFFF, (addr + at) >> 16, data[at:at + 4096])
+        except usb.core.USBError as e:
+            sys.exit(f"long poke at {addr + at:#x} refused ({e}): a build without the bench kit, bank 2 not live, or "
+                     "not a RAM the poke may write")
+
 
 RSR_BITS = {17: "CPU", 19: "D1", 20: "D2", 21: "BOR(brownout)", 22: "PIN", 23: "POR(power-on)", 24: "SOFTWARE",
             26: "IWDG", 28: "WWDG(window watchdog)", 30: "LOWPOWER"}
