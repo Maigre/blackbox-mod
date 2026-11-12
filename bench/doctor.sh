@@ -9,9 +9,11 @@
 #
 # Required: the Arm GNU toolchain (arm-none-eabi-gcc/-g++/-nm/-objcopy/-size), shasum (build.sh), the Python that
 # check.sh runs the suites with (.venv/bin/python, else python3; 3.9 or later) with unicorn, capstone, numpy and scipy,
-# the stock 3.1.9 image at firmware/BLACKBOX-3.1.9.bin with its sha256, and a C compiler that builds host/libdsp for
-# the suites that hold the firmware's DSP against the host's (test_confetti, test_filter, test_machine, test_prism,
-# test_smash). The fixes are notes/dev-setup.md's recipe; /srv/dev is where this fork's boxes keep it.
+# the stock 3.1.9 image at firmware/BLACKBOX-3.1.9.bin with its sha256, and a C compiler for the suites that hold the
+# firmware's DSP against a host build of the same C: test_filter and test_machine (host/libdsp, host/build.sh, which
+# splits CC into words), test_clipper, test_insert and test_motion (host/render_*.py build their library at every run
+# and hand CC to Python's subprocess as ONE program name; both ways are tried). The fixes are notes/dev-setup.md's
+# recipe; /srv/dev is where this fork's boxes keep it.
 # POSIX sh (dash on Debian).
 TREE=$(dirname "$0")/..
 GHIDRA=0
@@ -103,16 +105,26 @@ else
 ln -sf /srv/dev/firmware/BLACKBOX-3.1.9.bin firmware/BLACKBOX-3.1.9.bin"
 fi
 
-# 5. a C compiler for host/libdsp: host/build.sh takes CC, else clang, else cc; tried on a tiny shared library
+# 5. a C compiler for the host builds: CC, else clang, else cc, tried on a tiny shared library the way host/build.sh
+#    runs it (CC split into words) and the way host/render_*.py do (CC as one program name, from Python)
 cc_=${CC:-$(command -v clang || command -v cc)}
 tmp=$(mktemp -d)
 printf 'int f(int x) { return x + 1; }\n' > "$tmp/t.c"
+needs="test_filter, test_machine, test_clipper, test_insert and test_motion need it"
 # shellcheck disable=SC2086
-if [ -n "$cc_" ] && $cc_ -O2 -shared -fPIC -o "$tmp/t.so" "$tmp/t.c" > /dev/null 2>&1; then
-  ok "C compiler for host/libdsp ($cc_)"
+if [ -z "$cc_" ] || ! $cc_ -O2 -shared -fPIC -o "$tmp/t.so" "$tmp/t.c" > /dev/null 2>&1; then
+  bad "a C compiler for the host builds (${cc_:-none found}; $needs)" "sudo apt install gcc
+or, without root, zig's behind a one-line wrapper (CC must name one program: host/render_*.py run it as one):
+VIRTUAL_ENV=$VENV uv pip install ziglang && printf '#!/bin/sh\\nexec $VENV/bin/python -m ziglang cc \"\$@\"\\n' > $VENV/bin/zig-cc && chmod +x $VENV/bin/zig-cc
+export CC=$VENV/bin/zig-cc"
+elif ! "$PY" -c 'import os, shutil, subprocess, sys
+subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-shared", "-fPIC",
+                "-o", os.path.join(sys.argv[1], "u.so"), os.path.join(sys.argv[1], "t.c")], check=True, capture_output=True)' \
+    "$tmp" > /dev/null 2>&1; then
+  bad "CC=\"$cc_\" builds for host/build.sh, but host/render_*.py run CC as one program name and cannot (test_clipper, test_insert and test_motion)" \
+    "a one-line wrapper: printf '#!/bin/sh\\nexec $cc_ \"\$@\"\\n' > $VENV/bin/cc-wrap && chmod +x $VENV/bin/cc-wrap && export CC=$VENV/bin/cc-wrap"
 else
-  bad "a C compiler for host/libdsp (${cc_:-none found}; 5 suites need it)" "sudo apt install gcc
-or, without root: VIRTUAL_ENV=$VENV uv pip install ziglang && export CC=\"$VENV/bin/python -m ziglang cc\""
+  ok "C compiler for the host builds ($cc_)"
 fi
 rm -rf "$tmp"
 
