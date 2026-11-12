@@ -471,10 +471,17 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
   the long poke's flag). The interrupt calls bank 2 only while one is up, so it never does in a boot that did not
   start a transfer behind `b2_live()`. Every SETUP clears both: a transfer the computer gave up on ends there.
   The transfer's cursor is at `0x388006B8` (backup SRAM, 8 B, behind `usbdiag`, before `rotate.c`'s `ACC`).
+- **The card's DMA**: stock reads and writes whole sectors with SDMMC1's IDMA straight into or out of the caller's
+  buffer (`FUN_0807FEF0`, `HAL_SD_ReadBlocks_DMA`: `IDMABASE0` = the buffer) and has no data cache maintenance by
+  address anywhere (only the set / way invalidate at boot, `0x080441E0`); SDRAM is write-back cached (x2). So the kit
+  writes out and forgets the chunk's lines before each read or write and forgets them again after a read, and wants
+  the block on a cache line's start (on the unit `0xC0435720`, 37.4.1d, 12/11; the handle `0x24009BFC` holds SDMMC1,
+  `0x52007000`, read the same day). Without it a `get` could hand back the chunk's previous bytes from the cache.
 - **Bank 1, measured** (`arm-none-eabi-size -A out/cave.elf`): base dev `.cave` 51 874 B; the dispatcher and the rows
-  moved (step 1) 51 666; with everything 51 878 (+4 net). Out: `usbdev_mailbox_scan` 248 + `MBOX_IDS` 26. In:
+  moved (step 1) 51 666; with everything 51 870 (−4 net). Out: `usbdev_mailbox_scan` 248 + `MBOX_IDS` 26. In:
   `kit_poll` 32, `kit_scan` 16, `usbdev_poll` +188 (the audio call-out, the SETUP's flag clear, the long peek's and
   the long poke's branches), `usbaud_isr` +32 (the two interrupt call-outs), `b2load_thunk` +6. `B2_ID` is a hash and
-  its encoding moves `b2_ok` / `header_ok` by 4 B each from one id to another: this build's costs 8 B more than the
-  base's. Release `.cave` 51 258, unchanged.
-- **Bank 2**: base `.bank2` 24 656 B (both builds); dev with the kit 28 416 B; release 24 656 B, unchanged.
+  its encoding moves `b2_ok` / `header_ok` by 4 B each from one id to another (the steps in between measured up to
+  +8 B for it). Release `.cave` 51 258, unchanged.
+- **Bank 2**: base `.bank2` 24 656 B (both builds); dev with the kit 28 500 B (`BBEXTRA.BIN` 28 544); release
+  24 656 B, unchanged.

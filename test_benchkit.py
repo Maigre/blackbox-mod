@@ -919,6 +919,30 @@ check("...a folder by its path; one that is not there: -6 (FR_NO_PATH, 5)", reco
 name(k, "C1")
 r = k.job(CARD, 0x47)
 r2 = k.job(CARD, 0x47)
+# the chunk's cache lines around the card's DMA (stock's SD reads and writes go by SDMMC1's IDMA straight to the
+# buffer, and SDRAM is write-back cached): written out and forgotten before a transfer, forgotten again after a read
+cache_ops = []
+k.e.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, kind, a, size, v, _: cache_ops.append(
+    ({0xE000EF70: "clean+forget", 0xE000EF5C: "forget"}[a], v & 0xFFFFFFFF)), begin=0xE000EF5C, end=0xE000EF70)
+k.e.uc.hook_add(UC_HOOK_CODE, lambda *a: cache_ops.append(("fatfs", 0)), begin=0x08086866, end=0x08086866)
+k.e.uc.hook_add(UC_HOOK_CODE, lambda *a: cache_ops.append(("fatfs", 0)), begin=0x08086A06, end=0x08086A06)
+name(k, "B.WAV")
+k.job(CARD, 0x40, 0)
+cache_ops.clear()
+k.job(CARD, 0x41, 4096)
+rd = list(cache_ops)
+k.job(CARD, 0x44)
+k.job(CARD, 0x40, 3)
+cache_ops.clear()
+k.job(CARD, 0x42, 100)
+wr = list(cache_ops)
+k.job(CARD, 0x44)
+lines = [D_CHUNK + 32 * i for i in range(128)]
+check(f"the chunk's cache lines: a 4 096-byte read writes out and forgets its 128 lines before FatFs, forgets them again "
+      f"after; a 100-byte write writes out and forgets its 4 lines before, nothing after ({len(rd)}, {len(wr)} operations)",
+      rd == [("clean+forget", a) for a in lines] + [("fatfs", 0)] + [("forget", a) for a in lines]
+      and wr == [("clean+forget", a) for a in lines[:4]] + [("fatfs", 0)], (rd[:3], rd[127:131], wr))
+fs.files["B.WAV"] = fs.files["B.WAV"][:5004]
 check("delete (job 0x47): gone; again: -6 (FR_NO_FILE, 4)", r["result"] == 0 and "C1" not in fs.files and r2["result"] == -6
       and r2["r"][0] == 4, (r, r2))
 name(k, "C2")
@@ -964,6 +988,16 @@ k.e.uc.mem_write(0x240021A4 + 0x15, b"\x01")
 k.e.w32(PCHECK, BLOCK ^ 0x434F5245)                        # the block without its tail (keyed CORE): no data area
 r2 = k.job(CARD, 0x45)
 k.e.w32(PCHECK, BLOCK ^ PKEY)
+k.e.w32(PMEM, BLOCK + 16)                                 # a block that does not start a cache line: no data area
+k.e.w32(PCHECK, (BLOCK + 16) ^ PKEY)
+k.e.uc.mem_write(BLOCK + 16 + 0xC000, struct.pack("<IHHI6iI", KIT1, 0x45, 0, BOOTS, 0, 0, 0, 0, 0, 0, 1))
+k.e.w32(BLOCK + 16 + 0xC028, 0)
+k.run(CARD)
+r3 = struct.unpack("<Iii", bytes(k.e.uc.mem_read(BLOCK + 16 + 0xC028, 12)))
+k.e.w32(PMEM, BLOCK)
+k.e.w32(PCHECK, BLOCK ^ PKEY)
+check(f"...nor with a block that does not start a cache line (the chunk's lines would not be its own): -4, r0 6 ({r3})",
+      r3 == (1, -4, 6) and len(fs.calls) == n0, r3)
 check("no card, or no data area (the block without its tail): -4, r0 6, FatFs not called",
       r["result"] == -4 and r["r"][0] == 6 and r2["result"] == -4 and r2["r"][0] == 6 and len(fs.calls) == n0, (r, r2, fs.calls[n0:]))
 

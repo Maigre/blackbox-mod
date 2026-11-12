@@ -521,11 +521,27 @@ typedef int (*f_unlink_fn)(const char *path);
 #define FA_CREATE_ALWAYS 8u
 #define FA_OPEN_ALWAYS 0x10u
 
-/* the data area: the block's tail is there (master.c's check word keyed PRISM), or 0 */
+/* the data area: the block's tail is there (master.c's check word keyed PRISM), or 0. And the block on a cache line's
+   start (it is, on the unit: 0xc0435720 on 37.4.1d, 12/11), so the chunk's lines are its own (chunk_lines). */
 static uint8_t *data_area(volatile struct kit_box *b)
 {
     uint32_t block = (uint32_t)b - KIT_AT;
-    return PRISM_MEM == block && PRISM_CHECK == (block ^ 0x5052534du) ? (uint8_t *)block + KIT_DATA : 0;
+    return PRISM_MEM == block && PRISM_CHECK == (block ^ 0x5052534du) && !(block & 31u) ? (uint8_t *)block + KIT_DATA : 0;
+}
+
+/* The card's DMA and the chunk: stock reads and writes whole sectors with SDMMC1's IDMA straight into or out of the
+   caller's buffer (HAL_SD_ReadBlocks_DMA, FUN_0807fef0) and keeps no data cache maintenance at all, while SDRAM is
+   write-back cached (x2) and the long peek and poke reach the chunk through the cache. So before a read or a write
+   every line of the bytes it moves is written out and forgotten (the card gets what the computer put; no dirty line
+   lands later on what the card wrote), and after a read forgotten again (the computer's next peek reads SDRAM). */
+#define DCIMVAC     (*(volatile uint32_t *)0xe000ef5cu)   /* data cache: forget this line */
+#define DCCIMVAC    (*(volatile uint32_t *)0xe000ef70u)   /* data cache: write this line out and forget it */
+static void chunk_lines(volatile uint32_t *op, const uint8_t *chunk, uint32_t n)
+{
+    __asm__ volatile("dsb" : : : "memory");
+    for (uint32_t a = (uint32_t)chunk; a < (uint32_t)chunk + n; a += 32u)
+        *op = a;
+    __asm__ volatile("dsb\n isb" : : : "memory");
 }
 
 static uint64_t fil_u64(const uint8_t *fil, unsigned at)
@@ -596,8 +612,11 @@ static int job_rw(volatile struct kit_box *b)
     int r = n - 1u >= CHUNK ? R_ARG : file_ready(b, d, 0, 1);
     if (r)
         return r;
-    unsigned done = 0;
-    r = (b->index == 0x41 ? fw_f_read : fw_f_write)(d + D_FIL, d + D_CHUNK, n, &done);
+    unsigned done = 0, read = b->index == 0x41;
+    chunk_lines(&DCCIMVAC, d + D_CHUNK, n);
+    r = (read ? fw_f_read : fw_f_write)(d + D_FIL, d + D_CHUNK, n, &done);
+    if (read)
+        chunk_lines(&DCIMVAC, d + D_CHUNK, n);
     b->r[0] = (int32_t)done;
     return r ? fatfs(b, r) : R_OK;
 }
