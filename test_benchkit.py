@@ -1230,6 +1230,22 @@ check(f"bbkit.py: while a knob job runs, nothing is sent but a cancel ({refused!
       in refused and k.e.r32(MB + 0x24) == seq0, refused)
 bbkit.main(["cancel"])
 check("bbkit.py cancel: the job ended, and the next command runs", k.e.r32(MB + 0x40) == 0 and bbkit.job(0x00)[0] == 0x10060)
+# bbusb.py set (MBX1, as bench/autogate.py uses it) right after a KIT1 request, with a GUI pass after every word the
+# computer writes - the worst interleaving: the row is set once (review 12/11: the box's KIT1 words at +4 and +0x14
+# read as MBX1's seq and done once the magic landed, and the row was set before its seq, then again)
+bbusb.time = _Clock
+bbusb.poke = lambda a, v: (k.e.w32(a, v & 0xFFFFFFFF), k.run(SCREEN))
+bbkit.job(0x07, -1, 0, 9)                                  # KIT1: +4 index 7, +0x14 (arg 2) 9
+k.store[(PAD12, 0x1C9)] = 11
+k.msgs.clear()
+res = bbusb.mailbox(1, 1, 2, 0x1C9, 11)
+posts = list(k.msgs)
+k.msgs.clear()
+res2 = bbusb.mailbox(1, 1, 2, 0x1C9, 12)                   # MBX1 already in the box: the short way
+posts2 = list(k.msgs)
+check(f"bbusb.py set right after a KIT1 job, a GUI pass after every word written: the row is set once, answered 0; the "
+      f"next set once too ({posts}, {posts2})", posts == [(0x6E, 0, 0x12, 0x1C9, 11, 0)] and res == (0, 11) and res2[0] == 0
+      and posts2 == [(0x6E, 0, 0x12, 0x1C9, 12, 0)], (posts, res, posts2, res2))
 
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and

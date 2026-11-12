@@ -217,6 +217,13 @@ def cell(text):
 
 def mailbox(op, row, col, pid, value=0):
     mb = cw_bank() + 0xF00
+    if word(mb) != MBOX_MAGIC:
+        # The box last held something else (the bench kit's KIT1 request, or nothing since the boot cleared it): its
+        # words at +4 and +0x14 are not MBX1's seq and done, and once the magic says MBX1 the GUI task would run the
+        # request as soon as they differ, then again when the real seq lands (review 12/11). So: no request while the
+        # box changes hands, then seq = done before the magic.
+        poke(mb, 0)
+        poke(mb + 4, word(mb + 0x14))
     poke(mb + 8, op | row << 8 | col << 16)
     poke(mb + 0xC, pid)
     poke(mb + 0x10, value & 0xFFFFFFFF)
