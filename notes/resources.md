@@ -62,8 +62,10 @@ Only where nothing in the sources states a fact, in a comment of the file that d
   None in the tree since the JOEBOX 2 merge: the one that stood in `patches/clipwin.py` (stage 1's capture at
   `0x080685D2`, hub #t-044) fired there, because that call is now `slice.py`'s `sel_param`. The comment in its
   place says how stage 1 takes the site (TAKES, ending in `sel_param`).
-- `resources: shares at=<addr> with=<module>,<module>`: two modules that take turns on one backup-SRAM block.
-  One, in `src/compm.c`: `comp.c` and `compm.c` at 0x38800400 (one compressor runs at a time).
+- `resources: shares at=<addr> with=<module>,<module>`: two modules on one backup-SRAM range by design. Taking
+  turns: `comp.c` and `compm.c` at 0x38800400 (one compressor runs at a time; the tag is in `src/compm.c`). One
+  reading the other's word: the bench kit (`src/kit_b2.c`) reads `master.c`'s block pointer and check word and
+  `fault.c`'s boot count.
 
 A module's `TAKES` (a list of site addresses, or a dict keyed by them) lets it patch a site another module patches;
 a module whose stock bytes are another's new bytes (master.py on comp.py's Tools page) is a chain patch.py accepts.
@@ -111,8 +113,10 @@ the branch's own; exit 2 until its stores are tagged.
 
 With this tool on that merge (the wave of 12/11): the store tags came with it, and `check` then gave two problems,
 both real. The comp.c / compm.c block: tagged `shares`. And `0x080685D2`, wanted by stage 1 and patched by
-`slice.py` -> `sel_param`: the first clash the tool found that nobody had seen by hand. `check .` is at 0 problems,
-`test_resources.py` at 0 failed.
+`slice.py` -> `sel_param`: the clash still ahead of us, which the hub had found by reading both trees on 11/11
+(#t-044) and the tool names from one tag. With the bench kit merged it also asked for the kit's words to be
+declared: its mailbox inside the Clip Window's 4 KB, and three backup-SRAM words it reads from `master.c` and
+`fault.c` (`shares` tags in `src/kit_b2.c`). `check .` is at 0 problems, `test_resources.py` at 0 failed.
 
 Checked against the code: on the built image of each tree, `test_resources.py` runs every registration and
 store-defaults hook under Unicorn and compares the ids with what was read: here 78 ids in 5 hooks and 80 entries

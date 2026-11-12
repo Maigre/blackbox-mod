@@ -97,9 +97,9 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   backup-SRAM range say so in a `resources: shares` tag (taking turns, as `comp.c` and `compm.c`, or one reading
   the other's word, as the bench kit). Stock facts the sources do not state are `resources:` tag comments beside
   the patch they describe. `bench/resources.py report . upstream/main` is run and read before every upstream merge;
-  an exit 2 (something not read) is never taken as clean. On the JOEBOX 2 merge it named, unprompted, a clash
-  nobody had seen: the call at `0x080685D2`, which the Clip Window's stage 1 planned to hook, is JOEBOX 2's
-  `sel_param` now (`notes/resources.md`).
+  an exit 2 (something not read) is never taken as clean. On the JOEBOX 2 merge it named the clashes the merge had
+  met by hand, the one still ahead included: the call at `0x080685D2`, which the Clip Window's stage 1 planned to
+  hook, is JOEBOX 2's `sel_param` now (found by reading on 11/11, hub #t-044; `notes/resources.md`).
 - **D-045 (2026-11-12) — The bench kit lives in bank 2 of dev builds only: two payloads** (hub #t-054; built, not on
   a unit yet). A release's bank 1 holds its payload's sum and id, so one shared payload would have changed the
   release image; a `RELEASE=1` build has none of the kit, in either bank. Cost: going from a dev build to a release or
