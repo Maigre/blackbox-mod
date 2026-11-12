@@ -31,8 +31,10 @@ read twice (decompile and disassembly of the same bytes); *inferred* = a reasoni
    with no hands needs code of our own. High confidence.
 6. **Our own updater** is possible from the app, the way `b2load.c` writes bank 2, but it rewrites the bank it runs
    from: it must run from ITCM with interrupts off, have the whole file in SDRAM first, feed the window watchdog, and
-   write the 128-byte vector window last (§7). What only hands repair: anything in bank 1 sectors 2–7. What nothing
-   short of a debug probe repairs: bank 1 sectors 0–1 and the option bytes. **Recommendation: keep the hands** (§8).
+   write the 128-byte vector window last (§7). What only hands repair: anything in bank 1 sectors 2–7 that the
+   bootloader can still read. What nothing short of a debug probe repairs: bank 1 sectors 0–1, the option bytes, and
+   a word of the app's vector window left unreadable by a power cut (*inferred*, §4.2; the stock installer has the
+   same exposure). **Recommendation: keep the hands** (§8).
 
 Side findings: **INFO alone starts the installer** (✓ in the code, never tried); the bootloader's MPU region 3 is
 the Device mapping under JOEBOX's patch RAM in D-013 (§5); a `BLACKBOX.bin` whose length is 29, 30 or 31 modulo 32
@@ -161,8 +163,18 @@ sector erases, bank 1 sectors 0–1 and bank 2 sector 7 byte for byte as before.
   the cave's size is not ≡ 5, 6 or 7 (mod 32) (37.4.1's release cave, 50,954 B, is ≡ 10). A build-time check on the
   image's length closes it without changing a byte; padding the image to a multiple of 32 B would too.
 - **A cut install.** Power lost before the first chunk is programmed: no app, the factory test pages. After it: the
-  vectors are there, so the bootloader jumps into a partial app. Both need hands, and hands always work: the
-  installer never erases the bootloader.
+  vectors are there, so the bootloader jumps into a partial app. Both need hands, and hands work as long as the
+  bootloader can read the app's vector window: the installer never erases the bootloader.
+- **A cut that hands cannot repair** (*inferred*). This chip corrects one flipped bit per 256-bit flash word and
+  bus-faults on two (`src/cpu.c`, seen on bank 2 in 3.2.s). The bootloader's scan of the window (`0x08000FD8`) runs
+  on every boot right after the pin reads, whatever they say, and reads from `0x08040000` up to the first word that is
+  not blank (✓: with both pins low the boot run still reads `0x08040000`, and all 32 words of a blank window). It
+  enables no BusFault, and every fault handler in the dump is a branch to itself (`0x08000A30`–`0x08000A36`). A power
+  cut during the erase of bank 1 sector 2 (the first of the 13: `HAL_FLASHEx_Erase`, `0x0800D7D8`, goes upward),
+  or while the window's first flash words are programmed (the first thing the program step writes), can leave a word
+  there that never reads cleanly. That unit hangs inside the bootloader at every power-on, BACK + INFO or not, and
+  only a debug probe on SWD or the STM32 ROM loader (BOOT0, the case opened) brings it back. Whether a cut really
+  leaves such a word, and how often, is not measured.
 
 ### 4.3 Bank 2, and what it means for the fork (a conflict to settle)
 
@@ -244,10 +256,11 @@ A design, not a fact. The app rewriting bank 1 itself, the way `b2load.c` writes
   of a second (*inferred*), far less than a 128 KB sector erase. A refresh is one register write and is allowed at
   any time with that window.
 - **Order, so that a cut leaves the benign state.** Erase sector 2 first (the vectors go: a cut from here on leaves
-  "no app" and the bootloader's test pages, not a crash loop into a half app), then sectors 3–7; program 3–7, then
-  sector 2 from `0x08040080` on, verify each against SDRAM with the data cache invalidated over flash (region 7 is
-  cacheable and the app runs with the D-cache on); **program the 128-byte window `0x08040000–0x0804007F` last**, verify,
-  lock bank 1, reset. The same rule as `b2load.c`'s header-last.
+  "no app" and the bootloader's test pages, not a crash loop into a half app; a cut during this erase itself, or
+  during the window's final program, is the probe case of §4.2, and no order avoids it), then sectors 3–7; program
+  3–7, then sector 2 from `0x08040080` on, verify each against SDRAM with the data cache invalidated over flash
+  (region 7 is cacheable and the app runs with the D-cache on); **program the 128-byte window
+  `0x08040000–0x0804007F` last**, verify, lock bank 1, reset. The same rule as `b2load.c`'s header-last.
 - **Only bank 1 sectors 2–7.** A hard check on every sector number and bank before each erase; never bank 1 sectors
   0–1, never bank 2 sector 7, never the option-byte registers (`FLASH_OPTKEYR` / `OPTCR`). Leave bank 2 alone: the
   card loader pairs it on the next boot.
@@ -260,19 +273,22 @@ What can go wrong, and what repairs it:
 | failure | state left | repaired by |
 |---|---|---|
 | power cut, watchdog reset or fault during the commit | bank 1 sectors 2–7 partly written; with the order above, no app (test pages) | **hands**: INFO (or BACK + INFO) at power-on with a good `BLACKBOX.bin` on the card |
+| power cut during the erase of sector 2, or while the window's flash words are programmed | a window word that never reads cleanly: the bootloader faults in its scan at every power-on, buttons or not (*inferred*, §4.2) | **nothing on the unit**: a debug probe on SWD, or the ROM loader with BOOT0 (the case opened) |
 | a good-looking wrong image | an app that crashes at every boot | **hands**, the same |
 | a bug that erases or writes bank 1 sector 0 or 1 | no bootloader: BACK + INFO no longer exists | **nothing on the unit**: a debug probe on SWD, or the STM32 ROM loader with BOOT0 (the case opened) |
 | a write to the option bytes (RDP, BOOT_ADD, SWAP_BANK, write protection) | the unit boots elsewhere or locks; RDP level 2 is permanent | **nothing**, or a probe |
 | an erase of bank 2 sector 7 | defaults instead of the factory trims, no crash | hands plus instruments: the bootloader's calibration (§3) |
 
-The stock installer has the same exposure in the first two rows, and a worse cut state: it writes the vectors first.
+The stock installer has the same exposure in the first three rows, and a worse cut state: it writes the vectors
+first.
 
 ## 8. Recommendation
 
 **Keep the hands.** No buttonless path exists through the stock bootloader, and the one we could build adds a failure
-with no repair on the unit (row 3 above) to save a two-finger hold at power-on. Hands are needed after a failed install
-either way. Build the updater only for a real unattended need (an automated bench), from §7, first on the bench unit
-with a known-good `BLACKBOX.bin` on the card. Cheaper and worth doing now (*design*): a build-time check that
+with no repair on the unit (a bug that reaches bank 1 sectors 0–1, §7) to save a two-finger hold at power-on. Hands
+are needed after a failed install either way, and a power cut at the wrong moment needs a probe whatever runs the
+install (§4.2). Build the updater only for a real unattended need (an automated bench), from §7, first on the bench
+unit with a known-good `BLACKBOX.bin` on the card. Cheaper and worth doing now (*design*): a build-time check that
 `BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), and correct the fork's wording on bank 2 once §9's
 check has settled §4.3.
 
@@ -285,6 +301,8 @@ check has settled §4.3.
   version. Leave by power cycle; do not step to the SD Card Test pages (they write `TESTDATA.BIN`) nor hold INFO on
   the Clock Test page (calibration).
 - INFO alone starting the installer: in the code, never tried.
+- Whether a power cut during a sector erase or a flash-word program leaves a word with two bad bits (§4.2): inferred
+  from `cpu.c`'s record of this chip, not measured.
 - A card read error ending in "Success!" (§4.2): the code run in the model with FatFs stubbed; never seen on a unit.
 - The option bytes (write protection of sectors 0–1, RDP, boot addresses, bank swap) are not in the dump; the dev
   build's peek does not reach the flash registers (`0x52002000`). Not read.
@@ -305,7 +323,8 @@ check has settled §4.3.
   state machine for five outcomes; `flashrun.py`, the real erase / program / verify functions with FatFs stubbed and
   every sector erase logged, 9 sizes and 64 residues. Their outputs: `truth.txt`, `ui.txt`, `flash.txt`,
   `residues.txt` there.
-- A second reader's review the same day led to §4.2's card read error and the tail's dependence on the image's bytes.
-  Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`): the program and verify steps with
-  chosen file bytes and card read failures, the verify's tail with the stale bytes `0xFF` or not and six read-failure
-  cases.
+- A second reader's review the same day led to §4.2's card read error and the tail's dependence on the image's bytes;
+  §4.2's cut that needs a probe. Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`): the
+  program and verify steps with chosen file bytes and card read failures, the verify's tail with the stale bytes
+  `0xFF` or not and six read-failure cases.
+- `heldrun.py` (output `heldrun.txt`): the boot run with both pins low and the words of the vector window it reads.
