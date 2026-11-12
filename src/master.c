@@ -128,7 +128,7 @@ int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, t
 #endif
 #define TAIL_BYTES  (PRISM_BYTES + 0x22000u + KIT_BYTES)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000) */
 _Static_assert(0xb100u + 0x1000u <= CORE_BYTES, "clipwin.c's bank (0x1000 at 0xb100) fits the core");
-_Static_assert(CORE_BYTES + TAIL_BYTES == 0x84900u + KIT_BYTES, "the reorder moves parts, it does not grow the block (x2: a boot-time SDRAM overflow hangs the unit)");
+_Static_assert(CORE_BYTES + PRISM_BYTES + 0x22000u == 0x84900u, "the reorder moves parts, it does not grow the release's block (x2: a boot-time SDRAM overflow hangs the unit); a dev build adds the kit's area only");
 
 /* which master page the knob screen shows, and whether it is showing one (backup SRAM, next to munchi's words) */
 struct master_ui {
