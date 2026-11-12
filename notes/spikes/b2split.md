@@ -8,12 +8,19 @@ answer is a go or no-go, with numbers, and a list of what a hand still has to wr
 ## Verdict: go, as a fork tool with a short declaration per module
 
 - **ChopShop** (`chop.c` + `chopmode.c`) moves by tool with its two files untouched. A declaration of 7 names and 2
-  values, and no C, frees **3,583 B** of bank 1, against about **4,004 B** for the hand split.
-- With one hand-written fallback of 25 lines of C (148 B, in `bench/`), it frees **3,957 B**, the hand split's figure
-  within about 1 %.
+  values, and no C, frees **3,427 B** of bank 1 in the image the fork would ship and check (a stub for every global,
+  which the suites call by name), and **3,583 B** with only the stubs bank 1 reaches. The hand split freed about
+  **4,004 B**.
+- With one hand-written fallback of 25 lines of C (148 B, in `bench/`), it frees 3,765 B, or **3,957 B** with only
+  the reached stubs: the hand split's figure within about 1 %.
 - A second module of another shape, **note repeat** (`repeat.c`: an audio-task tick every block, three stock call
-  sites, a UI button), moves whole with **two declared return values**. It frees **1,497 B** of its 1,733.
-- Both modules together, with no C written by hand: bank 1 goes from 1,067 B free to **6,054 B** free.
+  sites, a UI button), moves whole with **two declared return values**. It frees **1,497 B** of its 1,733, in either
+  stub mode.
+- Both modules together, with no C written by hand: bank 1 goes from 1,067 B free to **6,054 B** free (every global
+  stubbed).
+- One thing differs from JOEBOX 2 even with the payload present: before the meter's first block every stub takes its
+  fallback, so a project loaded that early skips `chop_header_post`'s body. Keeping two small functions (+128 B)
+  narrows that to the re-chop alone (see "The boot window").
 - Nothing is proven on a unit yet. The proofs here come from Unicorn and the linker (see "Not proven").
 
 ## What the tool does
@@ -59,7 +66,9 @@ The tool refuses to build, and says why, in these cases:
 - a variadic entry;
 - a bank-2 object that calls a moved function.
 
-`--verify` (run after `patch.py`) decodes bank 2 function by function and runs every stub with bank 2 live and blank.
+`--verify` (run after `patch.py`) decodes bank 2's code, only the ranges the ARM mapping symbols mark as code, and
+first proves that decoder on a `bl` and a literal it plants in a moved function. It then runs every stub three ways:
+bank 2 live, the boot window (bank 2 paired, the meter not up yet) and bank 2 blank.
 `--absent test_x.py` runs any suite with bank 2 blank. `--run ./check.sh` runs the full check split the same way.
 
 ## Numbers (bank 1 = `.cave`, 57,736 B; built on this box, arm-gnu 14.2)
@@ -79,6 +88,13 @@ The tool refuses to build, and says why, in these cases:
   constants plus strings.
 - The hand split was measured on another base (the fork's merge), so its 4,004 B is comparable within a few tens of
   bytes, not to the byte. `chop.o` is 3,362 B on both bases.
+- **Which stub mode ships: `all`, the tool's default.** The fork should ship the image its checks run on. The full
+  check ran on `all`. On a `reached` image test_chop stops at once (`KeyError: 'chop_beats'`: it calls internal
+  functions by name), while test_chopmode 39/39, test_theme 20/20 and `--verify` 28/28 pass there. `reached` is the
+  floor for the day those bytes are needed: 156 B less for ChopShop (the extra stubs and the float dispatcher). It
+  would need test_chop to reach the `__b2` names.
+- The commit messages of `cd7ab00` (53,190 B) and `3112e0f` (52,720 B and 52,852 B) carry figures from before
+  `3b7123a`'s dispatcher change. This table is the reference.
 
 What bank 1 still holds for ChopShop:
 
@@ -111,12 +127,13 @@ By tool, with nothing declared:
 - the three ChopShop and three note-repeat calls back into the cave;
 - the moved code's static helpers, strings and tables.
 
-Declared, because the tool cannot know them. A wrong declaration still links; it shows only with bank 2 absent, which
-`--absent` and `--verify` check.
+Declared, because the tool cannot know them. A wrong declaration still links; it shows only with bank 2 absent or
+before the meter is up, which `--absent` and `--verify` check.
 1. **Code that runs before bank 2 is checked.** `b2_live()` answers 0 until the meter's first audio block, so a stub
-   called while the app is being built silently takes its fallback. These are kept: `chop_register` (the param table),
-   `chop_defaults` (the store entry), and `chop_header_mode` (a WAV header read at project load must keep a ChopShop
-   pad a Slicer).
+   called while the app is being built, or while a project loads at boot, silently takes its fallback. These are
+   kept, because their fallback would lose stored state: `chop_register` (the param table), `chop_defaults` (the
+   store entry), and `chop_header_mode` (a WAV header read at project load must keep a ChopShop pad a Slicer; the
+   mode is stored). `chop_header_post`, from the same header read, is moved on purpose (see "The boot window").
 2. **Invariants that must hold with or without bank 2:** `chop_invariant` (the flag only on a Slicer).
 3. **A data patch that changes what stock's fallback means.** The Mode list has 7 entries whatever bank 2 does, so
    with bank 2 off stock would read position 4 as Granular. The fix is to keep `chop_set` and the two popup highlights
@@ -128,9 +145,8 @@ Declared, because the tool cannot know them. A wrong declaration still links; it
 
 The ChopShop declaration is 7 `KEEP` names and 2 fallbacks (`bench/splits/chopshop.py`); note repeat's is 2 fallbacks.
 The hand split was sized at about 800 lines and a new bank-2 table (blackbox#t-052, turn 3's estimate), plus suite
-edits. **When JOEBOX
-changes these files, the declaration fails loudly**: a `KEEP` name that is gone, or a new reached non-void entry, stops
-the build. A new boot-time or invariant function does not stop it.
+edits. **When JOEBOX changes these files, the declaration fails loudly**: a `KEEP` name that is gone, or a new reached
+non-void entry, stops the build. A new boot-time or invariant function does not stop it.
 
 ## Bank 2 absent
 
@@ -150,6 +166,46 @@ the build. A new boot-time or invariant function does not stop it.
 - **What a unit without the payload loses:** ChopShop's chops and rows (the mode still shows and stores), and note
   repeat (the button reads `---`). Today on JOEBOX 2 both work without bank 2.
 
+## The boot window (payload paired, meter not up)
+
+`b2_live()` answers "not yet" until the audio task's first wake sets the meter up (`cpu.c`), even with the payload
+present and paired. In that window every stub takes its fallback.
+
+- `--verify` runs every stub in that state too: bank 2 as built, the meter's magic cleared as `cpu_boot` leaves it.
+  On both.py all 21 stubs reach their fallback with no instruction run in bank 2. It then lists the 15 entries bank
+  1 reaches, each with the fallback it answers with.
+- The kept functions are those whose fallback would lose stored state: `chop_register`, `chop_defaults` and
+  `chop_header_mode`.
+- **One entry differs from JOEBOX 2 there: `chop_header_post`.** It is the closing post (site `0x0809DEF2`) of stock's
+  `0x1B` handler `FUN_0809D998`. The loader posts `0x1B` only for a file with `acid` or `smpl` metadata (the fork's
+  notes/re/x3-region-data-path.md). Under Unicorn, with the meter's magic cleared and `fw_app_post` and `fw_cell`
+  stubbed:
+  - JOEBOX 2 runs stock's post, then the body (`fw_cell`, which asks whether the pad is a ChopShop pad).
+  - The split runs stock's post only, with 0 instructions in bank 2. With the meter up it runs the body (24
+    instructions in bank 2).
+- **What a pad loaded in that window loses:**
+  - The re-chop of a ChopShop pad that has a Chop type. The pad keeps the slices it was loaded with.
+  - `chop_forget`. The chop state (`cj`, `cr` in the stretch bank) sits behind the scratch, which a boot does not
+    clear: `bank()` resets only their state, op and phase. So a tempo left from before a warm restart can survive to
+    that pad's first re-roll. JOEBOX 2 has the same exposure for a file with no metadata, which never reaches
+    `chop_header_post`.
+- **Decision in this spike's declaration: moved**, written down in `bench/splits/chopshop.py` (the full check ran on
+  it). Keeping `chop_header_post` alone would change nothing: its work is `chop_forget` and `chop_request`, both
+  moved, so in the window they are no-op stubs too.
+- **The option for the integration: `--keep chop_header_post,chop_forget`**, +128 B with every global stubbed
+  (`.cave` 53,370 B). It brings the forget back in the window; only the re-chop stays bank 2's.
+  - On that build: test_chop 66/66, test_chopmode 39/39, test_theme 20/20, test_clipsel 164/164, `--verify` 41/41.
+  - With bank 2 blank, test_chopmode gives 36/39 (the same three failures).
+  - In the boot window it runs the body in bank 1.
+  - The full check did not run on it: four other full checks were queued on the lock.
+  - Recommendation: take it.
+- Whether a boot's project load falls in the window is the unit's to say; Unicorn cannot. **Unit check** (with the
+  blackbox#t-053 recipe): power-cycle with a project that holds a ChopShop pad on Find or Random whose file has
+  `acid` or `smpl` metadata. Then compare that pad's slices after boot with JOEBOX 2's.
+- The other listed entries are reached from the screen, the pads or the audio task. `repeat_tick` runs on the audio
+  task, which sets the meter up before its first block, so it never meets the window. A screen or pad call made that
+  early acts as it would without bank 2, for that one call (stock's page, `---`).
+
 ## Proofs run
 
 - **The full check, on both modules split together** (`bench/splits/both.py`, ChopShop tool only, a stub for every
@@ -167,25 +223,39 @@ the build. A new boot-time or invariant function does not stop it.
   - Hand-fallback variant: test_chop 66/66, test_theme 20/20, test_chopmode 32/39. The 7 failures are the suite
     stubbing `chop_request` by name, while the moved `chop_set` now calls `chop_request__b2` inside bank 2. A scratch
     copy that also stubs `chop_request__b2` passes 39/39 (a one-line change to the test).
-  - Note repeat: test_repeat 22/22, test_bank2 23/23, test_groove 28/28.
+  - Note repeat: test_repeat 22/22, test_bank2 23/23, and test_duck 50/50. test_duck drives `repeat_tick` from
+    `duck_block` through its stub (1,702 calls of the bank-2 body, counted by a scratch hook). test_groove, cited
+    here before, runs no moved body.
   - test_solo 67/69 (it ran with note repeat in bank 2). Its own emulator loads no bank 2, so the division label reads
     `---` where it expects `1/16`.
 - **test_bank2 with ChopShop in bank 2: 22/23.** The failure is a false positive. Its scan steps two bytes at a time
   through bank 2 and read the second half of an `sdiv` in `chop_roll_text__b2` (`fb91 f6f5` at `0x08118522`) as a BL.
-  The tool's veneers first tripped the same scan (`ldr.w pc, …` ends in `0xF00k`) and now use `bx ip`. Decoding bank 2
-  one function at a time (`--verify`) finds no branch out of bank 2 and no literal into the cave.
+  The tool's veneers first tripped the same scan (`ldr.w pc, …` ends in `0xF00k`) and now use `bx ip`. On both.py the
+  flag is at `0x08118548`, the second half of `sdiv r6, r1, r5` at `0x08118546`.
+  - `--verify` decodes bank 2 as code, only what the mapping symbols mark `$t`, so no literal pool or switch table
+    is read as instructions. It finds no branch out of bank 2 and no literal into the cave.
+  - Until the fix pass, that branch check could not fail: the call's arguments sat inside a comment. Fixed, it fails
+    on the reviewer's planted `bl sel_ask_pad` at `chop_poll__b2` (`0x08118690`), as test_bank2 does, and
+    `--verify` exits 1.
+  - Every `--verify` run now plants a `bl` and a literal into the cave in a moved function, and checks that its scan
+    catches both, before it trusts the scan.
 - **Bank 2's bytes do not depend on the cave's layout.**
-  - Keeping one more function in bank 1 moves `sel_ask_pad`, `sel_take_pad` and `stretch_bank` by 0x38, and
-    `out/bank2.bin` stays byte for byte the same.
-  - A `RELEASE=1` link (a different cave) gives the same `bank2.bin` too (101,696 B).
+  - Keeping one more function in bank 1 (`--keep chop_forget`, ChopShop tool only, reached stubs) moves
+    `sel_ask_pad`, `sel_take_pad` and `stretch_bank` by 0x38. `out/bank2.bin` (101,280 B) stays byte for byte the
+    same. This is the proof.
+  - A `RELEASE=1` link of the same declaration also gives the same 101,280 B `bank2.bin`. It is a weak second
+    witness: it moves only `stretch_bank`, by 8 B.
   - So a bank-1-only change needs no new `BBEXTRA.BIN`. That is what test_bank2's rule protects.
+- **`--verify` totals:** both.py 74 pass, 0 fail (3 decode checks, 2 self-tests, 21 stubs × live, boot window and
+  blank, 6 veneers). chopshop.py (reached) 28/28, chopshop_hand.py (reached) 25/25, repeat.py 31/31.
 - **The veneers:** each lands on its cave function with `B2S_VEC` set (`--verify`).
 
 ## Findings to carry
 
 - **test_bank2.py's two-byte scan gives false positives on general code.** DSP code happened not to trip it; ChopShop
-  does, at the first `sdiv`. Before modules move for real, the scan should confirm each candidate by decoding from its
-  function's start, as `--verify` does. That is a change to upstream's rule test.
+  does, at the first `sdiv`. Before modules move for real, the scan should decode only what the mapping symbols mark
+  as code, and prove itself on a planted branch each run, as `--verify` does. That is a change to upstream's rule
+  test.
 - **Suites that stub an internal function by name miss the calls that stay in bank 2** (test_chopmode's
   `chop_request`).
 - **The pairing gate is per call.** Every call through a stub runs `b2_live()` (the magic check and the cached
@@ -217,13 +287,18 @@ the build. A new boot-time or invariant function does not stop it.
 - The hand split was not rebuilt here (its branch lives on dev37). The comparison stands on blackbox#t-052's figure.
 - The gate's cost in cycles on the core (its instruction count is above).
 - No full `./check.sh` ran on the hand-fallback variant or on note repeat alone. The one full check ran on both
-  modules together (Proofs, above).
+  modules together (Proofs, above), before the fix pass. The fix pass changed only `--verify` and comments: both.py
+  builds byte-identical after it (`cave.bin` and `bank2.bin`).
+- The `--keep chop_header_post,chop_forget` option had the ChopShop suites and `--verify`, not the full check.
+- The boot window on a unit: whether a project loaded at boot is read before the meter's first block. That decides
+  whether `chop_header_post`'s difference ever shows (the unit check is under "The boot window").
 
 ## How to run
 
 ```sh
 . /srv/dev/bin/bb-env
 python3 bench/b2split.py --decl bench/splits/chopshop.py [--stubs reached]   # or chopshop_hand.py, repeat.py, both.py
+python3 bench/b2split.py --decl bench/splits/chopshop.py --keep chop_header_post,chop_forget   # the boot-window option
 python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi master fault cave
 python3 bench/b2split.py --verify
 python3 bench/b2split.py --absent test_chopmode.py
