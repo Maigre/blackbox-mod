@@ -3,7 +3,8 @@
 (hub task blackbox#t-057); what it measured is in notes/spikes/b2split.md.
 
     python3 bench/b2split.py chop chopmode [--decl bench/splits/chopshop.py] [--stubs all|reached] [--run ./check.sh]
-    python3 bench/b2split.py --verify            after python3 patch.py <the full set>: bank 2 decoded, stubs live / blank
+    python3 bench/b2split.py --verify            after python3 patch.py <the full set>: bank 2 decoded as code (and
+                                                 the decoder's own self-test), stubs live / blank
     python3 bench/b2split.py --absent test_x.py  a suite with bank 2 blank in every emulator it makes
 
 runs ./build.sh as it is, with a stand-in for arm-none-eabi-gcc on the PATH that (1) records how each moved module is
@@ -545,17 +546,72 @@ def blank_bank2(e):
     e.meter_up()
 
 
+BRANCH = re.compile(r"(blx?|b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?|cbn?z)(?:\.w|\.n)?")
+
+
+def scan_bank2(b2, nm):
+    """Decode bank 2's code and only its code: the ranges the ARM mapping symbols mark $t, each up to the next mapping
+    symbol, so inline data ($d: literal pools, switch tables, the boot graphic) is never read as instructions. Each
+    instruction is named after the function symbol it falls in. (test_bank2.py's scan steps two bytes at a time over
+    everything and can read the second half of a 32-bit instruction as half a BL.)
+    Returns (branches that leave bank 2, literals that point into the cave, [(name, literal address)], names, bytes)."""
+    from bisect import bisect_right
+    from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
+    hi = B2_LO + len(b2)
+    maps, funcs = {}, []
+    for line in nm:
+        p = line.split()
+        if len(p) < 3 or not B2_LO <= int(p[0], 16) < hi:
+            continue
+        a, name = int(p[0], 16), p[-1]
+        mm = re.fullmatch(r"\$([tda])(\..*)?", name)
+        if mm:
+            maps[a] = mm.group(1)
+        elif p[-2] in "TtWw" and not name.startswith("splash_"):
+            funcs.append((a & ~1, name))
+    funcs.sort()
+    starts = [a for a, _ in funcs]
+    md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+    md.skipdata = True                  # a byte pair capstone cannot decode does not end the range
+    out_br, cave_lit, lits, names, nbytes = [], [], [], set(), 0
+    edges = sorted(maps) + [hi]
+    for k, a in enumerate(edges[:-1]):
+        if maps[a] != "t":
+            continue
+        end = edges[k + 1]
+        nbytes += end - a
+        for ins in md.disasm(b2[a - B2_LO:end - B2_LO], a):
+            i = bisect_right(starts, ins.address) - 1
+            name = funcs[i][1] if i >= 0 else "?"
+            names.add(name)
+            mt = re.search(r"#(0x[0-9a-f]+)$", ins.op_str)
+            if BRANCH.fullmatch(ins.mnemonic) and mt:
+                t = int(mt.group(1), 16)
+                if 0x08000000 <= t < 0x08200000 and not B2_LO <= t < hi:
+                    out_br.append((name, hex(ins.address), ins.mnemonic, hex(t)))
+            if ins.mnemonic.startswith("ldr") and "[pc" in ins.op_str:
+                imm = re.search(r"#(-?0x[0-9a-f]+|-?\d+)\]", ins.op_str)
+                la = ((ins.address + 4) & ~3) + (int(imm.group(1), 0) if imm else 0)
+                if B2_LO <= la < hi - 3:
+                    lits.append((name, la))
+                    v = struct.unpack_from("<I", b2, la - B2_LO)[0]
+                    if CAVE_LO <= (v & ~1) < CAVE_HI:
+                        cave_lit.append((name, hex(la), hex(v)))
+    return out_br, cave_lit, lits, names, nbytes
+
+
 def verify():
-    """After `python3 patch.py <full set>`: (1) no instruction in bank 2 branches out of it, decoded per function
-    symbol (test_bank2.py's scan steps two bytes at a time and can read the second half of a 32-bit instruction as half
-    a BL); no literal in bank 2 points into the cave; (2) every stub reaches its body with bank 2 live, and its
-    fallback without one bank-2 instruction with bank 2 blank; every veneer lands on its cave function."""
+    """After `python3 patch.py <full set>`: (1) no instruction in bank 2 branches out of it, decoded as code only (the
+    mapping symbols); no literal in bank 2 points into the cave; and the scan catches a bl and a literal planted in a
+    moved function; (2) every stub reaches its body with bank 2 live, and its fallback without one bank-2
+    instruction with bank 2 blank; every veneer lands on its cave function."""
     sys.path.insert(0, ROOT)
     os.chdir(ROOT)
-    from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
     from unicorn import UC_HOOK_CODE
     from unicorn.arm_const import UC_ARM_REG_R0
     from emu import Emu
+    sys.path.insert(0, os.path.join(ROOT, "patches"))
+    import thumb
     r = json.load(open(os.path.join(OUT, "report.json")))
     fails = []
 
@@ -563,48 +619,44 @@ def verify():
         print(("PASS " if ok else "FAIL ") + label + ("" if ok else f"  [{detail}]"))
         ok or fails.append(label)
 
-    # (1) bank 2, function by function
-    nm = run(["arm-none-eabi-nm", "-S", "-n", "out/cave.elf"]).splitlines()
+    # (1) bank 2, as code
+    nm = run(["arm-none-eabi-nm", "--special-syms", "-S", "-n", "out/cave.elf"]).splitlines()
+    sym = {l.split()[-1]: int(l.split()[0], 16) for l in nm if len(l.split()) >= 3}
     b2 = open("out/bank2.bin", "rb").read()
-    md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
-    out_br, cave_lit, funcs = [], [], 0
-    for line in nm:
-        p = line.split()
-        if len(p) != 4 or p[2] not in "Tt":
-            continue
-        a, size, name = int(p[0], 16) & ~1, int(p[1], 16), p[3]
-        if not B2_LO <= a < B2_LO + len(b2) or name.startswith("splash_"):
-            continue
-        funcs += 1
-        code = b2[a - B2_LO:a - B2_LO + size]
-        for ins in md.disasm(code, a):
-            if ins.mnemonic in ("bl", "blx", "b", "b.w") and ins.op_str.startswith("#"):
-                t = int(ins.op_str[1:], 16)
-                if 0x08000000 <= t < 0x08200000 and not B2_LO <= t < B2_LO + len(b2):   # (outside the flash:
-                    out_br.append                                                         # inline data, as test_bank2)((name, hex(ins.address), hex(t)))
-            if ins.mnemonic.startswith("ldr") and "[pc" in ins.op_str:
-                imm = re.search(r"#(-?0x[0-9a-f]+|-?\d+)\]", ins.op_str)
-                la = ((ins.address + 4) & ~3) + (int(imm.group(1), 0) if imm else 0)
-                if B2_LO <= la < B2_LO + len(b2) - 3:
-                    v = struct.unpack_from("<I", b2, la - B2_LO)[0]
-                    if CAVE_LO <= (v & ~1) < CAVE_HI:
-                        cave_lit.append((name, hex(la), hex(v)))
-    check(f"bank 2, {funcs} functions decoded one by one: no branch leaves bank 2", not out_br, out_br[:8])
-    check("... and no literal they load points into the cave", not cave_lit, cave_lit[:8])
+    out_br, cave_lit, lits, names, nbytes = scan_bank2(b2, nm)
+    check(f"bank 2 decoded as code ({nbytes} B over {len(names)} functions): no branch leaves bank 2", not out_br,
+          out_br[:8])
+    check("... and no literal it loads points into the cave", not cave_lit, cave_lit[:8])
+    missing = [n for n in r["moved"] if n + "__b2" not in names]
+    check(f"... and the {len(r['moved'])} moved bodies are all among what it decoded", not missing, missing[:8])
+    # the scan's own proof: a bl into the cave planted at a moved body, and a literal of a moved body pointed there
+    at, tgt = sym[r["entries"][0] + "__b2"] & ~1, sym["b2_live"] & ~1
+    m = bytearray(b2)
+    m[at - B2_LO:at - B2_LO + 4] = thumb.bl(at, tgt)
+    got = scan_bank2(bytes(m), nm)[0]
+    check(f"self-test: a bl to b2_live (the cave) planted at {r['entries'][0]}__b2 {at:#x} is caught",
+          any(x[1] == hex(at) and x[3] == hex(tgt) for x in got), got[:4])
+    lit = next(((n, la) for n, la in lits if n.endswith("__b2")), None)
+    if lit:
+        m = bytearray(b2)
+        m[lit[1] - B2_LO:lit[1] - B2_LO + 4] = struct.pack("<I", tgt | 1)
+        got = scan_bank2(bytes(m), nm)[1]
+        check(f"self-test: a literal of {lit[0]} at {lit[1]:#x} pointed at b2_live is caught",
+              any(x[1] == hex(lit[1]) for x in got), got[:4])
 
     # (2) the stubs, live and blank
-    for blank in (False, True):
+    for state in ("live", "blank"):
         for n in r["entries"]:
             e = Emu(IMAGE, "out/cave.elf")
             e.uc.mem_map(0x38800000, 0x1000)
             e.uc.mem_map(0x58024000, 0x1000)
-            if blank:
+            if state == "blank":
                 blank_bank2(e)
             spec = r["fallbacks"][n][0]
             seen = {"body": 0, "fb": 0, "b2": 0}
             e.uc.hook_add(UC_HOOK_CODE, lambda *_: seen.__setitem__("b2", seen["b2"] + 1), begin=B2_LO, end=B2_LO + 0xE0000)
             body = e.sym[n + "__b2"] & ~1
-            if not blank:
+            if state != "blank":
                 e.stub(body, lambda: seen.__setitem__("body", 1), value=0x5A5A)
             if spec.startswith("addr:"):
                 e.stub(int(spec[5:], 16), lambda: seen.__setitem__("fb", 1), value=0x6B6B)
@@ -612,7 +664,7 @@ def verify():
                 e.stub(e.sym[spec[2:]] & ~1, lambda: seen.__setitem__("fb", 1), value=0x6B6B)
             e.call(n, 0x24070000, 0x24070100, 0, 0, count=20_000_000)
             r0 = e.uc.reg_read(UC_ARM_REG_R0)
-            if not blank:
+            if state == "live":
                 check(f"live  {n}: the body in bank 2, and B2S_VEC set", seen["body"] == 1 and seen["fb"] == 0
                       and e.r32(VEC_RAM) & 0xFFFFFFFF == e.sym["b2s_vec"], seen)
             else:
@@ -624,7 +676,8 @@ def verify():
                     ok = e.cstr(r0) == spec[4:]
                 else:
                     ok = True
-                check(f"blank {n}: {spec}, no instruction run in bank 2", ok and seen["b2"] == 0, (seen, hex(r0)))
+                ok = ok and seen["b2"] == 0 and seen["body"] == 0
+                check(f"blank {n}: {spec}, no instruction run in bank 2", ok, (seen, hex(r0)))
     e = Emu(IMAGE, "out/cave.elf")
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
