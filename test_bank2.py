@@ -47,7 +47,8 @@ for line in subprocess.run(["arm-none-eabi-nm", "-n", "out/cave.elf"], capture_o
     p = line.split()
     if len(p) >= 3 and p[-2] in "TtWw":
         funcs[int(p[0], 16) & ~1] = p[-1]
-        funcs_all[p[-1]] = int(p[0], 16) & ~1
+        if p[-2] in "TW" or p[-1] not in funcs_all:   # a name also local somewhere (munchi_dsp.cpp's own memset in bank 2): the global
+            funcs_all[p[-1]] = int(p[0], 16) & ~1
 
 # --- 1. the build links the payload that is physically on the unit
 if NEW:
@@ -222,10 +223,10 @@ for name in os.path.basename(os.path.dirname(IMAGE)).split("+"):
 check(f"no patched call site or vtable entry lands in bank 2 ({len(entries)} of them, all in the firmware or the cave)",
       entries and not [a for a, t in entries.items() if B2 <= t < B2 + 0xE0000],
       {hex(a): funcs.get(t, hex(t)) for a, t in entries.items() if B2 <= t < B2 + 0xE0000})
-if "munchi_block" in funcs_all:                                     # MUNCHI=0 leaves the engine out
+if "munchi_ready" in funcs_all:                                     # MUNCHI=0 leaves the engine out (JOEBOX 2: munchi_block is munchi_run)
     engine = [n for n, a in funcs_all.items() if "granularDelay" in n or "Reverb" in n or "SimpleCompressor" in n
-              or n in ("munchi_ready", "munchi_block")]
-    check(f"Munchi's engine is in bank 2: munchi_ready, munchi_block and TEMPO's classes ({len(engine)} functions)",
+              or n in ("munchi_ready", "munchi_run")]
+    check(f"Munchi's engine is in bank 2: munchi_ready, munchi_run and TEMPO's classes ({len(engine)} functions)",
           all(B2 <= funcs_all[n] < B2 + len(deployed) for n in engine), [n for n in engine if not B2 <= funcs_all[n] < B2 + len(deployed)])
     hooks = ("munchi_register", "munchi_defaults_first", "munchi_defaults_last", "munchi_process", "munchi_list", "fx_screen_msg")
     check("...and its glue in the cave: every hook, and the memset the cave's code calls",
@@ -331,12 +332,12 @@ check(f"bank 2 off + Confetti selected: the lines are cleared ONCE (by the slot,
 check("...and the stock delay runs every block in its place after that", all(st == 1 for _, st, _ in per_block[k:]) and
       all(st == 0 for _, st, _ in per_block[:k]), per_block)
 # Munchi's engine is up there too since it moved out of the cave: the same rule, the same once
-if "munchi_block" in funcs_all:
+if "munchi_ready" in funcs_all:
     e2.uc.mem_write(ARR, struct.pack("<HHI", 0x197, 0, 1))             # Type Munchi
     e2.uc.mem_write(APPFX + 10, struct.pack("<H", 1))
     e2.w32(0x38800B14, (0x4D32 << 16) | 1)                             # ... and Munchi ran last, with bank 2 still good
     entered = []
-    for f in ("munchi_ready", "munchi_block"):
+    for f in ("munchi_ready", "munchi_run"):
         e2.uc.hook_add(UC_HOOK_CODE, lambda *_, f=f: entered.append(f), begin=e2.sym[f] & ~1, end=e2.sym[f] & ~1)
     per_block = []
     for _ in range(24):

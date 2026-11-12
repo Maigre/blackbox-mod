@@ -216,11 +216,11 @@ e.uc.mem_write(B2, bytes(16))                          # the header gone: no pay
 e.meter_up()                                           # a boot without it (b2_live keeps its verdict for the boot)
 reg.clear()
 e.call("munchi_register", 0x24001000, 0x197, 0, 0)
-check("no bank 2: the Type list reads Delay / --- / Motion / Relapse / --- (Munchi and Confetti are up there)",
-      reg[0] == ("list", 0x197, "Type:", ["Delay", "---", "Motion", "Relapse", "---"]), reg[:1])
+check("no bank 2: the Type list reads Delay / --- / --- / --- / --- (Munchi, Motion, Relapse and Confetti are all up there "
+      "since JOEBOX 2: 3.3.o, 3.3.y)", reg[0] == ("list", 0x197, "Type:", ["Delay", "---", "---", "---", "---"]), reg[:1])
 entered = [0]
 hooks = [e.uc.hook_add(UC_HOOK_CODE, lambda *_: entered.__setitem__(0, entered[0] + 1), begin=e.sym[f] & ~1, end=e.sym[f] & ~1)
-         for f in ("munchi_ready", "munchi_block")]
+         for f in ("munchi_ready", "munchi_run")]
 store(type=1, random=0)
 seen = []
 for _ in range(3):
@@ -230,12 +230,14 @@ check("no bank 2, Type Munchi: the stock delay runs every block, its lines untou
 check("  ... and nothing of the engine is entered", entered[0] == 0, entered[0])
 check("  ... and the slot adds nothing of its own (the bus is what stock left)", max(abs(v) for v in out[0] + out[1]) == 0)
 e.w32(MODE, (0x4D32 << 16) | 1)                         # Munchi ran last: a new image, its BBEXTRA.BIN not written yet
-seen = []
-for _ in range(3):
+per_block = []
+for _ in range(24):
     block([(0.5, 0.5)] * N)
-    seen.append(list(calls))
-check("no bank 2 after Munchi ran: the three lines are cleared ONCE, then stock alone",
-      seen == [[("clear", 0x30), ("clear", 0x4C), ("clear", 0x68), "stock"], ["stock"], ["stock"]], seen)
+    per_block.append((list(calls), clearing()))
+k = next((i for i, (_, c) in enumerate(per_block) if not c), len(per_block))
+check(f"no bank 2 after Munchi ran: the slot clears the three lines ONCE, over {k} silent blocks (3.3.y), then stock alone",
+      10 <= k <= 20 and all(c == [] for c, _ in per_block[:k]) and all(c == ["stock"] and not cl for c, cl in per_block[k:]),
+      per_block)
 for h in hooks:
     e.uc.hook_del(h)
 e.uc.mem_write(B2, b2_head)
