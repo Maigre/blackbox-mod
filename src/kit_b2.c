@@ -149,6 +149,67 @@ static void mbx(volatile struct mbx *x)
     x->done = seq;
 }
 
+/* ---- the long peek and the long poke (usbdev.c's peek 0xc0 / 0x50 with wLength over 64, its poke 0x40 / 0x54): one
+   control transfer of up to 4 096 bytes, a 64-byte packet at a time, each next one moved from the controller's
+   interrupt the moment the last has gone (from the poll it would be one packet a block, 24 KB/s). usbdev.c checks the
+   range (the peek's regions; the poke's RAMs) and b2_live(), sends the peek's first 64 bytes itself, and calls in here
+   only while its flag in DAINTMSK is up; every reset clears that register, so nothing up here runs in a boot that did
+   not start a transfer. These touch the controller's registers and nothing else. ---- */
+#define USB         0x40040000u
+#define USBREG(o)   (*(volatile uint32_t *)(USB + (o)))
+#define GINTMSK     USBREG(0x018)
+#define DIEPMSK     USBREG(0x810)
+#define DAINTMSK    USBREG(0x81c)
+#define DIEPCTL0    USBREG(0x900)
+#define DIEPINT0    USBREG(0x908)
+#define DIEPTSIZ0   USBREG(0x910)
+#define FIFO0       USBREG(0x1000)
+#define EPENA       (1u << 31)
+#define CNAK        (1u << 26)
+#define XFRC        (1u << 0)
+#define IEPINT      (1u << 18)
+#define KIT_IN      (1u << 0)                      /* DAINTMSK: endpoint 0 IN's interrupt - a long peek runs */
+#define KIT_OUT     (1u << 16)                     /* DAINTMSK: endpoint 0 OUT's, never let through - a long poke runs */
+struct kit_long {
+    uint32_t at, end;                              /* the bytes still to move: [at, end) */
+};
+#define LONG ((volatile struct kit_long *)0x388006b8u)   /* backup SRAM, behind usbdev.c's usbdiag, before rotate.c */
+
+/* usbdev.c's request(), the poll: the rest of a long transfer */
+void kit_long(uint32_t at, uint32_t end, unsigned out)
+{
+    LONG->at = at;
+    LONG->end = end;
+    if (out) {
+        DAINTMSK |= KIT_OUT;
+        return;
+    }
+    DIEPINT0 = XFRC;                               /* nothing earlier counts: the first packet's "sent" is the next */
+    DIEPMSK |= XFRC;
+    GINTMSK |= IEPINT;
+    DAINTMSK |= KIT_IN;
+}
+
+/* usbaud_isr, a long peek running: its next packet once the last has gone, or the end */
+void kit_usb_in(void)
+{
+    if (!(DIEPINT0 & XFRC))
+        return;
+    DIEPINT0 = XFRC;
+    uint32_t at = LONG->at, n = LONG->end - at;
+    if (!n) {
+        DAINTMSK &= ~KIT_IN;                       /* endpoint 0 is the poll's again */
+        return;
+    }
+    if (n > 64u)
+        n = 64u;
+    LONG->at = at + n;
+    DIEPTSIZ0 = (1u << 19) | n;
+    DIEPCTL0 |= EPENA | CNAK;
+    for (const volatile uint32_t *p = (const volatile uint32_t *)at; n; n -= 4u)
+        FIFO0 = *p++;                              /* a word at a time, as the peek reads: the LTDC's registers want it */
+}
+
 /* ---- the jobs ---- */
 
 typedef int (*job_fn)(volatile struct kit_box *b);

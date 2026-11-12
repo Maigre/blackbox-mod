@@ -41,12 +41,24 @@
  *
  * DEBUG (3.1.N; compiled OUT of a public build, PUBLIC_BUILD - see release.h): two vendor requests on endpoint 0 let the computer read memory and
  * write a word (peek 0xc0 / 0x50, poke 0x40 / 0x51 + 0x52), so registers and counters can be read on the running unit.
+ * With the bench kit and this build's bank 2 live, the peek also reads up to 4 096 bytes a request: the bench kit's
+ * (kit_b2.c moves its packets), for bench/bbshot.py.
  */
 #include <stdint.h>
 
 void bkp_enable(void);           /* od.c */
 uint8_t *master_block(void);     /* master.c: the SDRAM block taken at boot, or 0 */
-void kit_poll(unsigned task);    /* kit.c: the bench kit (dev builds) */
+#ifndef PUBLIC_BUILD
+/* The bench kit (dev builds; kit.c, kit_b2.c): its jobs from this task, and the long peek and poke, whose packets bank 2
+   moves once b2_live() has said yes. Their flags are DAINTMSK bits, which every reset clears: endpoint 0 IN's
+   interrupt (on while a long peek runs); endpoint 0 OUT's is kept for the long poke. */
+int b2_live(void);               /* cpu.c */
+void kit_poll(unsigned task);    /* kit.c */
+void kit_long(uint32_t at, uint32_t end, unsigned out);   /* kit_b2.c: a long transfer's rest, [at, end) */
+void kit_usb_in(void);           /* kit_b2.c: the interrupt, a long peek running */
+#define KIT_IN  (1u << 0)
+#define KIT_OUT (1u << 16)
+#endif
 
 #define REG(a) (*(volatile uint32_t *)(a))
 
@@ -441,6 +453,10 @@ void usbaud_isr(void)
     S->irqs++;
     if (ints & RXFLVL)
         receive();
+#ifndef PUBLIC_BUILD
+    if (DAINTMSK & KIT_IN)                                   /* a long peek runs: its next packet (bank 2, kit_b2.c) */
+        kit_usb_in();
+#endif
     if (ints & IISOIXFR) {                                   /* armed for the wrong frame, or the host skipped one */
         GINTSTS = IISOIXFR;
         S->missed++;
@@ -556,6 +572,7 @@ static void request(void)
 
     S->more_left = 0;
 #ifndef PUBLIC_BUILD
+    DAINTMSK &= ~(KIT_IN | KIT_OUT);                         /* a long peek or poke the computer gave up on ends here */
     /* F-i: a reply the computer gave up waiting for (its timeout) can still be queued in endpoint 0's FIFO; this
        request's reply would go behind it, and every reply after be the request before's. A setup starts afresh. */
     if (DIEPCTL0 & EPENA)
@@ -599,6 +616,11 @@ static void request(void)
             __builtin_memcpy(buf + len, &w, 4);                   /* its bytes in order, low first: one store */
         }
         ok = len > 0;                                        /* nothing readable there: stalled */
+        if (want > 64u) {                                    /* the long peek: these 64 first, the rest from the interrupt; */
+            ok = len == 64u && want <= 4096u && inside(a + want - 4u, 0) && b2_live();   /* or a stall, not a full */
+            if (ok)                                          /* packet that would leave the computer waiting for more */
+                kit_long(a + 64u, a + want, 0);
+        }
     } else if (type == 0x40 && (req == 0x51 || req == 0x52)) {   /* DEBUG poke: 0x51 sets the address, 0x52 writes a word */
         uint32_t v = lo | hi << 8 | (uint32_t)S->setup[4] << 16 | (uint32_t)S->setup[5] << 24;
         if (req == 0x51)
