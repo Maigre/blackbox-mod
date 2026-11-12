@@ -10,6 +10,16 @@
 # compile-and-link gives them random temporary names.
 set -e
 cd "$(dirname "$0")"
+
+# Modules moved to bank 2 BY TOOL (bench/b2split.py, fork D-047): their sources stay exactly as JOEBOX wrote them, and a
+# declaration in bench/splits/ says what each stub falls back to while bank 2 is not live. The build runs once, through
+# the tool: it stands in for the final link (B2SPLIT_REAL_GCC is set only inside it, so this does not loop).
+# B2SPLIT= ./build.sh builds without the split (note repeat back in bank 1), the way 37.5.0 shipped.
+B2SPLIT_DECL=${B2SPLIT-bench/splits/repeat.py}
+if [ -n "$B2SPLIT_DECL" ] && [ -z "${B2SPLIT_REAL_GCC:-}" ]; then
+  exec python3 bench/b2split.py --decl "$B2SPLIT_DECL"
+fi
+[ -n "${B2SPLIT_REAL_GCC:-}" ] || rm -rf out/b2split   # an unsplit build leaves no split report for check.sh to verify
 mkdir -p out out/obj
 
 # The files that live in bank 2. Leaf DSP only (and clipwin_b2's Clip Window maths, D-018): nothing the engine reaches before bank 2 has been checked, and

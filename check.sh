@@ -6,6 +6,10 @@ python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi
 PY=.venv/bin/python
 [ -x "$PY" ] || PY=python3               # needs unicorn, capstone and numpy
 [ -f host/libdsp.dylib ] || sh host/build.sh     # the host build of the DSP (clang, or CC / cc: host/build.sh), which several suites hold the firmware's against
+# The split's own proof (bench/b2split.py, D-047): bank 2 holds no branch and no pointer into the cave, and every stub
+# runs in the boot window and with bank 2 blank. A red here fails the check like a suite.
+split_bad=0
+if [ -f out/b2split/report.json ]; then "$PY" bench/b2split.py --verify > out/b2split.verify.log 2>&1 || split_bad=1; fi
 
 # One by one the suites take about an hour of CPU, over an unattended turn's budget: they run in a pool as wide as the
 # box (CHECK_JOBS to change it). The fork's runner (bench/suites.py) queues the longest first and runs test_clipwin.py
@@ -31,5 +35,6 @@ for t in test_*.py; do
     grep -v '^PASS' "out/$t.log" | head -20
   fi
 done
+[ "$split_bad" = 0 ] || { bad=$((bad + 1)); echo "FAILED bench/b2split.py --verify"; tail -20 out/b2split.verify.log; }
 echo "$total suites, $bad failed"
 [ "$bad" -eq 0 ]                         # the exit status says it too, for scripts and hooks

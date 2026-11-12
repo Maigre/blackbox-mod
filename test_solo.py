@@ -59,6 +59,21 @@ def stub(addr, fn):
 STUBS = {}
 
 
+B2_PAYLOAD = open("out/bank2.bin", "rb").read()
+
+
+def bank2(live):
+    """Note repeat lives in bank 2 since D-047 (bench/b2split.py): its bank-1 stubs ask b2_live() and, without it, give
+    the declared fallback (bench/splits/repeat.py). Blank = erased flash, and b2_live() never says yes in this harness
+    (no load meter); live = the payload this build linked, with b2_live() answering yes, so the stub runs the body up
+    there. Whether that payload pairs with the image is test_bank2's question, not this suite's."""
+    uc.mem_write(0x08100000, B2_PAYLOAD if live else b"\xff" * len(B2_PAYLOAD))
+    if live:
+        stub(SYM["b2_live"] & ~1, lambda: ret(1))
+    else:
+        STUBS.pop(SYM["b2_live"] & ~1, None)
+
+
 def mirror():
     """What the app's msg 0x44 handler does: muted flag into the pad record."""
     m = uc.reg_read(UC_ARM_REG_R1)
@@ -296,10 +311,16 @@ def ids():
 
 
 check("the column stepper has three positions", IMG[0x080B4704 - BASE:0x080B4706 - BASE] == bytes.fromhex("0321"))
+bank2(False)
 c = r6_call(2)
-check("knob position 2: buttons read MUTE, SOLO, RPT and the repeat division (1/16), top to bottom", [x[2] for x in c if x[0] == "label"] == ["MUTE", "SOLO", "RPT", "1/16"] and [x[1] for x in c if x[0] == "label"] == list(ROWS), c)
+check("knob position 2: buttons read MUTE, SOLO, RPT and the repeat division, top to bottom; bank 2 blank: the division reads --- (the split's declared fallback)", [x[2] for x in c if x[0] == "label"] == ["MUTE", "SOLO", "RPT", "---"] and [x[1] for x in c if x[0] == "label"] == list(ROWS), c)
 check("...with our ids (RPT 0x1f3, division 0x1f4), the slider hidden and the button panel shown", ids() == [0x1F1, 0x1F2, 0x1F3, 0x1F4] and [x for x in c if x[0] == "hide"] == [("hide", SLIDER, 1), ("hide", BUTTONS, 0)], (ids(), c))
 check("...and the position recorded as shown", rd32(PADS + 0x2B78) == 2)
+bank2(True)
+r6_call(0)
+cl = r6_call(2)
+bank2(False)
+check("...bank 2 live: the same four rows, the division's name (1/16) from note repeat's body in bank 2", [x[2] for x in cl if x[0] == "label"] == ["MUTE", "SOLO", "RPT", "1/16"] and [x[1] for x in cl if x[0] == "label"] == list(ROWS) and rd32(PADS + 0x2B78) == 2, cl)
 c = r6_call(1)
 check("position 1: the clipboard buttons are back (CLR, PSTE, COPY, CUT with the stock ids)", [x[2] for x in c if x[0] == "label"] == ["CLR", "PSTE", "COPY", "CUT"] and ids() == [0x25, 0x2A, 0x29, 0x28], (c, ids()))
 c = r6_call(0)
@@ -350,7 +371,11 @@ check("the press itself (before the click) is swallowed without acting", r == 0 
 r, c = button(0x1F3)
 check("RPT (was a blank button) is handled here and posts nothing to the app", r == 0 and c == [])
 r, c = button(0x1F4)
-check("the division button (0x1f4): handled here, its label rewritten (no SDRAM block in this harness: still 1/16)", r == 0 and c == [("label", 0x34, "1/16")], (r, c))
+check("the division button (0x1f4): handled here, its label rewritten; bank 2 blank: --- (the declared fallback)", r == 0 and c == [("label", 0x34, "---")], (r, c))
+bank2(True)
+r, c = button(0x1F4)
+bank2(False)
+check("...bank 2 live: the division's name (no SDRAM block in this harness: still 1/16)", r == 0 and c == [("label", 0x34, "1/16")], (r, c))
 r, c = button(0x28)
 check("clipboard buttons go to the stock handler untouched", c == [("stock_child",)] and r == 1, (r, c))
 
