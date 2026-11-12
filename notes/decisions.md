@@ -146,6 +146,10 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   and `chop_forget` stay in bank 1 (`--keep`, +128 B): before the meter's first audio block every stub takes its
   fallback, and a project loaded that early would skip part of ChopShop's header handling. Until then the hand
   split stands. Not on a unit yet: the dispatcher, the patch-RAM word, the gate's cost (38 instructions a call).
+  **On the default build since hub #t-061** (12/11, on 37.5.0): `./build.sh` moves note repeat, dev and
+  `RELEASE=1` (`B2SPLIT=` builds without), and `./check.sh` fails on the tool's `--verify`. Bank 1 free: dev 287 ->
+  1,784 B, release 915 -> 2,412 B; bank 2 +1,788 B in both. `test_repeat`'s idle block, called through the stub: 530
+  -> 570 instructions (~0.041 % -> ~0.044 %); the unit's figure is the bench step's.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving
