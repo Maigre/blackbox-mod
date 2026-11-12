@@ -16,6 +16,7 @@
  */
 #include <stdint.h>
 #include "b2.h"
+#include "b2safe.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -125,7 +126,8 @@ static void start(void)
     M->nom = 0;
     M->win_start = DWT_CYCCNT;   /* so the first report's mean is a real elapsed time, not the raw counter */
     M->late = 0;
-    M->b2chk = 0;
+    M->b2chk = b2_held() ? B2_HELD | B2_LOOKED | B2_UNPAIRED : 0;   /* b2safe.c: held off after crashed boots - no
+                                                                        scan, no card loader, "!held" on Tools */
     M->n = M->peak = M->wakes = M->win_n = 0;
     M->magic = MAGIC;
 }
@@ -149,7 +151,10 @@ static uint8_t b2_checked(void);
  * "34/71%", "34/71%+3", "--%", or nothing before the first second - and a leading "!" while flash bank 2 is NOT the
  * payload this image was built with, so Prism, Confetti and the per-pad insert are switched off. It goes here
  * because this label is redrawn on every entry to Tools; the version text beside it is set once when the screen is
- * built (3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 13 bytes.
+ * built (3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 18 bytes: since
+ * t-059 the "!" reads "!held " while bank 2 is held off after crashed boots (b2safe.c), "!held 34/71%+3".
+ * Not in a USB_DIAG build: that label is the USB line, and five more characters in front could push it off a label
+ * whose width has not been seen, so a held unit shows "!" there as an unpaired one does.
  */
 #ifdef USB_DIAG
 char *usbdev_diag_text(char *p);             /* usbdev.c: "U3r2c1 +0.12%" */
@@ -164,8 +169,14 @@ static void compose(char *buf)
     usbdev_diag_text(p);         /* the USB diagnostic build shows this on TOOLS instead of the load */
     return;
 #endif
-    if (M->magic == MAGIC && b2_checked() != B2_PAIRED)
-        *p++ = '!';
+    if (M->magic == MAGIC && b2_checked() != B2_PAIRED) {
+        if (M->b2chk & B2_HELD) {        /* b2safe.c: off because it crashed the unit three boots in a row */
+            static const char held[8] __attribute__((aligned(4))) = "!held ";
+            __builtin_memcpy(p, held, 6);    /* p is buf, on the stack: whole aligned words, no unaligned store */
+            p += 6;
+        } else
+            *p++ = '!';
+    }
     if (M->magic == MAGIC && M->status == STATUS_OK) {
         p = put_uint(p, (M->avg_shown + 5u) / 10u);
         *p++ = '/';
@@ -242,6 +253,8 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
         if (M->n == 0)
             M->status = STATUS_NO_CLOCK;
         M->wakes = 0;
+        b2_crash_uptime();       /* b2safe.c: a boot that has run 32.8 s clears the crash count (here, not in the
+                                    report above, so that it happens with the cycle counter dead too) */
     }
 #ifdef CPU_PROF
     prof_block_start();
@@ -411,8 +424,9 @@ int b2_present(void)
 {
     bkp_enable();
     uint32_t mark = *B2_MARK;
-    if (mark == B2_MARK_SCANNING || mark == B2_MARK_NAMING || mark == B2_MARK_CLAIMING)
-        return 0;                /* a read of bank 2 never came back (or one is under way): do not add another */
+    if (mark == B2_MARK_SCANNING || mark == B2_MARK_NAMING || mark == B2_MARK_CLAIMING || b2_held())
+        return 0;                /* a read of bank 2 never came back (or one is under way): do not add another;
+                                    or bank 2 is held off after crashed boots (b2safe.c): as if it had no payload */
     bkp_put(B2_MARK, B2_MARK_NAMING);
     int ok = b2_ok() && B2_SUM_ON_UNIT == b2_expect_sum;
     bkp_put(B2_MARK, 0);
@@ -480,7 +494,7 @@ void cpu_name(char *dest)
  */
 void cpu_tools(uint8_t *space_label, const char *space)
 {
-    char buf[16];
+    char buf[24];                /* compose: 18 at most since "!held " */
     fw_label_set(space_label, space);
     if (M->n) {                  /* close off the period being reported BEFORE composing it, not after */
         M->avg_shown = (uint16_t)(M->sum / M->n);

@@ -38,7 +38,8 @@
  *               It has its own value because that read happens in the screen task while the app is being built,
  *               and the audio task can arrive at the pairing scan in the middle of it: a scan that finds NAMING
  *               says "not yet" and asks again next block, where finding SCANNING means a dead scan.
- *   B2_TRIES_*  how many times the loader has programmed THIS payload without a clean scan afterwards.
+ *   B2_TRIES_*  how many times the loader has programmed THIS payload since backup SRAM last lost its contents (a
+ *               power-off, on the test unit). A clean write does not take it back down (b2load.c, t-059).
  * Every write goes through bkp_put: the data cache holds a write to this RAM back, and a reset does not write the
  * cache out (three fault recorders "caught nothing" that way, see fault.c).
  */
@@ -52,13 +53,7 @@
 _Static_assert(0x388003d0u + 4u <= 0x38800400u, "the bank 2 words run into comp.c's state at 0x38800400");
 
 void bkp_enable(void);           /* od.c: backup SRAM clock on, backup-domain writes allowed */
-
-static inline void bkp_put(volatile uint32_t *at, uint32_t value)
-{
-    *at = value;
-    *(volatile uint32_t *)0xe000ef68u = (uint32_t)at;    /* DCCMVAC: write this cache line out to the SRAM */
-    __asm__ volatile("dsb\n isb");
-}
+void bkp_put(volatile uint32_t *at, uint32_t value);   /* fault.c, beside bkp_flush: write, clean the line, DSB */
 
 extern const volatile uint32_t b2_expect_sum;   /* cpu.c: the sum of the payload this image was linked with */
 

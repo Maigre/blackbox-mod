@@ -471,8 +471,8 @@ if WRITES:
           state() & 3 == PAIRED and verdict() == FILE_OK and bank2() == payload and flash.erased == [0] and not flash.bad
           and card.opens == 2, (state(), flash.erased, flash.bad[:3]))
     check("...and THE UNIT RESTARTS, so the next boot builds its lists with the payload in place", again, restarts)
-    check("...with the controller locked, the mark down and the try count at zero before it goes",
-          flash.locked and word(MARK) == 0 and word(TRIES_N) == 0)
+    check("...with the controller locked, the mark down and the try count at one before it goes (a clean write keeps it: t-059)",
+          flash.locked and word(MARK) == 0 and word(TRIES_N) == 1)
     uc.mem_write(M, struct.pack("<I", MAGIC))            # the boot after the restart
     uc.mem_write(B2CHK, b"\x00")
     flash.reset()
@@ -562,7 +562,7 @@ if WRITES:
     again = poll()
     check("WRITE BUILD - mark up + the file on the card: the loader rewrites bank 2, takes the mark down, and restarts into a paired boot",
           again and flash.erased == [0] and bank2() == payload and word(MARK) == 0 and state() & 3 == PAIRED and not flash.bad
-          and word(TRIES_N) == 0, (again, flash.erased, hex(word(MARK)), state(), word(TRIES_N)))
+          and word(TRIES_N) == 1, (again, flash.erased, hex(word(MARK)), state(), word(TRIES_N)))
     # a flash that will not hold the payload: every write is followed by a bad scan
     key = None
     boots = []
@@ -578,11 +578,19 @@ if WRITES:
     fresh(bank=b"", tries=(key ^ 1, 2))
     poll()
     check("WRITE BUILD - ...but a count kept for a DIFFERENT payload does not stop this one", flash.erased == [0] and state() & 3 == PAIRED
-          and word(TRIES_N) == 0)
+          and word(TRIES_N) == 1 and word(TRIES_ID) == key)
     fresh(bank=b"")
     poll()
-    check("WRITE BUILD - a clean write leaves the count at zero, written out of the cache", word(TRIES_N) == 0 and word(TRIES_ID) == key
+    check("WRITE BUILD - a clean write leaves the count at one, not zero (t-059: a payload that pairs on the rescan and fails the next "
+          "boot is not rewritten for ever), written out of the cache", word(TRIES_N) == 1 and word(TRIES_ID) == key
           and TRIES_N in cleaned and TRIES_ID in cleaned)
+    fresh(bank=b"", tries=(key, 1))
+    poll()
+    fresh(bank=payload, tries=(key, word(TRIES_N)), mark=SCAN_MARK, claim=True)   # it paired on the rescan; this boot's scan died
+    again = poll()
+    check("WRITE BUILD - ...so a second clean write of the same payload is its last: the boot after it finds bank 2 unusable and "
+          "writes nothing", not again and not flash.erased and word(TRIES_N) == 2 and state() & 3 == UNPAIRED,
+          (again, flash.erased, word(TRIES_N)))
 
 # ---------------------------------------------------------------- whose is it? (3.3.d) - an erase cannot be taken back
 CLAIM_MARK = 0x4D4C4332

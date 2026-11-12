@@ -26,6 +26,8 @@
  *   0x38800fe8  SAVED    6 words  the ring as it stood when the unit last booted: the trail INTO the hang
  */
 #include <stdint.h>
+#include "b2.h"                                /* bkp_put's prototype */
+#include "b2safe.h"
 
 #define BKP_END    0x38801000u                 /* backup SRAM is 4 KB: nothing may be written at or above this */
 
@@ -45,7 +47,7 @@
 #define SP_WORDS   2
 
 /*
- * The trails (and, from 0x388003c8, b2.h's three bank 2 words) live in the OTHER free hole - 0x38800384..0x388003ff, the 124 bytes between od.c's bank (0x384 long)
+ * The trails (and, from 0x388003c8, b2.h's three bank 2 words and b2safe.h's two) live in the OTHER free hole - 0x38800384..0x388003ff, the 124 bytes between od.c's bank (0x384 long)
  * and comp.c at 0x38800400 - because the GUI and the audio task each need their own ring. 3.2.q shared one, and
  * six GUI page-builds in a burst flushed every audio crumb out of it, which is exactly the window we needed to see.
  */
@@ -108,6 +110,15 @@ static void bkp_flush(void)
 {
     for (uint32_t a = 0x38800000u; a < BKP_END; a += 32u)
         DCCMVAC = a;
+    __asm volatile("dsb\n isb");
+}
+
+/* The same for one word and its line, for whoever keeps state here across a reset (b2.h: the bank 2 words). Out of
+   line since t-059: b2.h had it inline, and nine writes in cpu.c and b2load.c cost the cave 112 bytes more. */
+void bkp_put(volatile uint32_t *at, uint32_t value)
+{
+    *at = value;
+    DCCMVAC = (uint32_t)at;
     __asm volatile("dsb\n isb");
 }
 
@@ -243,6 +254,7 @@ void fault_record(uint32_t *frame, uint32_t exc_return)
     FAULT_REC[9] = sp;
     FAULT_REC[10] = (uint32_t)ok;
     FAULT_REC[0] = FAULT_MAGIC;                /* EARLY now: half a record beats the nothing 3.2.q would have left */
+    *B2_FAULTED = B2_FAULT_SEEN;               /* b2safe.c: the next boot counts this reset as a crash */
     if (ok) {
         FAULT_REC[1] = frame[6];               /* PC: the faulting instruction */
         FAULT_REC[2] = frame[5];               /* LR: who called it */
@@ -369,6 +381,7 @@ void instrument_boot(void)
     uint32_t rsr = RCC_RSR;
     bkp_enable();
     cpu_boot();
+    b2_crash_boot(rsr);                                 /* b2safe.c: one more crashed boot in a row, or none */
     for (uint32_t i = 0; i < RING_LEN; i++) {
         AUD_SAVED[i] = AUD[i];
         GUI_SAVED[i] = GUI[i];
