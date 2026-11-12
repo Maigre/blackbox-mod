@@ -267,6 +267,29 @@ if st:
     mutant(f"{room} more entries in the {st['name']} store ({st['stock']} + {st['added']} of {st['cap']})", store_mutant, "store")
 else:
     check("mutant: a store pushed past its cap (needs a tagged store)", False)
+# another stock bl store_add near a tagged one, hooked: no tag names its site, so no cap would count its entries
+tagged = {a for tg in man["tags"] if tg["kind"] == "store" for a in tg.get("sites", [])}
+patched = {a for p in man["patches"] for a in range(p["addr"], p["end"])}
+near = sorted(tagged)[0] if tagged else None
+other = next((a for a in range(near - 0x200, near + 0x200, 2) if a not in tagged and a not in patched and
+              (R.decode_bl(stock[a - R.FLASH:a - R.FLASH + 4], a) or (None, None)) == ("bl", ADD_AT)), None) \
+    if near and stock else None
+
+
+def untagged_mutant(d):
+    put(d, "patches/zz_mutant.py", "import os\nfrom thumb import ROOT, bl, symbols\n"
+        "sym = symbols(os.path.join(ROOT, 'out', 'cave.elf'))\n"
+        f"PATCHES = [({R.h(other)}, bl({R.h(other)}, {R.h(ADD_AT)}), bl({R.h(other)}, sym['zz_defaults']))]\n")
+    s = open(os.path.join(d, "check.sh")).read()
+    put(d, "check.sh", re.sub(r"(patch\.py\s+[\w ]*?)(\s+cave\b|\s*$)", r"\1 zz_mutant\2", s, count=1, flags=re.M))
+    put(d, "src/zz_mutant.c", HEAD + "void zz_defaults(void *store) {\n" +
+        "".join(f"    fw_store_add(store, {R.h(i)}, 0);\n" for i in [i for i in range(0x100, 0x1F4) if i not in taken][:3]) + "}\n")
+
+
+if other:
+    mutant(f"the stock store_add at {R.h(other)} (beside the tagged {R.h(near)}) hooked, its site in no tag", untagged_mutant, "store")
+else:
+    check("mutant: an untagged stock store_add hooked (needs the stock image and a tagged store)", False)
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

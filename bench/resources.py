@@ -1069,6 +1069,9 @@ def scan(path, label, do_build=False, stock=None):
                                        "ids": sorted({q["id"] for q in params if q["func"] in r})})
     man["tags"] = read_tags(path)
     man["stores"] = stores_of(man, man["tags"], stock)
+    tagged = {a for tg in man["tags"] if tg["kind"] == "store" for a in tg.get("sites", [])}
+    man["untagged_store_sites"] = [{"site": a, "entry": c["entry"], "entries": len(c["entries"])}
+                                   for c in chain_out for a in c["sites"] if a not in tagged]
 
     # ---- SDRAM: the boot-time block
     man["sdram"] = sdram(t, warn, roles)
@@ -1521,7 +1524,10 @@ def check_tree(man):
                 if p["addr"] <= tg.get("site", -1) < p["end"] and tg.get("site") not in takes:
                     bad.append(("wants", f"{h(tg['site'])} is wanted by {tg.get('by', '?')} ({tg['file']}:{tg['line']}) "
                                          f"and patched by {p['module']} -> {p['target']}"))
-    # stores: stock's entries + ours within the cap
+    # stores: stock's entries + ours within the cap; a hooked stock store_add no tag names fills a store nobody counts
+    for u in man.get("untagged_store_sites", []):
+        bad.append(("store", f"the stock store_add at {h(u['site'])} is hooked by {u['entry']} ({u['entries']} entries) and "
+                             f"no `resources: store` tag names that site: no store's cap counts them"))
     for s in man["stores"]:
         if not s["caps_agree"]:
             bad.append(("store", f"{s['name']} store: its cap sites disagree: {s['caps']}"))
@@ -1633,6 +1639,13 @@ def report(ours, theirs, base=None, stock=None):
                 f"merged: stock {stock} + {merged} = {stock + merged} > cap {min(caps)} "
                 f"(only ours: {', '.join(h(i) for i, _ in sorted(eo - et))}; only theirs: {', '.join(h(i) for i, _ in sorted(et - eo))})")
 
+    # a hooked store_add neither tree's tags name: its entries are in no store above, so the sums are short
+    tagged = {a for tg in ours["tags"] + theirs["tags"] if tg["kind"] == "store" for a in tg.get("sites", [])}
+    untagged = {side: [f"the stock store_add at {h(c['site'])} is hooked by {c['entry']} ({c['entries']} entries) and no "
+                       f"`resources: store` tag of either tree names it: no store sum above counts them"
+                       for c in m.get("untagged_store_sites", []) if c["site"] not in tagged]
+                for side, m in (("ours", ours), ("theirs", theirs))}
+
     # ---- SDRAM
     sd = sdram_report(ours["sdram"], theirs["sdram"], add)
 
@@ -1668,7 +1681,7 @@ def report(ours, theirs, base=None, stock=None):
     bk = bank_report(ours.get("build"), theirs.get("build"), base, add)
     return {"ours": ours["tree"], "theirs": theirs["tree"], "base": base["tree"] if base else None,
             "collisions": col, "stores": stores, "sdram": sd, "bank": bk,
-            "unread": {"ours": ours["warnings"], "theirs": theirs["warnings"]}}
+            "unread": {"ours": ours["warnings"] + untagged["ours"], "theirs": theirs["warnings"] + untagged["theirs"]}}
 
 
 def sdram_report(o, t, add):
