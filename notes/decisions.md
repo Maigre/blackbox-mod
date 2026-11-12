@@ -54,8 +54,11 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   a Sample pad needs 99 entries (JOEBOX 2's 94 + ours 5) and held 96; stock's add returns silently when full, so
   three rows were dropped without a word. All three sizing sites go from `0x60` to `0x70` together, because stock's
   store copy never reads the destination's size. The boot SDRAM block: `0x84900` → `0x95910`, past D-030's bound,
-  and JOEBOX 2's stretch takes another `0x58000` at boot: a unit's boot is the proof, not the suites. *D-039 is not
-  used.*
+  and JOEBOX 2's stretch takes another `0x58000` at boot. Measured on the unit on 12/11, running 37.4.1d: the pool
+  has 1,491,200 B free after boot (`0x24000088` / `0x2400008C`, x2 §1); a 37.5.0 dev build takes 435,216 B more
+  (the bench kit's `0x1400` included), so its boot fits with about 1.0 MB left. That room is also the scratch a
+  preset load and save need (4.6 to 4.9 times the `preset.xml`, x2): the largest preset a unit can load drops from
+  about 300 KB to about 215 KB, nearly all of it upstream's own cost. *D-039 is not used.*
 - **D-040 (2026-11-12) — Upstream is a vendor: the PRs are frozen, `maigre` is the product** (Thomas, on the 12/11
   review; hub log 2026-11-12). Six PRs open since 20–23/10 and the first-contact issue got no comment or review,
   nor did another contributor's PR; JOEBOX ships squashed releases built in private (JOEBOX 2: 9 commits, 167
