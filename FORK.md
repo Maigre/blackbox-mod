@@ -40,6 +40,10 @@ stock 3.1.9 `BLACKBOX.bin`; the build patches your copy.
 
 ## Upstream pull requests (one feature each, from upstream `main`)
 
+**Frozen since 2026-11-12 (D-040).** No PR or issue got an answer, so the PRs below stay open upstream but are no
+longer kept up to date, and nothing new is cut as a PR: `maigre` is the product, `main` mirrors JOEBOX, and his
+releases are merged in. What follows is the record of what was offered.
+
 The branch model is D-019: `main` mirrors upstream; each feature's PR branch below is that feature's source of truth;
 `maigre` (the fork's default branch on GitHub since 18/10) is upstream + every feature as if accepted + the fork's
 own layer (`notes/`, `bench/`, `README.md`, this file, the 37.x names), moved only by merges. When a PR is accepted, upstream's `main` is merged in and wins every conflict
