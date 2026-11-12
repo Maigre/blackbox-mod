@@ -83,7 +83,15 @@ a pool under 1 is refused). Each job's wall and CPU seconds go to `out/check-tim
 `python3 bench/suites.py --table` prints them as below. `bench/prcheck.sh`, which checks several branches at once,
 gives each check.sh its share of the box (`CHECK_JOBS` = cores / `-j`).
 
-**The whole check, measured** (mgr-ran, 2026-11-12, pool 8, beside four other sessions): `32 suites, 0 failed`, exit 0,
+**On the merged tree** (37.5.0, the same evening): `59 suites, 0 failed`, 2 915 checks, 5 610 CPU s, so the bound is
+~700 s, not 545. First run 19 min 55 s (1 185 s for the suites, load 1.3): the 27 suites JOEBOX 2 and the wave
+brought were missing from `bench/shards/times.tsv`, a missing suite is queued as a 2-minute job, and test_savexml
+(657 CPU s) started last. With the table redone from that run: 17 min 28 s (1 037 s for the suites, load 2.5), and
+test_savexml is the floor: started first beside seven other long jobs it takes 943 CPU s and ends last. Thomas, the
+same day: 20 minutes is enough. What would go further: a profile of test_savexml and a proven split of it (it has
+two section headers; nothing says yet where its time is), or the emulator's instruction count below.
+
+**The whole check, measured on the tree the runner was built on** (mgr-ran, 2026-11-12, pool 8, beside four other sessions): `32 suites, 0 failed`, exit 0,
 in 770 s with the build (16:43, load average 4.4 at the start, up to 12.7) and again in 726 s (bench/bbci.sh at
 6aecbd5, 17:35), each ~4 360 CPU s; a third time after the review's fixes in 769 s (bench/bbci.sh at 9576fa1,
 fetched with `--remote` into a throwaway clone, 18:58, load 5.6 to 12.4; the check 758 s of it, 4 358 + 12 CPU s), the
