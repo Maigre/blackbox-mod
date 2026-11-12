@@ -845,8 +845,12 @@ def prove(path, n, out, whole_log=None, compare=False):
             f = open(os.path.join(out, f"{base}.{name}.log"), "w")
             g = open(os.path.join(out, f"{base}.{name}.err"), "w")
             procs.append((name, subprocess.Popen(cmd, stdout=f, stderr=g), f, g, time.time()))
-        for name, p, f, g, t0 in procs:
-            _, status, ru = os.wait4(p.pid, 0)
+        pending = {p.pid: x for x in procs for p in [x[1]]}
+        while pending:                          # as they end, so each one's wall time is its own
+            pid, status, ru = os.wait4(-1, 0)
+            if pid not in pending:
+                continue
+            name, p, f, g, t0 = pending.pop(pid)
             rc[name] = p.returncode = os.waitstatus_to_exitcode(status)
             secs[name] = time.time() - t0
             f.close()
