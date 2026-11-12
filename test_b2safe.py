@@ -41,7 +41,7 @@ DCCMVAC, AIRCR = 0xE000EF68, 0xE000ED0C
 KEYR2, CR2 = 0x52002104, 0x5200210C
 F_OPEN, F_READ, F_CLOSE, CARD_FOUND = 0x08086534, 0x08086866, 0x08086D76, 0x240021A4 + 0x15
 LINE_ALLOC, PERM_ALLOC, LABEL_SET, RECEIVE = 0x0806AA80, 0x0804436C, 0x080A3DEC, 0x08088756
-BLOCK, CORE, WHOLE = 0xC0100000, 0x1D110, 0x95910
+BLOCK, CORE = 0xC0100000, 0x1D110
 FRAME = 0x30000100
 SPACE, SPACE_TEXT = 0x24062174, 0x24063000
 CPU, D1, D2, BOR, PIN, POR, SFT, WWDG = (1 << b for b in (17, 19, 20, 21, 22, 23, 24, 28))
@@ -58,6 +58,7 @@ struct.pack_into("<I", stale, 12, 0)          # another build's payload: bank 2 
 stale = bytes(stale)
 sym = {l.split()[2]: int(l.split()[0], 16) for l in subprocess.run(["arm-none-eabi-nm", ELF], capture_output=True, text=True,
                                                                    check=True).stdout.splitlines() if len(l.split()) == 3}
+WHOLE = 0x95910 + (0x1400 if "kit_run" in sym else 0)   # a dev build adds the bench kit's area at the tail's end (src/master.c)
 size = {l.split()[3]: int(l.split()[1], 16) for l in subprocess.run(["arm-none-eabi-nm", "-S", ELF], capture_output=True,
                                                                     text=True, check=True).stdout.splitlines() if len(l.split()) == 4}
 img = open(IMAGE, "rb").read()

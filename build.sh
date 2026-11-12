@@ -15,6 +15,11 @@ mkdir -p out out/obj
 # The files that live in bank 2. Leaf DSP only (and clipwin_b2's Clip Window maths, D-018): nothing the engine reaches before bank 2 has been checked, and
 # nothing holding state that bank 1 needs at boot.
 BANK2_SRCS="prism confetti insert_dsp rev4 smash relapse motion tapescam splash_img transient fx2_room compm clip vhs filter_dsp s950 rta_dsp stretch_dsp tempo_dsp chop_dsp clipwin_b2 chop chopmode_b2"   # smash relapse motion: 3.3.o, for room in bank 1; splash_img: 3.3.t, the boot graphic (data only)
+# The bench kit's jobs (src/kit_b2.c, fork-only) go up in dev builds only, after everything else, so a release's bank 2
+# is byte for byte what it was and its bank 1 (which holds the payload's sum) with it. Two payloads, then: a dev
+# BBEXTRA.BIN is the release's plus the kit.
+KIT_SRCS="kit_b2"
+[ "${RELEASE:-0}" = 1 ] && KIT_SRCS=""
 # BANK 2 IS FOR LEAF DSP ONLY. A function the firmware reaches through a patched call site must stay in bank 1,
 # or a bad bank 2 faults before anything can check it - which is how 3.2.m's first cut would have boot-looped.
 # munchi.o holds munchi_process, munchi_register, munchi_list and fx_screen_msg, all hooks, so it stays in bank 1;
@@ -28,7 +33,8 @@ BANK2_OBJS="out/munchi_dsp.o"
 # on the payload's sum, not the id (below), and a bank-1-only edit there - a comment, a cw_bank field appended - must
 # not change the id of a byte-identical payload, which would switch every bank 2 feature off until a reflash. What bank
 # 2 is compiled against is pinned by _Static_assert in clipwin.h instead.
-B2_ID=$(for b in $BANK2_SRCS; do cat "src/$b.c"; done | cat - src/munchi_dsp.cpp src/b2head.c | shasum -a 256 | cut -c1-8 | awk '{printf "0x%s", $1}')
+# The kit's source goes into a dev build's id after everything else; a release (KIT_SRCS empty) hashes what it always did.
+B2_ID=$( (for b in $BANK2_SRCS; do cat "src/$b.c"; done | cat - src/munchi_dsp.cpp src/b2head.c; for b in $KIT_SRCS; do cat "src/$b.c"; done) | shasum -a 256 | cut -c1-8 | awk '{printf "0x%s", $1}')
 
 CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib -fno-builtin -Wall -Wextra -Werror -DB2_ID=$B2_ID -DB2LOAD_WRITE=${B2LOAD_WRITE:-1}"
 
@@ -36,7 +42,8 @@ CFLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestandi
 # B2LOAD_WRITE=0 builds the read-only loader that came first (3.2.y), which only reads the file and reports.
 # RELEASE=1 builds the public image: the version is the release's name (src/release.h) and the raw USB peek / poke
 # is left out. Everything else is the same code.
-[ "${RELEASE:-0}" = 1 ] && CFLAGS="$CFLAGS -DPUBLIC_BUILD=1"
+SFLAGS=""                                # the .S files see PUBLIC_BUILD too (b2load_thunk.S's kit call-out)
+[ "${RELEASE:-0}" = 1 ] && CFLAGS="$CFLAGS -DPUBLIC_BUILD=1" && SFLAGS="-DPUBLIC_BUILD=1"
 # FAULT_SHOW=1: a crash or a watchdog reset draws its record on the screen and holds, instead of resetting (fault.c)
 [ "${FAULT_SHOW:-0}" = 1 ] && CFLAGS="$CFLAGS -DFAULT_SHOW=1"
 # USB_DIAG=1: TOOLS shows the USB device's state and the HSI48 error instead of the load (usbdev.c)
@@ -62,7 +69,7 @@ for f in src/*.c; do
 done
 for f in src/*.S; do
   b=$(basename "$f" .S)
-  arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -c -o "out/obj/$b.o" "$f"
+  arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 $SFLAGS -c -o "out/obj/$b.o" "$f"
   OBJS="$OBJS out/obj/$b.o"
 done
 
@@ -70,6 +77,7 @@ done
 B2_PAT=""
 for b in $BANK2_SRCS; do B2_PAT="$B2_PAT out/obj/$b.o(.text .text.* .rodata .rodata.*)"; done
 for o in $BANK2_OBJS; do B2_PAT="$B2_PAT $o(.text .text.* .rodata .rodata.*)"; done
+for b in $KIT_SRCS; do B2_PAT="$B2_PAT out/obj/$b.o(.text .text.* .rodata .rodata.*)"; done
 sed -e "s|@B2_OBJS@|$B2_PAT|" src/cave.ld.in > out/cave.ld
 
 arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -nostdlib \

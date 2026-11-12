@@ -5,7 +5,7 @@ The power jack is a USB device (1209:0003, "Blackbox"): class-compliant MIDI, US
 never part of a feat/* branch or a PR.
 
   bbusb.py info                         is it there, which build (dev builds answer a peek)
-  bbusb.py peek ADDR [BYTES]            words at ADDR (hex), up to 64 bytes a request
+  bbusb.py peek ADDR [BYTES]            words at ADDR (hex), up to 4 096 bytes a request (64 without the kit)
   bbusb.py poke ADDR VALUE              write one 32-bit word (hex) - DEV build; you can break the running unit
   bbusb.py sdram                        free SDRAM between the two pool pointers (notes/re/x2)
   bbusb.py crash                        src/fault.c's records: reset cause, fault / watchdog PC, the trail into the reset
@@ -19,7 +19,7 @@ never part of a feat/* branch or a PR.
   bbusb.py offsets FILE.wav [A B]       onset offsets between channel A and B (default 0 = Out1 L, 2 = Out2 L)
   bbusb.py shift BASE.wav NEW.wav [BPM] how far Out 1 moved between two takes, aligned on the metronome (Out 2)
   bbusb.py note NOTE [VEL]              send a note on (then off 100 ms later) on the Global In channel (amidi)
-  bbusb.py set CELL ROW VALUE           a pad's row as its knob sets it (the parameter mailbox, DEV build: src/usbdev.c):
+  bbusb.py set CELL ROW VALUE           a pad's row as its knob sets it (the parameter mailbox MBX1, DEV build: src/kit_b2.c):
                                         CELL = R,C (rows from the bottom) or qN; ROW = slip, region, looplen, fit, fade,
                                         lps, lpe, sync, quant, beats, loopmode, launch, padmode; VALUE = a number, a
                                         list row's name ("1/4", "Loop") or Slip as beats.ticks ("-0.645")
@@ -39,22 +39,54 @@ import time
 VID, PID = 0x1209, 0x0003
 
 
+class NoDevice(SystemExit):
+    """no Blackbox on USB: a SystemExit, so a command says why and stops, as before; bench/bbkit.py's restart catches
+    it (the unit leaving the bus is its success)"""
+
+
 def dev():
     import usb.core
     d = usb.core.find(idVendor=VID, idProduct=PID)
     if d is None:
-        sys.exit("no Blackbox (1209:0003) on USB: is the power jack cabled to this machine, and the mod installed?")
+        raise NoDevice("no Blackbox (1209:0003) on USB: is the power jack cabled to this machine, and the mod installed?")
     return d
+
+
+LONG_PEEK = None                 # unknown until the first long read: True, or False (a build without it)
 
 
 def peek(addr, n=4):
     """n bytes at addr. The unit reads aligned words inside one memory at a time (src/usbdev.c, F-j), so the requests
-    are aligned here and none runs past what was asked; a stall means there is nothing readable there."""
+    are aligned here and none runs past what was asked; a stall means there is nothing readable there.
+    Longer reads ask up to 4 096 bytes a request (Linux's limit for one control transfer): a dev build with the kit
+    and its BBEXTRA.BIN answers them whole (the bench kit's long peek, src/kit_b2.c) or stalls one it cannot take (a range that
+    leaves its memory, bank 2 not live), and that piece goes 64 bytes a request. An older build answers the first 64
+    bytes as a full packet and the computer waits for the rest: that first time out (0.25 s, once) says it has none.
+    (On 37.4.1d, 12/11, the request right after that time out stalled once and the next answered: it is asked twice.)"""
+    import usb.core
+    global LONG_PEEK
     d, start = dev(), addr & ~3
     end, out = addr + n, b""
     while start + len(out) < end:
         a = start + len(out)
-        got = bytes(d.ctrl_transfer(0xC0, 0x50, a & 0xFFFF, a >> 16, min(64, (end - a + 3) & ~3)))
+        want = (end - a + 3) & ~3
+        got, timed_out = None, False
+        if want > 64 and LONG_PEEK is not False:
+            try:
+                got = bytes(d.ctrl_transfer(0xC0, 0x50, a & 0xFFFF, a >> 16, min(4096, want), timeout=250))
+                LONG_PEEK = True
+            except usb.core.USBTimeoutError:
+                LONG_PEEK, timed_out = False, True
+            except usb.core.USBError:
+                pass                     # stalled: this piece the short way
+        for again in (False, True):
+            if got is not None:
+                break
+            try:
+                got = bytes(d.ctrl_transfer(0xC0, 0x50, a & 0xFFFF, a >> 16, min(64, want)))
+            except usb.core.USBError:
+                if again or not timed_out:
+                    raise
         if not got:
             break
         out += got
@@ -69,6 +101,21 @@ def poke(addr, value):
     d = dev()
     d.ctrl_transfer(0x40, 0x51, addr & 0xFFFF, addr >> 16, None)
     d.ctrl_transfer(0x40, 0x52, value & 0xFFFF, (value >> 16) & 0xFFFF, None)
+
+
+def poke_bytes(addr, data):
+    """whole words into the unit's RAM (aligned): the bench kit's long poke (0x40 / 0x54, a DEV build with the kit
+    and its BBEXTRA.BIN), 4 096 bytes a request, each written in ascending order (the kit's mailbox puts its seq last)"""
+    import usb.core
+    d = dev()
+    for at in range(0, len(data), 4096):
+        try:
+            d.ctrl_transfer(0x40, 0x54, (addr + at) & 0xFFFF, (addr + at) >> 16, data[at:at + 4096])
+        except usb.core.USBError as e:
+            if usb.core.find(idVendor=VID, idProduct=PID) is None:
+                raise NoDevice(f"long poke at {addr + at:#x}: the unit left USB ({e})")
+            sys.exit(f"long poke at {addr + at:#x} refused ({e}): a build without the bench kit, bank 2 not live, or "
+                     "not a RAM the poke may write")
 
 
 RSR_BITS = {17: "CPU", 19: "D1", 20: "D2", 21: "BOR(brownout)", 22: "PIN", 23: "POR(power-on)", 24: "SOFTWARE",
@@ -147,8 +194,9 @@ def cw_bank():
     return mem + (0x83900 if word(mem + 0xB100) != CW_MAGIC and word(mem + 0x83900) == CW_MAGIC else 0xB100)
 
 
-# The parameter mailbox (src/usbdev.c, DEV builds): cw_bank + 0xF00. magic, seq, op/row/col, id, value; the unit writes
-# done, result and the store's value after. Applied in the GUI task as a knob turn's 0x6e message is (SetCellParam).
+# The parameter mailbox (DEV builds; src/usbdev.c until 37.4.1d, the bench kit's MBX1 in bank 2 since, src/kit_b2.c,
+# which needs this build's BBEXTRA.BIN): cw_bank + 0xF00. magic, seq, op/row/col, id, value; the unit writes done,
+# result and the store's value after. Applied in the GUI task as a knob turn's 0x6e message is (SetCellParam).
 MBOX_MAGIC = 0x3158424D          # "MBX1"
 MBOX_ROWS = {"padmode": 0x8B, "loopmode": 0x8D, "quant": 0x47, "lps": 0x91, "loopstart": 0x91, "lpe": 0x92,
              "loopend": 0x92, "launch": 0x93, "sync": 0x94, "beats": 0xD2, "beatcount": 0xD2, "fade": 0xFA,
@@ -179,6 +227,13 @@ def cell(text):
 
 def mailbox(op, row, col, pid, value=0):
     mb = cw_bank() + 0xF00
+    if word(mb) != MBOX_MAGIC:
+        # The box last held something else (the bench kit's KIT1 request, or nothing since the boot cleared it): its
+        # words at +4 and +0x14 are not MBX1's seq and done, and once the magic says MBX1 the GUI task would run the
+        # request as soon as they differ, then again when the real seq lands (review 12/11). So: no request while the
+        # box changes hands, then seq = done before the magic.
+        poke(mb, 0)
+        poke(mb + 4, word(mb + 0x14))
     poke(mb + 8, op | row << 8 | col << 16)
     poke(mb + 0xC, pid)
     poke(mb + 0x10, value & 0xFFFFFFFF)

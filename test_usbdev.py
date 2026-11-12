@@ -8,7 +8,7 @@ does, the 48 MHz clock, timing against a real host, anything electrical. Only th
 import struct
 import sys
 
-from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
+from unicorn import UC_HOOK_BLOCK, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 
 from emu import STACK, Emu
 
@@ -56,7 +56,8 @@ class Core:
                 self.reg[GRSTCTL] &= ~1
         if off == GINTSTS:
             v = self.get(GINTSTS) & ~0x40010
-            return v | (0x10 if self.rx else 0) | (0x40000 if self.get(DIEPINT2) & 1 else 0)
+            return v | (0x10 if self.rx else 0) | (0x40000 if self.get(DIEPINT2) & 1 or
+                                                   (self.get(0x908) & 1 and self.get(0x81C) & 1) else 0)
         if off == GRXSTSP:
             if not self.rx:
                 return 0
@@ -92,7 +93,8 @@ class Core:
                 if len(self.tx[1]) >= self.tx[0]:
                     self.sent.append(bytes(self.tx[1][:self.tx[0]]))
                     self.tx = None
-                    self.reg[0x908] = self.get(0x908) | 1    # transfer complete
+                    if not getattr(self, "hold", False):     # (hold: the host has stopped taking packets)
+                        self.reg[0x908] = self.get(0x908) | 1    # transfer complete
         elif off == FIFO1:
             self.midi.append(v)
         elif off == FIFO2:
@@ -127,11 +129,42 @@ e.uc.hook_add(UC_HOOK_MEM_READ, lambda uc, t, a, s, v, _: uc.mem_write(a, struct
 e.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, t, a, s, v, _: core.write(a - USB, v & 0xFFFFFFFF), begin=USB, end=USB + 0x3FFF)
 
 
+# Bank 2 entered from the controller's interrupt: in a dev build only kit_b2.c's long peek and poke may be, and only
+# while one runs (their flags in DAINTMSK). Review 12/11: the two gates in usbaud_isr and receive() could each be
+# removed with every suite green, so every run of the interrupt here goes through isr(), and bank 2's code is watched.
+B2_LO, B2_END = 0x08100000, 0x081E0000
+b2 = {"isr": False, "from_isr": [], "any": 0}
+
+
+def _b2_entered(uc, addr, size, _):
+    b2["any"] += 1
+    if b2["isr"]:
+        b2["from_isr"].append(addr)
+
+
+e.uc.hook_add(UC_HOOK_BLOCK, _b2_entered, begin=B2_LO, end=B2_END - 1)
+
+
+def isr():
+    b2["isr"] = True
+    try:
+        e.call("usbaud_isr")
+    finally:
+        b2["isr"] = False
+
+
+def isr_b2(label):
+    """check: the interrupt has not entered bank 2 since the last look"""
+    got = list(b2["from_isr"])
+    b2["from_isr"].clear()
+    check(label, not got, [hex(a) for a in got[:4]])
+
+
 def interrupt():
     """The controller's interrupt line, as the core raises it: unmasked sources only, and only when switched on."""
     pending = core.read(GINTSTS) & core.get(0x18)
     if pending and core.get(0x08) & 1 and e.r32(0xE000E108) & (1 << 13):
-        e.call("usbaud_isr")
+        isr()
         return True
     return False
 
@@ -258,15 +291,17 @@ r = control(struct.pack("<BBHHH", 0x80, 8, 0, 0, 1))
 check("GET_CONFIGURATION answers 1", r == b"\x01", r)
 r = control(struct.pack("<BBHHH", 0x80, 0, 0, 0, 2))
 check("GET_STATUS answers two zero bytes", r == b"\0\0", r)
+core.sent.clear()
 core.rx += [(2, b""), (3, b"")]
 poll()
-check("the host's empty status packet is drained without a reply", not core.rx)
+check("the host's empty status packet on endpoint 0 is drained without a reply", not core.rx and core.sent == [], core.sent)
 check("configured: both bulk endpoints active at 64 bytes, IN on its own FIFO, OUT armed for one packet",
       core.get(DIEPCTL1) & 0x03CC87FF == 0x00488040 and core.get(DOEPCTL1) & 0x000C87FF == 0x00088040
       and core.get(DOEPCTL1) >> 31 and core.get(0xB30) == (1 << 19) | 64, f"{core.get(DIEPCTL1):#x} {core.get(DOEPCTL1):#x}")
 r = control(struct.pack("<BBHHH", 0x01, 11, 0, 2, 0))
 check("SET_INTERFACE on the MIDI interface and clearing an endpoint halt are accepted; the audio stream stays closed",
       r == b"" and control(struct.pack("<BBHHH", 0x02, 1, 0, 0x81, 0)) == b"" and e.r8(STATE + 14) == 0 and core.get(GINTMSK) == 0x10, r)
+isr_b2("enumeration, its requests and the host's status packet: the controller's interrupt never entered bank 2")
 
 # --- debug peek / poke: in test builds, and NOT in a public one
 RELEASE = e.uc.mem_read(e.sym["release_build"], 1)[0]
@@ -321,6 +356,164 @@ else:
           "then answers with its own bytes", (GRSTCTL, 0x20) in core.log and not core.get(DIEPCTL0) >> 31
           and r == bytes.fromhex("44332211") + struct.pack("<I", 0x12345678), (core.log[:4], r))
 
+    # The bench kit's long peek (dev builds, bank 2 live; src/kit_b2.c, bench/bbshot.py): the same request with wLength
+    # over 64, up to 4 096, the whole range inside one region. usbdev.c sends the first 64 bytes as ever and hands the
+    # rest to bank 2, whose part of the interrupt loads each next packet as the last one goes (endpoint 0 IN's "sent",
+    # unmasked for the transfer). Here the interrupt runs whenever the model raises it, as the real one does.
+    def drain():
+        for _ in range(500):
+            if not interrupt():
+                return
+
+    def long_control(setup, polls=3):
+        core.sent.clear()
+        core.stalled = False
+        core.rx += [(6, setup), (4, b"")]
+        for _ in range(polls):
+            drain()
+            e.call("usbdev_poll")
+            drain()
+        return ("STALL" if core.stalled else b"".join(core.sent)), [len(x) for x in core.sent]
+
+    pattern = b"".join(struct.pack("<I", 0x5EED0000 + i) for i in range(0x1400 // 4))
+    e.uc.mem_write(0xC0101000, pattern)
+    r, chunks = long_control(struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 4096))
+    check(f"long peek: 4 096 bytes of SDRAM in one request, as 64 packets of 64, all but the first loaded by the interrupt "
+          f"within the poll that answered the setup ({len(chunks)} packets)", r == pattern[:4096] and chunks == [64] * 64, (len(r), chunks[:3]))
+    check("  ...those packets loaded by bank 2's part of the interrupt (the probe on bank 2 sees it entered)", b2["from_isr"])
+    b2["from_isr"].clear()
+    check("  ...after its last packet endpoint 0 IN's interrupt is masked again: the endpoint is the poll's",
+          not core.get(0x81C) & 1, hex(core.get(0x81C)))
+    r, chunks = long_control(struct.pack("<BBHHH", 0xC0, 0x50, 0x1100, 0xC010, 200))
+    check("  ...200 bytes: 64, 64, 64, 8", r == pattern[0x100 // 4 * 4:0x100 + 200] and chunks == [64, 64, 64, 8], chunks)
+    d = get_desc(2, 0, 255)
+    check("  ...and a long descriptor after it still goes a packet a block, from the poll", d and len(d) == 175 and core.chunks == [64, 64, 47], core.chunks)
+    refused = [long_control(struct.pack("<BBHHH", 0xC0, 0x50, lo_, hi_, n_))[1] for lo_, hi_, n_ in
+               ((0x0800, 0x3880, 4096), (0x1000, 0xC010, 4100), (0x1000, 0xC010, 4094))]
+    refused = [long_control(struct.pack("<BBHHH", 0xC0, 0x50, lo_, hi_, n_))[0] for lo_, hi_, n_ in
+               ((0x0800, 0x3880, 4096), (0x1000, 0xC010, 4100), (0x1000, 0xC010, 4094), (0xFFC0, 0x37FF, 4096))]
+    check(f"  ...stalled, nothing sent (a full 64-byte packet would leave the computer waiting for the rest), past backup "
+          f"SRAM's end, above 4 096 bytes, for a length that is no whole number of words, from below a region into it "
+          f"({refused})", refused == ["STALL"] * 4 and not core.get(0x81C) & 1, refused)
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x02")                # bank 2 not this build's
+    r, chunks = long_control(struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 4096))
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x01")
+    r2 = control(struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 64))
+    check("  ...without bank 2 live: stalled, nothing handed up; the plain 64-byte peek as ever",
+          r == "STALL" and not core.get(0x81C) & 1 and r2 == pattern[:64], (r, chunks))
+    # a long peek the host gives up on halfway (its timeout): the next setup ends it, and is answered as itself
+    core.sent.clear()
+    core.rx += [(6, struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 4096)), (4, b"")]
+    poll(1)
+    for _ in range(5):
+        interrupt()
+    core.hold = True                                       # the host stops taking packets: the 7th stays queued
+    interrupt()
+    taken, mid = len(core.sent), core.get(0x81C) & 1
+    core.hold = False
+    r = control(struct.pack("<BBHHH", 0xC0, 0x50, 0x0800, 0x2407, 8))
+    drain()
+    check(f"  ...one given up halfway ({taken} packets moved) is ended by the next setup, which gets its own answer",
+          mid and taken == 7 and r == bytes.fromhex("44332211") + struct.pack("<I", 0x12345678) and not core.get(0x81C) & 1,
+          (mid, taken, r))
+
+    # The long poke (0x40 / 0x54, dev builds, bank 2 live): wLength bytes, up to 4 096, written into one of the RAMs the
+    # poke may write, as the host's 64-byte packets arrive (bank 2's part of the interrupt keeps them and re-arms
+    # endpoint 0 OUT), then the status stage: one empty packet back, only after the last.
+    def long_poke(addr, payload, n=None):
+        core.sent.clear()
+        core.stalled = False
+        n = len(payload) if n is None else n
+        core.rx += [(6, struct.pack("<BBHHH", 0x40, 0x54, addr & 0xFFFF, addr >> 16, n)), (4, b"")]
+        drain()
+        e.call("usbdev_poll")
+        drain()
+        if core.stalled:
+            return "STALL", None
+        early = list(core.sent)
+        for i in range(0, len(payload), 64):
+            core.rx += [((2, 0), payload[i:i + 64]), ((3, 0), b"")]
+            drain()
+        e.call("usbdev_poll")
+        drain()
+        return early, list(core.sent)
+
+    data = bytes((i * 13 + 5) & 0xFF for i in range(4096))
+    early, sent = long_poke(0xC0103000, data)
+    check(f"long poke: 4 096 bytes into SDRAM as 64 packets, nothing sent back before the last, then the empty status "
+          f"packet once ({sent})", early == [] and sent == [b""] and bytes(e.uc.mem_read(0xC0103000, 4096)) == data
+          and not core.get(0x81C) & (1 << 16), (early, sent))
+    early, sent = long_poke(0xC0103000, data[:200][::-1])
+    check("  ...200 bytes: 64, 64, 64, 8; the bytes after them untouched", sent == [b""] and
+          bytes(e.uc.mem_read(0xC0103000, 204)) == data[:200][::-1] + data[200:204], sent)
+    e.uc.mem_write(0xC0103000, b"\x55" * 256)
+    early, sent = long_poke(0xC0103000, b"q" * 256, 200)
+    check("  ...a host that sends more than wLength (four full packets for 200 bytes): 200 bytes written, the 56 after "
+          "them untouched, the status packet once, after the last", early == [] and sent == [b""]
+          and bytes(e.uc.mem_read(0xC0103000, 256)) == b"q" * 200 + b"\x55" * 56, (early, sent))
+    refused = [long_poke(a_, b"x" * 64, n_)[0] for a_, n_ in ((0x08100000, 64), (0x500010AC, 4), (0xC0103000, 4100),
+                                                               (0xC0103000, 0), (0xC0103002, 64), (0x2407FFC0, 128))]
+    check(f"  ...stalled, nothing written, into flash, a register, above 4 096 bytes, for none, unaligned, past AXI SRAM's end "
+          f"({refused})", refused == ["STALL"] * 6 and e.r32(0x08100000) != 0x78787878 and not core.get(0x81C) & (1 << 16), refused)
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x02")
+    r = long_poke(0xC0103000, b"y" * 64)[0]
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x01")
+    check("  ...without bank 2 live: stalled, nothing written", r == "STALL" and e.r32(0xC0103000) != 0x79797979, r)
+    core.sent.clear()
+    core.rx += [(6, struct.pack("<BBHHH", 0x40, 0x54, 0x3000, 0xC010, 200)), (4, b"")]
+    drain()
+    e.call("usbdev_poll")
+    core.rx += [((2, 0), b"z" * 64), ((3, 0), b"")]         # the endpoint NAKs the data until the setup is answered
+    drain()
+    mid = core.get(0x81C) & (1 << 16)
+    r = control(struct.pack("<BBHHH", 0xC0, 0x50, 0x0800, 0x2407, 8))
+    check("  ...one given up after a packet is ended by the next setup, which is answered as itself",
+          mid and not core.get(0x81C) & (1 << 16) and r == bytes.fromhex("44332211") + struct.pack("<I", 0x12345678)
+          and bytes(e.uc.mem_read(0xC0103000, 64)) == b"z" * 64, (mid, r))
+
+    # Ordinary traffic once long transfers have run: with the kit's flags in DAINTMSK down, the interrupt must not
+    # enter bank 2 for anything else. Each IN request is followed by the host's status packet on endpoint 0 (an OUT
+    # data entry, then its "transfer complete"), which receive() must keep from kit_usb_out.
+    def ordinary():
+        seen = []
+        for setup in (struct.pack("<BBHHH", 0xC0, 0x50, 0x0800, 0x2407, 8), struct.pack("<BBHHH", 0x80, 6, 0x0100, 0, 18),
+                      struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 64), struct.pack("<BBHHH", 0x80, 0, 0, 0, 2)):
+            r = control(setup)
+            core.sent.clear()
+            core.rx += [(2, b""), (3, b"")]
+            poll()
+            seen.append((isinstance(r, bytes) and len(r) > 0, core.sent == [], not core.rx))
+        control(struct.pack("<BBHHH", 0x40, 0x51, 0x0804, 0x2407, 0))
+        seen.append((control(struct.pack("<BBHHH", 0x40, 0x52, 0x5678, 0x1234, 0)) == b"", True, True))
+        return seen
+
+    b2["from_isr"].clear()
+    seen = ordinary()
+    check(f"ordinary requests after the long transfers, each with the host's status packet on endpoint 0: answered, the "
+          f"status packets drained with nothing sent back, the kit's DAINTMSK flags down ({seen})",
+          all(all(x) for x in seen) and not core.get(0x81C) & 0x10001, (seen, hex(core.get(0x81C))))
+    isr_b2("  ...and the controller's interrupt never entered bank 2 for them")
+    # A dev unit whose bank 2 is not this build's: here erased (0xFF), the pairing's verdict 'not' (b2chk 2). Nothing
+    # may enter it at all - the long peek and poke refused, the interrupt and the poll staying out.
+    saved = bytes(e.uc.mem_read(B2_LO, B2_END - B2_LO))
+    e.uc.mem_write(B2_LO, b"\xff" * (B2_END - B2_LO))
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x02")
+    b2["any"] = 0
+    try:
+        seen = ordinary()
+        lp = long_control(struct.pack("<BBHHH", 0xC0, 0x50, 0x1000, 0xC010, 4096))[0]
+        lk = long_poke(0xC0103000, b"w" * 64)[0]
+        seen.append((lp == "STALL" and lk == "STALL", True, True))
+        ran_off = None
+    except Exception as x:                                    # bank 2's 0xff bytes run: the emulator stops on them
+        ran_off = repr(x)[:120]
+    e.uc.mem_write(B2_LO, saved)
+    e.uc.mem_write(0x2405FFD0 + 0x23, b"\x01")
+    check(f"bank 2 erased and not paired: ordinary requests with their status packets answered, the long peek and poke "
+          f"stalled, and bank 2 never entered, from the interrupt or the poll ({b2['any']} blocks)",
+          ran_off is None and all(all(x) for x in seen) and b2["any"] == 0 and not b2["from_isr"], (ran_off, seen))
+    b2["from_isr"].clear()
+
 # --- MIDI from the computer: through stock's own USB event parser (real firmware code) into its "from USB" queue
 
 
@@ -362,6 +555,7 @@ check("the computer sends faster than a block can take (80 events): the queue fi
 core.rx.clear()
 poll()
 check("...the next block hands those 32 to stock and arms the endpoint again", len(queued()) == base + 32 and core.get(DOEPCTL1) >> 31, len(queued()) - base)
+isr_b2("MIDI from the computer: the controller's interrupt never entered bank 2")
 
 # --- MIDI to the computer: the to-USB queue is sent to endpoint 1, then stock packs it for the host jack as before
 OUTBUF, LENP = 0x24070000, 0x24070400
@@ -461,7 +655,7 @@ def host_takes():
     core.reg[DSTS] = ((core.get(DSTS) >> 8) + 1) << 8
     core.audio.clear()
     core.log.clear()
-    e.call("usbaud_isr")
+    isr()
     size = core.get(DIEPTSIZ2) & 0x7FFFF
     raw = b"".join(struct.pack("<I", w) for w in core.audio)
     frames = [[int.from_bytes(raw[f * 18 + c * 3:f * 18 + c * 3 + 3], "little", signed=True) for c in range(6)]
@@ -547,7 +741,7 @@ core.reg[GINTSTS] = 1 << 20
 core.audio.clear()
 core.log.clear()
 before = u32(R)
-e.call("usbaud_isr")
+isr()
 check("missed frame: the stale packet is disabled and its FIFO flushed, a fresh one loaded, the flag acknowledged",
       any(r == DIEPCTL2 and v & (1 << 30) for r, v in core.log) and (GRSTCTL, (1 << 5) | (2 << 6)) in core.log
       and len(core.audio) in (212, 216, 221) and core.get(GINTSTS) & (1 << 20) == 0 and core.get(DIEPCTL2) >> 31
@@ -555,7 +749,7 @@ check("missed frame: the stale packet is disabled and its FIFO flushed, a fresh 
 core.audio.clear()
 core.log.clear()
 core.reg[DIEPINT2] = 0
-e.call("usbaud_isr")
+isr()
 check("interrupt with nothing of ours pending: touches nothing", not core.audio and not core.log)
 r = control(struct.pack("<BBHHH", 0x01, 11, 0, 1, 0))
 w = u32(W)
@@ -595,6 +789,8 @@ check("...and MIDI out never touches the dead controller", ours == [] and stock 
 before = dict(core.reg)
 poll(50)
 check("...and then leaves the controller alone", core.reg == before)
+
+isr_b2("the audio stream, its missed frames, a bus reset: the controller's interrupt never entered bank 2")
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

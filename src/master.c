@@ -142,9 +142,14 @@ int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, t
 #define PRISM_KEY   0x5052534du   /* the check word's key: the block has its tail */
 #define CORE_KEY    0x434f5245u   /* "CORE": the block is the core alone (no payload in bank 2 at boot) */
 #define CORE_BYTES  0x1d110u      /* first, on every unit: lfo.c's state (0x1000), usbdev.c's audio ring (0x6000), filter.h's S950 bank (0x4000: its hold stash, meter.c, SLICE_DIAG / prof.c in its end), comp.c's clipper (0x100), clipwin.c's bank (0x1000 since Fit); then JOEBOX 2's, which code outside the tail reaches through master_block(): the EQ screen's RTA (0x10000 at 0xc100, rta.h), the filter's switch crossfade (0x1000 at 0x1c100, filter.h: filter_dsp.c gets master_block()), stretch.c's pointer word (0x10 at 0x1d100, STR_PTR_OFFSET) */
-#define TAIL_BYTES  (PRISM_BYTES + 0x22000u)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000; repeat.c's state in its last 0x800) */
+#ifdef PUBLIC_BUILD
+#define KIT_BYTES   0u
+#else
+#define KIT_BYTES   0x1400u       /* dev builds: the bench kit's data area, at the tail's end (kit_b2.c; fork-only) */
+#endif
+#define TAIL_BYTES  (PRISM_BYTES + 0x22000u + KIT_BYTES)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000; repeat.c's state in its last 0x800) */
 _Static_assert(0xb100u + 0x1000u <= 0xc100u, "clipwin.c's bank (0x1000 at 0xb100) ends where JOEBOX 2's parts begin");
-_Static_assert(CORE_BYTES + TAIL_BYTES == 0x95910u, "JOEBOX 2's block (0x94910) + clipwin.c's bank: past D-030's 0x84900 (x2: a boot-time SDRAM overflow hangs the unit), so a unit's boot proves it");
+_Static_assert(CORE_BYTES + PRISM_BYTES + 0x22000u == 0x95910u, "JOEBOX 2's block (0x94910) + clipwin.c's bank: past D-030's 0x84900 (x2: a boot-time SDRAM overflow hangs the unit), so a unit's boot proves it; a dev build adds the kit's area only");
 
 /* which master page the knob screen shows, and whether it is showing one (backup SRAM, next to munchi's words) */
 struct master_ui {
@@ -507,6 +512,16 @@ void master_alloc(int *line, int floats)
         *(volatile uint32_t *)(mem + 0xb100u) = 0;           /* clipwin.c's bank */
         *(volatile uint32_t *)(mem + 0xc100u) = 0;           /* rta_dsp.c */
         *(volatile uint32_t *)(mem + 0x1d100u) = 0;          /* stretch.c's pointer word: no area (stretch_alloc fills it) */
+#ifndef PUBLIC_BUILD
+        /* dev builds: the bench kit's mailbox, at the end of clipwin.c's 4 KB (kit_b2.c; fork-only). No request in it,
+           and neither its screen task's state nor its card task's is this boot's: fault.c's boot count starts again
+           at 1 after a power-on, so it cannot tell a boot after a power cut short enough for SDRAM to keep the box
+           from the boot before. */
+        volatile uint32_t *kit = (volatile uint32_t *)(mem + 0xc000u);
+        kit[0] = 0;                                          /* its magic */
+        kit[0x48 / 4] = 0;                                   /* the screen task's boot */
+        kit[0x74 / 4] = 0;                                   /* the card task's boot */
+#endif
         if (tail) {
             *(volatile uint32_t *)(mem + CORE_BYTES) = 0;                   /* Prism */
             *(volatile uint32_t *)(mem + CORE_BYTES + PRISM_BYTES) = 0;     /* insert.c's bank */

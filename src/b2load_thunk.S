@@ -14,6 +14,10 @@
 b2load_thunk:
     push    {r0, r1, r2, r3, r12, lr}
     bl      b2_load_poll
+#ifndef PUBLIC_BUILD
+    movs    r0, #2                   /* dev builds: the bench kit's jobs for the card task (kit.c, kit_b2.c) */
+    bl      kit_poll
+#endif
     pop     {r0, r1, r2, r3, r12, lr}
     ldr     r12, =0x08092f5d
     bx      r12

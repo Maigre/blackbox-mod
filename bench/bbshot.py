@@ -6,7 +6,11 @@ Reads the LTDC's two layers where the controller says they are (L1/L2 CFBAR, pit
 PFCR; 320 x 240 ARGB1555 on 3.1.9) and blends them as the LTDC does (pixel alpha x constant alpha, BFCR 0x607) over
 its background colour (BCCR). Every read stays exactly inside a framebuffer or is one register word: a peek past the
 end of a memory region bus-faults the unit (gate3b F-j, 17/10). Read only. Fork-only tool, like bench/bbusb.py.
+
+A dev build with the bench kit and its BBEXTRA.BIN reads a layer (153 600 B) in 38 long peeks of 4 096 B (src/kit_b2.c:
+the controller's interrupt moves each packet); an older build answers 64 B a request, 2 400 of them, about 13 s.
 """
+import time
 import os
 import struct
 import sys
@@ -58,6 +62,7 @@ def main(argv):
     if not argv:
         sys.exit(__doc__)
     out, scale = argv[0], int(argv[argv.index("--scale") + 1]) if "--scale" in argv else 2
+    t0 = time.time()
     bccr = reg(0x2C)
     l1, l2 = layer(0x84), layer(0x104)
     w, h = (l1 or l2)[2], (l1 or l2)[3]
@@ -69,8 +74,9 @@ def main(argv):
     img = np.clip(np.round(img), 0, 255).astype(np.uint8)
     if scale > 1:
         img = img.repeat(scale, axis=0).repeat(scale, axis=1)
+    took = time.time() - t0
     png(out, img)
-    print(f"{out}: {w} x {h} (x{scale})")
+    print(f"{out}: {w} x {h} (x{scale}), read in {took:.1f} s")
 
 
 if __name__ == "__main__":
