@@ -4367,10 +4367,12 @@ sc = Screen()
 sc.open(CLIP12)
 b_ = sc.binds
 st = sc.state()
-check(f"Clip setup: stock's three unbinds (TL, TR, BL), then the hook at BR binds TL 0x91 = 24 000, TR 0x92 = 72 000, BL "
-      f"Slip = 480, BR Loop Len = 3 through the stock binder with the store's values ({[(hex(i), v, hex(o)) for i, v, o in b_]})",
-      b_ == [(0, 0, 0x670), (0, 0, 0xC30), (0, 0, 0x950), (0x91, 24000, 0x670), (0x92, 72000, 0xC30), (P_SLIP, 480, 0x950),
-             (P_LOOPLEN, 3, 0xF10)], b_)
+# since JOEBOX 2 stock's first three unbinds (TL, TR, BL) are its Clip selection's binds (slice.py: sel_bind_start / end /
+# beats, which set the knob themselves, not through the binder); the fourth site (BR) is the Clip Window's, and rebinds all four
+check(f"Clip setup: after JOEBOX 2's three selection binds (TL, TR, BL, not through the binder), the hook at BR binds TL "
+      f"0x91 = 24 000, TR 0x92 = 72 000, BL Slip = 480, BR Loop Len = 3 through the stock binder with the store's values "
+      f"({[(hex(i), v, hex(o)) for i, v, o in b_]})",
+      b_ == [(0x91, 24000, 0x670), (0x92, 72000, 0xC30), (P_SLIP, 480, 0x950), (P_LOOPLEN, 3, 0xF10)], b_)
 check(f"  names {[sc.text(n, 0x44) for n in ('TL', 'TR', 'BL', 'BR')]} (the binder's, from the table, then this screen's: "
       f"{[x for a, x in sc.texts if a in (0x670 + 0x44, 0xC30 + 0x44, 0x950 + 0x44, 0xF10 + 0x44)]}), texts "
       f"{[sc.text(n) for n in ('TL', 'TR', 'BL', 'BR')]} (Slip as beats.ticks, Loop Len its name)",
@@ -4443,13 +4445,17 @@ w_ = st["wave"]
 check(f"  the loop bracket drawn (Region Auto, Loop Mode on): [24 000, 72 000), shown, dirty; slice markers and the pink "
       f"start bracket off as stock leaves them ({w_})", w_ == dict(on=1, ls=24000, le=72000, dirty=1, slices=0, startlen=0), w_)
 
-# stock (and the hooks bypassed): nothing bound, no bracket
-for nm, scr in (("stock", Screen(STOCK)), ("hooks bypassed", Screen(bypass=True))):
+# stock: nothing bound, no bracket. The three Waveform hooks bypassed: JOEBOX 2's Clip selection as it is without the Clip
+# Window - TL Start (0x15c), TR End (0x15d), positions; BL Beats (its private 0x3e3); BR unbound (the site is stock's
+# again, JOEBOX 2's BPM bind at it is the one patch.py leaves out) - and no bracket
+SEL12 = {"TL": (0x15C, 0xD), "BL": (0x3E3, 1), "TR": (0x15D, 0xD), "BR": (0, 0)}
+for nm, scr, want in (("stock", Screen(STOCK), {n: (0, 0) for n in KN12}), ("hooks bypassed", Screen(bypass=True), SEL12)):
     scr.open(CLIP12)
     s2 = scr.state()
-    check(f"  on the {nm} image the same setup binds nothing (ids {[hex(s2[n]['id']) for n in KN12]}, types "
-          f"{[s2[n]['type'] for n in KN12]}) and draws no bracket ({s2['wave']['on']})",
-          all(s2[n]["id"] == 0 and s2[n]["type"] == 0 for n in KN12) and s2["wave"]["on"] == 0, s2)
+    check(f"  on the {nm} image the same setup binds {'nothing' if nm == 'stock' else 'the JOEBOX 2 selection knobs, BR unbound'} "
+          f"(ids {[hex(s2[n]['id']) for n in KN12]}, types {[s2[n]['type'] for n in KN12]}) and draws no bracket "
+          f"({s2['wave']['on']})",
+          all((s2[n]["id"], s2[n]["type"]) == want[n] for n in KN12) and s2["wave"]["on"] == 0, s2)
 
 # ---- turns through the view: the knob posts, the view forwards to the app, the app stores and posts 0x66, the view
 # refreshes. TL and TR turn as stock's own Loop Start and Loop End knobs turn in Sample mode, where they are BL and BR:
@@ -4522,7 +4528,7 @@ check(f"  fast down from +300 through the view: the 1/64 grid, the detent on 0 f
       f"({rt[:6]} ... {rt[-3:]}), as the bare knob ({bare[:6]} ... {bare[-3:]})",
       rt == bare and rt[:5] == [240, 180, 120, 60, 0] and rt[5:5 + n_held] == [0] * n_held
       and rt[5 + n_held:] == [-GRID * (i + 1) for i in range(15 - n_held)] and s_.vals[P_SLIP] == rt[-1], (rt, bare))
-s_.stored(_1c9=-1200)
+s_.stored(_151=-1200)
 check(f"  a Slip the store gets from elsewhere is shown at the next refresh ({s_.shown('BL')}, {s_.text('BL')})",
       s_.shown("BL") == -1200 and s_.text("BL") == "-1.240", (s_.shown("BL"), s_.text("BL")))
 
@@ -4656,9 +4662,9 @@ nm, ok_ = [], True
 jv.m.uc.mem_write(WV + 0x1E0, b"\x01")
 for name, act in [("Slip turned (BL)", lambda: jv.turn(1, 400, t=70_000)), ("Loop Len turned (BR)", lambda: jv.turn(3, 400, t=80_000)),
                   ("both ends stored at once", lambda: jv.stored(_91=12000, _92=96000)),
-                  ("Region File (the bracket goes)", lambda: jv.stored(_1c8=FILE)),
+                  ("Region File (the bracket goes)", lambda: jv.stored(_150=FILE)),
                   ("Loop Start stored under Region File", lambda: jv.stored(_91=6000)),
-                  ("Region Loop again (the bracket comes back)", lambda: jv.stored(_1c8=LOOP)),
+                  ("Region Loop again (the bracket comes back)", lambda: jv.stored(_150=LOOP)),
                   ("a zoom (msg 0xe5)", lambda: jv.msg(0x080A66DC, 0xE5))]:
     jv.m.w32(WV + 0x244, 160000)
     act()
@@ -4736,13 +4742,13 @@ check(f"  a zoom under one frame a pixel (0.5) steps 1 frame ({sc.knob('TL')['st
 # ---- the bracket shows what Region plays (the engine's rule, is_loop), marked dirty only when it changes
 br = Screen()
 br.open(CLIP12)
-cases = [("Region File", dict(_1c8=FILE), 0), ("Auto, Loop Mode None (finding 7)", dict(_1c8=AUTO, _8e=0), 1),
-         ("Loop, Loop Mode None", dict(_1c8=LOOP), 1), ("Loop, the whole file [0, 192 000)", dict(_91=0, _92=192000), 0),
+cases = [("Region File", dict(_150=FILE), 0), ("Auto, Loop Mode None (finding 7)", dict(_150=AUTO, _8e=0), 1),
+         ("Loop, Loop Mode None", dict(_150=LOOP), 1), ("Loop, the whole file [0, 192 000)", dict(_91=0, _92=192000), 0),
          ("Loop, [0, 191 999] (a whole-file smpl loop)", dict(_92=191999), 0), ("Loop, [1, 191 999)", dict(_91=1), 1),
          ("Loop, Loop End past the file", dict(_92=192001), 0), ("Loop, Loop Start = Loop End", dict(_91=50000, _92=50000), 0),
-         ("Auto, Loop Mode on, [24 000, 72 000)", dict(_1c8=AUTO, _8e=1, _91=24000, _92=72000), 1),
+         ("Auto, Loop Mode on, [24 000, 72 000)", dict(_150=AUTO, _8e=1, _91=24000, _92=72000), 1),
          ("Loop End moved while Region plays the loop: [24 000, 96 000)", dict(_92=96000), 1),
-         ("Slip changed: nothing moves", dict(_1c9=-30), 1)]
+         ("Slip changed: nothing moves", dict(_151=-30), 1)]
 got_, ok_ = [], True
 for name, upd, want in cases:
     before = br.wave()
@@ -4774,7 +4780,7 @@ runs = []
 for scr in (nb2, kref):
     scr.open(CLIP12)
     seq = [scr.turn(1, c, t=40_000 + 16 * i) for i, c in enumerate((400, 400, 1200, -400, 2000, -4000, -40, 9000))]
-    scr.stored(_1c9=-30)
+    scr.stored(_151=-30)
     runs.append(({n: scr.knob(n) for n in KN12}, list(scr.texts), seq, list(scr.binds), scr.shown("BL")))
 w_nb, w_ref = nb2.wave(), kref.wave()
 check(f"no bank 2: the Waveform's Slip knob (BL) is stock's - its text ({nb2.text('BL')!r}, not beats.ticks), eight turns "
