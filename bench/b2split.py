@@ -4,7 +4,7 @@
 
     python3 bench/b2split.py chop chopmode [--decl bench/splits/chopshop.py] [--stubs all|reached] [--run ./check.sh]
     python3 bench/b2split.py --verify            after python3 patch.py <the full set>: bank 2 decoded as code (and
-                                                 the decoder's own self-test), stubs live / blank
+                                                 the decoder's own self-test), stubs live / boot window / blank
     python3 bench/b2split.py --absent test_x.py  a suite with bank 2 blank in every emulator it makes
 
 runs ./build.sh as it is, with a stand-in for arm-none-eabi-gcc on the PATH that (1) records how each moved module is
@@ -546,6 +546,15 @@ def blank_bank2(e):
     e.meter_up()
 
 
+METER = 0x2405FFD0                  # the load meter's state (cpu.c M); its first word is the magic b2_live() asks for
+
+
+def meter_down(e):
+    """The boot window: bank 2 as it is, but the audio task has not woken yet (cpu_boot cleared the magic), so b2_live()
+    answers "not yet" and every stub takes its fallback."""
+    e.w32(METER, 0)
+
+
 BRANCH = re.compile(r"(blx?|b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?|cbn?z)(?:\.w|\.n)?")
 
 
@@ -603,8 +612,8 @@ def scan_bank2(b2, nm):
 def verify():
     """After `python3 patch.py <full set>`: (1) no instruction in bank 2 branches out of it, decoded as code only (the
     mapping symbols); no literal in bank 2 points into the cave; and the scan catches a bl and a literal planted in a
-    moved function; (2) every stub reaches its body with bank 2 live, and its fallback without one bank-2
-    instruction with bank 2 blank; every veneer lands on its cave function."""
+    moved function; (2) every stub reaches its body with bank 2 live, its fallback without one bank-2 instruction
+    before the meter is up (the boot window) and with bank 2 blank; every veneer lands on its cave function."""
     sys.path.insert(0, ROOT)
     os.chdir(ROOT)
     from unicorn import UC_HOOK_CODE
@@ -644,14 +653,16 @@ def verify():
         check(f"self-test: a literal of {lit[0]} at {lit[1]:#x} pointed at b2_live is caught",
               any(x[1] == hex(lit[1]) for x in got), got[:4])
 
-    # (2) the stubs, live and blank
-    for state in ("live", "blank"):
+    # (2) the stubs: live, in the boot window (bank 2 present, meter not up), blank
+    for state in ("live", "boot", "blank"):
         for n in r["entries"]:
             e = Emu(IMAGE, "out/cave.elf")
             e.uc.mem_map(0x38800000, 0x1000)
             e.uc.mem_map(0x58024000, 0x1000)
             if state == "blank":
                 blank_bank2(e)
+            elif state == "boot":
+                meter_down(e)
             spec = r["fallbacks"][n][0]
             seen = {"body": 0, "fb": 0, "b2": 0}
             e.uc.hook_add(UC_HOOK_CODE, lambda *_: seen.__setitem__("b2", seen["b2"] + 1), begin=B2_LO, end=B2_LO + 0xE0000)
@@ -677,7 +688,13 @@ def verify():
                 else:
                     ok = True
                 ok = ok and seen["b2"] == 0 and seen["body"] == 0
-                check(f"blank {n}: {spec}, no instruction run in bank 2", ok, (seen, hex(r0)))
+                check(f"{state:5s} {n}: {spec}, no instruction run in bank 2" + (" (bank 2 paired, meter not up)"
+                      if state == "boot" else ""), ok, (seen, hex(r0)))
+        if state == "boot":
+            print("     before the meter's first block, a call from bank 1 to any of these answers with its fallback, "
+                  "bank 2 or not:\n       " + "\n       ".join(f"{n:22s} {r['fallbacks'][n][0]:24s} "
+                                                             f"[{'; '.join(r['reached'][n])}]" for n in r["entries"]
+                                                             if n in r["reached"]))
     e = Emu(IMAGE, "out/cave.elf")
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
