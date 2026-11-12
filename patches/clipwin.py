@@ -52,11 +52,12 @@ PATCHES = [
     hook(0x080A661A, 0x080B02E6, "clipwin_label"),
     hook(0x080A6622, 0x080B02E6, "clipwin_label"),
     # the Clip Pos page (FUN_08098d40 page 1: Loop Mode 0x8d, Beat Count 0xd2, Quant Size 0x47, Sync 0x94, then 32 empty
-    # slots), both copies of the tables: Region in slot 5, Slip in slot 6, Loop Len in slot 7, Fit in slot 8, and
-    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 9,
-    # TL Knob (the Waveform's TL in Clip mode: Loop Start or Move) in slot 10
-    (0x080EF998, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
-    (0x080EF290, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
+    # slots), both copies of the tables: JOEBOX 2's Stretch in slot 5 (filter.py, upstream's bytes), then Region in
+    # slot 6, Slip in slot 7, Loop Len in slot 8, Fit in slot 9, and
+    # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 10,
+    # TL Knob (the Waveform's TL in Clip mode: Loop Start or Move) in slot 11
+    (0x080EF99A, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
+    (0x080EF292, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
 ]
 
 # Call sites JOEBOX 2's Clip selection (slice.py: sel_len_b, sel_zoom, sel_bind_bpm, sel_wave) hooks too. On a Clip

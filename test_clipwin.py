@@ -301,12 +301,12 @@ check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, befor
       order[-3:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"]] and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
-POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 5 .. 10
+POS_ROWS = (P_REGION, P_SLIP, P_LOOPLEN, P_FIT, P_FADE, P_TLKNOB)   # the Clip Pos page's slots 6 .. 11, after JOEBOX 2's Stretch (0x14c) in slot 5
 for page in (0x080EF990, 0x080EF288):
     got = struct.unpack_from("<36H", img, page - BASE)
-    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Region (0x150), Slip (0x151), Loop Len "
-          f"(0x152), Fit (0x153), stock's Loop Fade (0xfa), TL Knob (0x154), then {32 - len(POS_ROWS)} empty slots",
-          got == (0x8D, 0xD2, 0x47, 0x94) + POS_ROWS + (0,) * (32 - len(POS_ROWS))
+    check(f"Clip Pos page at {page:#010x}: Loop Mode, Beat Count, Quant Size, Sync, Stretch (0x14c), Region (0x150), Slip (0x151), Loop Len "
+          f"(0x152), Fit (0x153), stock's Loop Fade (0xfa), TL Knob (0x154), then {31 - len(POS_ROWS)} empty slots",
+          got == (0x8D, 0xD2, 0x47, 0x94, 0x14C) + POS_ROWS + (0,) * (31 - len(POS_ROWS))
           and struct.unpack_from("<36H", stock, page - BASE) == (0x8D, 0xD2, 0x47, 0x94) + (0,) * 32, [hex(x) for x in got[:10]])
 touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C]), "FUN_08065290": (0x08065290, 688, [0x0806541A]),
            "FUN_08064a94 (recompute)": (0x08064A94, 0x3C8, [0x08064B2C, 0x08064C5A]),
@@ -316,8 +316,8 @@ touched = {"FUN_08065550": (0x08065550, 936, [0x0806561E, 0x08065690, 0x0806578C
            "FUN_080a54a0 (the Waveform setup; slice.py's four Slicer hooks in it too)":
                (0x080A54A0, 0x6F0, [0x080A582A, 0x080A5B0E, 0x080A58E6, 0x080A58F2, 0x080A58FE, 0x080A5B64]),
            "FUN_080a53a2": (0x080A53A2, 0x16, [0x080A53B0]),
-           "the Clip Pos page": (0x080EF990, 72, [0x080EF998 + 2 * i for i in range(len(POS_ROWS))]),
-           "its class-0x4c copy": (0x080EF288, 72, [0x080EF290 + 2 * i for i in range(len(POS_ROWS))])}
+           "the Clip Pos page": (0x080EF990, 72, [0x080EF998 + 2 * i for i in range(1 + len(POS_ROWS))]),
+           "its class-0x4c copy": (0x080EF288, 72, [0x080EF290 + 2 * i for i in range(1 + len(POS_ROWS))])}
 for name, (start, size, at) in touched.items():
     allowed = {a + i for a in at for i in range(4 if a < 0x080EF000 else 2)}
     diff = {start + i for i in range(size) if img[start - BASE + i] != stock[start - BASE + i]}
@@ -430,7 +430,7 @@ check(f"a new pad's store (FUN_08093f20, type 3) holds Region 0 (Auto), Slip 0, 
       (count, cap, ids[-4:]))
 
 fade_reg = [r for r in regs if r[0] == P_FADE]
-check(f"stock's Loop Fade row (0xfa), on the Clip Pos page's slot 9: registered as stock registers it ({fade_reg}), and in a new "
+check(f"stock's Loop Fade row (0xfa), on the Clip Pos page's slot 10: registered as stock registers it ({fade_reg}), and in a new "
       f"pad's store once (value {entries[ids.index(P_FADE)][2] if P_FADE in ids else None}), so a Clip pad's saves",
       len(fade_reg) == 1 and fade_reg == [r for r in stock_regs if r[0] == P_FADE] and fade_reg[0][3:5] == (0, 1000)
       and ids.count(P_FADE) == 1, (fade_reg, ids.count(P_FADE)))

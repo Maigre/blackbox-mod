@@ -62,7 +62,7 @@ PATCHES = [
 
 # Clip Window (src/clipwin.c): its hooks ride with this set, which already owns the clip read and the pad pages, so the
 # image keeps the name every suite opens. patches/clipwin.py holds them.
-from clipwin import PATCHES as CLIPWIN  # noqa: E402
+from clipwin import PATCHES as CLIPWIN, TAKES  # noqa: E402,F401  (TAKES: patch.py reads it from the set named, this one)
 
 PATCHES += CLIPWIN
 
