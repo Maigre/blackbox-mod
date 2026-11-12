@@ -85,8 +85,10 @@ reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when
 - The unit's power from mgr-ran: [`bench/bbpower.py`](bench/bbpower.py) `off | on | cycle` (the hub port it is
   plugged in; the cut is proven by the unit's own uptime counter).
 - Bench kit (dev builds, 37.5.0d on; needs that build's `BBEXTRA.BIN`): [`bench/bbkit.py`](bench/bbkit.py) sends
-  jobs through a mailbox: knob, button, play, stop, touch, tap, preset, presets, ls, stat, get, put, rm, restart,
-  shot, row. `bbshot.py` and `bbusb.py peek` read 4 KB a request on such a build (`notes/re/x6` sections 9 and 13).
+  jobs through a mailbox: info, knob, button, play, stop, touch, tap, cancel, preset, presets, ls, stat, get, put,
+  rm, restart (waits for the unit to come back and prints the new boot number), shot, row. `bbshot.py` and
+  `bbusb.py peek` read 4 KB a request on such a build (`notes/re/x6` sections 9 and 13); `bbusb.py set` / `get`
+  there need that build's own `bbusb.py`.
   `bench/bbusb.py crash` also prints the crashed-boot count and the fault token (`BANK 2 HELD OFF` from 3).
 - Bench over USB: [`bench/bbusb.py`](bench/bbusb.py) — the power jack of a modded unit is a USB device: audio of
   Outs 1–3 (measure a feature in samples), MIDI, and on dev builds the memory (the crash recorder, the Clip Window's

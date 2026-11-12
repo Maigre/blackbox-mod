@@ -112,7 +112,11 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   13-row request is still served there, from bank 2: `bbusb.py set` / `get` need this build's `BBEXTRA.BIN`. The
   long peek is the dev peek with a length of 65..4096; the long poke is its own request. Their flags are bits of
   the USB core's own interrupt mask, which every reset clears, so the interrupt reaches bank 2 only during a
-  transfer this boot began behind `b2_live()`. Net bank 1: 4 B less than before the kit.
+  transfer this boot began behind `b2_live()` (tested with a probe on bank 2). The long poke writes up to 4 KB into
+  any RAM the word poke may write, wider than x6 §9.2 first drew it and kept on purpose (x6 §13). One request at a
+  time: a knob or tap job holds the mailbox until it ends, a request made meanwhile is answered busy (−8), and a
+  cancel job ends the running one; `bbkit.py` cancels a job that outlasts its time. `master_alloc` clears the box at
+  every boot, because the boot count restarts at 1 after a power-on. Net bank 1: 4 B less than before the kit.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving

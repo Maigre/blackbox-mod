@@ -427,8 +427,9 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
   plus the kit, and a `RELEASE=1` image is byte for byte the base's (checked against `d23b389`'s, sha256). The cost:
   a dev ↔ release install rewrites bank 2 (one restart at the first boot).
 - **The data area sits at the tail's end, not in a grown core** (§9.2 said `CORE_BYTES` + `0x2000`). Dev builds only:
-  `master.c`'s `KIT_BYTES` = `0x1400` at block + `0x84900`, so Prism, the inserts and `cw_bank` keep the offsets a
-  release has; only `master_alloc`'s size changes (`0x85D00`). It exists only with the tail (the check word keyed
+  `master.c`'s `KIT_BYTES` = `0x1400` at block + `0x95910` since the JOEBOX 2 merge (`0x84900` when this was built
+  on 37.4.1), so Prism, the inserts and `cw_bank` keep the offsets a release has; only `master_alloc`'s size changes
+  (`0x96D10`; `0x85D00` before the merge). It exists only with the tail (the check word keyed
   PRISM), which is what a live bank 2 implies; `kit_b2.c`'s `data_area()` checks the key anyway. Layout: `+0x000`
   `FIL`, `+0x058` `DIR`, `+0x0B0` `FILINFO`, `+0x200` a name or path (256 B), `+0x300` the preset job's scratch name,
   `+0x400` the 4 096-B chunk.
