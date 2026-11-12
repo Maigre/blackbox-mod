@@ -91,7 +91,8 @@ static unsigned theme_now(void)
     return t < THEMES ? t : 0;
 }
 
-void chop_poll(void);
+#include "chop.h"                                     /* chop_poll, chop_cave */
+int b2_live(void);                                    /* cpu.c */
 
 /* Replaces the GUI loop's compose call (bl @0x08043e4c). */
 void theme_compose(uint8_t *gui)
@@ -111,7 +112,8 @@ void theme_compose(uint8_t *gui)
             gui[GUI_HOLDER + 0x39] = 1;
         }
     }
-    chop_poll();                                        /* chop.c: a ChopShop operation's next step (GUI task) */
+    if (b2_live())
+        chop_poll(&chop_cave);                          /* chop.c (bank 2): a ChopShop operation's next step (GUI task) */
     fw_compose(gui);
 }
 

@@ -470,7 +470,7 @@ void sel_knob_text(void *text, const char *s)
     if (id == 0x161) {                                  /* ChopShop's Roll (chopmode.c): its cue, not the number */
         char buf[16];                                   /* the knob's view is not known here: the run's own pad (the
                                                            tick, chopmode.c, checks the view's pad every frame) */
-        fw_text_set(text, chop_roll_text(CHOP_ANY_PAD, buf));
+        fw_text_set(text, b2_live() ? chop_roll_text(&chop_cave, CHOP_ANY_PAD, buf) : "");   /* bank 2 off: no Roll row */
         return;
     }
     if (id != 0x3e4) {                                  /* K_BPM */

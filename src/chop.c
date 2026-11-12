@@ -208,9 +208,8 @@ int chop_random(int32_t *out, int want, const struct chop_job *j, uint32_t seed)
  * past a chop).
  */
 #include "stretch.h"
-struct str_bank *stretch_bank(void);
-void sel_ask_pad(int q);
-int sel_take_pad(int q, float *bpm, float *phase, unsigned *frate);
+/* stretch_bank, sel_ask_pad, sel_take_pad are bank 1's (clipsel.c): bank 2 reaches them through the table bank 1
+   passes in (struct chop_cave, chop.h), never by symbol, so a bank 1 rebuild does not move the payload */
 typedef int (*src_int_fn)(void *src);
 typedef void (*set_fn)(void *store, int param, int value);
 typedef void (*eng_param_fn)(uint32_t engine, uint32_t pad, int param, int value, int a, int b);
@@ -250,9 +249,9 @@ static int scanned(struct str_bank *b, int q, void *obj, int32_t upto)
     return b->cj.state == CHOP_DONE && b->cj.pad == q && b->cj.obj == obj && b->cj.len >= upto;
 }
 
-void chop_request(int q, int op, int unit, int want)
+void chop_request(const struct chop_cave *cv, int q, int op, int unit, int want)
 {
-    struct str_bank *b = stretch_bank();
+    struct str_bank *b = cv->bank();
     if (!b || q < 0 || q > 15 || op <= CHOP_OP_NONE || op > CHOP_OP_RANDOM)
         return;
     struct chop_run *r = &b->cr;
@@ -279,14 +278,14 @@ void chop_request(int q, int op, int unit, int want)
         return;
     }
     r->phase = CHOP_PH_TEMPO;
-    sel_ask_pad(q);
+    cv->ask(q);
 }
 
 /* a new sample on pad q: its last scan is the old file's, so the next Find / Random scans again (a re-roll would place
    the old file's beats: zero slices on a shorter file, glass 10-25) */
-void chop_forget(int q)
+void chop_forget(const struct chop_cave *cv, int q)
 {
-    struct str_bank *b = stretch_bank();
+    struct str_bank *b = cv->bank();
     if (b && b->cr.pad == q)
         b->cr.fpb = 0.0f;
     if (b && b->cj.pad == q) {
@@ -357,9 +356,9 @@ static const char *dice_frame(uint32_t seed, int t, char *buf)
 
 /* The Roll row's text for pad q: tumbling dice, "Rolling..", the result, then a resting die. ASCII only: the font
    draws 0x20..0x7f (research, 10-26). buf holds at least 16. */
-const char *chop_roll_text(int q, char *buf)
+const char *chop_roll_text(const struct chop_cave *cv, int q, char *buf)
 {
-    struct str_bank *b = stretch_bank();
+    struct str_bank *b = cv->bank();
     const struct chop_run *r = b ? &b->cr : 0;
     if (r && q == CHOP_ANY_PAD)
         q = r->pad;
@@ -452,9 +451,9 @@ static void with_tempo(struct str_bank *b, struct chop_run *r, int q, void *obj)
 /* The Tempo row went from code old to code new on pad q (the store already holds new). With this pad's detection in
    hand, chop again at the corrected tempo without the detector (Beats at once, Find / Random rescan); 0 = no detection
    to reuse: the caller requests a normal chop, whose detection then reads the new code. */
-int chop_retempo(int q, int old, int new_code)
+int chop_retempo(const struct chop_cave *cv, int q, int old, int new_code)
 {
-    struct str_bank *b = stretch_bank();
+    struct str_bank *b = cv->bank();
     if (!b || q < 0 || q > 15)
         return 0;
     struct chop_run *r = &b->cr;
@@ -471,9 +470,9 @@ int chop_retempo(int q, int old, int new_code)
     return 1;
 }
 
-void chop_poll(void)
+void chop_poll(const struct chop_cave *cv)
 {
-    struct str_bank *b = stretch_bank();
+    struct str_bank *b = cv->bank();
     if (!b)
         return;
     struct chop_run *r = &b->cr;
@@ -497,7 +496,7 @@ void chop_poll(void)
     if (r->phase == CHOP_PH_TEMPO) {
         float bpm, phase;
         unsigned frate;
-        int t = sel_take_pad(q, &bpm, &phase, &frate);
+        int t = cv->take(q, &bpm, &phase, &frate);
         if (!t)
             return;
         void *obj = pad_obj(b, q);

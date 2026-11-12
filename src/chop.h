@@ -49,7 +49,20 @@ struct chop_job {
 enum { CHOP_OP_NONE, CHOP_OP_BEATS, CHOP_OP_FIND, CHOP_OP_RANDOM };
 enum { CHOP_PH_IDLE, CHOP_PH_TEMPO, CHOP_PH_SCAN };
 #define CHOP_ANY_PAD (-2)          /* chop_roll_text: the run's own pad */
-const char *chop_roll_text(int q, char *buf);   /* chop.c: the Roll row's cue text (buf >= 16) */
+/* What bank 2's ChopShop (chop.c, chopmode_b2.c) needs of bank 1, passed in by bank 1's callers (chopmode.c chop_cave):
+   bank 2 never calls bank 1 by symbol, so a bank 1 rebuild leaves the payload byte-identical (blackbox#t-052) */
+struct str_bank;
+struct chop_cave {
+    struct str_bank *(*bank)(void);                                    /* stretch_bank */
+    void (*ask)(int q);                                                /* sel_ask_pad */
+    int (*take)(int q, float *bpm, float *phase, unsigned *frate);     /* sel_take_pad */
+};
+extern const struct chop_cave chop_cave;                               /* chopmode.c (bank 1) */
+const char *chop_roll_text(const struct chop_cave *cv, int q, char *buf);   /* chop.c: the Roll row's cue text (buf >= 16) */
+void chop_request(const struct chop_cave *cv, int q, int op, int unit, int want);
+void chop_forget(const struct chop_cave *cv, int q);
+int chop_retempo(const struct chop_cave *cv, int q, int old, int new_code);
+void chop_poll(const struct chop_cave *cv);
 struct chop_run {
     uint8_t op, phase, pad, unit;  /* unit (Beats): 0 1/4, 1 1/2, 2 beat, 3 2 beats, 4 bar */
     uint8_t fail, spare[3];        /* last result: 0 ok, 1 no tempo, 2 no audio / scan failed; spare = the Roll cue
