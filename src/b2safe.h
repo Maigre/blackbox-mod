@@ -7,8 +7,8 @@
  * same 32-byte cache line as those:
  *   B2_CRASHES  how many boots in a row ended in a crash. B2_HOLD or more = held off.
  *   B2_FAULTED  B2_FAULT_SEEN while a boot is ending in a fault: fault.c's recorder writes it before the reset it asks
- *               for, and the next boot reads it and takes it down. The reset cause cannot tell that reset from a
- *               restart somebody asked for - the recorder's, the card loader's and the bench's are all SYSRESETREQ.
+ *               for, and the next boot reads it and takes it down. The reset cause cannot tell that reset from the
+ *               card loader's restart: both are SYSRESETREQ.
  */
 #ifndef B2SAFE_H
 #define B2SAFE_H

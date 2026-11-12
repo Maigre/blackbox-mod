@@ -46,7 +46,7 @@ FRAME = 0x30000100
 SPACE, SPACE_TEXT = 0x24062174, 0x24063000
 CPU, D1, D2, BOR, PIN, POR, SFT, WWDG = (1 << b for b in (17, 19, 20, 21, 22, 23, 24, 28))
 POWER_ON = POR | BOR | PIN                 # what a power-cycle read on the test unit (bench notes 2026-10-16, -10-20)
-RESTART = SFT | PIN | CPU                  # a reset somebody asked for: the loader's (Gate 3 part 1), the recorder's, the bench's
+RESTART = SFT | PIN | CPU                  # a SYSRESETREQ: the loader's restart (Gate 3 part 1) and the recorder's both read this
 WATCHDOG = WWDG | PIN | CPU
 HELD = 0x86                                # b2chk: B2_HELD | B2_LOOKED | B2_UNPAIRED
 PER_SECOND = 375                           # audio blocks: 128 frames at 48 kHz
@@ -338,7 +338,7 @@ def honest(u):
         seen.append((u.count(), u.held()))
     out.append(("a unit power-cycled fast after each of five crashes: 1, 0, 1, 0 ... never held",
                 seen == [(1, False), (0, False)] * 5, seen))
-    for label, reset in (("the bench's restart over USB (SYSRESETREQ, no fault)", lambda: u.boot(RESTART)),
+    for label, reset in (("a SYSRESETREQ with no fault (the loader's kind of restart)", lambda: u.boot(RESTART)),
                          ("a pin reset", lambda: u.boot(PIN | CPU)),
                          ("a power-on", lambda: u.power_on(keep=True)),
                          ("the installer's reset into the new image", lambda: u.boot(RESTART | POR | BOR))):
@@ -380,7 +380,8 @@ def hold_ends(u):
     out = []
     for label, leave in (("a power-cycle", lambda: u.power_on(keep=True)),
                          ("a power-cycle that wipes backup SRAM", lambda: u.power_on()),
-                         ("a restart the bench asks for", lambda: u.boot(RESTART))):
+                         ("a SYSRESETREQ with no fault (the installer's, if its bootloader restarts that way: not observed)",
+                          lambda: u.boot(RESTART))):
         u.power_on()
         for _ in range(3):
             u.watchdog()
@@ -399,17 +400,21 @@ def hold_ends(u):
 
 
 def new_payload(u):
+    """The loader takes only this image's payload (b2load.c's header_ok: this id, this sum), so a payload with another
+    id comes only with another image, and that goes in through the installer. The emulator runs one image, so what is
+    shown is the installer's power-on clearing a hold and the loader writing the card's payload after it - not an id
+    that changed."""
     u.power_on()
-    u.uc.mem_write(B2, stale)                                  # what is up there is not what the new image expects
+    u.uc.mem_write(B2, stale)                                  # bank 2 is not the payload this image expects
     for _ in range(3):
         u.fault()
     asked = u.loader()
-    out = [("held, a stale bank 2 and the new payload on the card: no write while held (no loop of rewrites)",
+    out = [("held, a stale bank 2 and this image's payload on the card: no write while held (it could only be this one again)",
             u.held() and not asked and u.opens == 0 and u.programs == 0, (u.held(), asked, u.opens))]
-    u.boot(RESTART)                                            # the new BLACKBOX.bin goes in through the installer's reset
+    u.power_on(keep=True)                                      # the installer: BACK + INFO at power-on (docs/JOEBOX.md)
     asked = u.loader()
-    out.append(("A NEW PAYLOAD comes with its image, through the installer's reset: count 0, the loader writes it and restarts",
-                u.count() == 0 and asked and u.programs == 1, (u.count(), asked, u.programs)))
+    out.append(("held, then THE INSTALLER'S POWER-ON (the only way a payload with another id arrives): count 0, the loader "
+                "writes the card's payload and restarts", u.count() == 0 and asked and u.programs == 1, (u.count(), asked, u.programs)))
     u.boot(RESTART)
     out.append(("...and the boot after that write is 0, paired, live, the whole block", u.count() == 0 and not u.held()
                 and u.live() == 1 and u.tail(), (u.count(), u.allocs)))
