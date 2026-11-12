@@ -39,11 +39,16 @@ import time
 VID, PID = 0x1209, 0x0003
 
 
+class NoDevice(SystemExit):
+    """no Blackbox on USB: a SystemExit, so a command says why and stops, as before; bench/bbkit.py's restart catches
+    it (the unit leaving the bus is its success)"""
+
+
 def dev():
     import usb.core
     d = usb.core.find(idVendor=VID, idProduct=PID)
     if d is None:
-        sys.exit("no Blackbox (1209:0003) on USB: is the power jack cabled to this machine, and the mod installed?")
+        raise NoDevice("no Blackbox (1209:0003) on USB: is the power jack cabled to this machine, and the mod installed?")
     return d
 
 
@@ -107,6 +112,8 @@ def poke_bytes(addr, data):
         try:
             d.ctrl_transfer(0x40, 0x54, (addr + at) & 0xFFFF, (addr + at) >> 16, data[at:at + 4096])
         except usb.core.USBError as e:
+            if usb.core.find(idVendor=VID, idProduct=PID) is None:
+                raise NoDevice(f"long poke at {addr + at:#x}: the unit left USB ({e})")
             sys.exit(f"long poke at {addr + at:#x} refused ({e}): a build without the bench kit, bank 2 not live, or "
                      "not a RAM the poke may write")
 

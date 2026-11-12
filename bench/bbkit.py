@@ -19,7 +19,8 @@ Fork-only tool, like bench/bbusb.py, whose peek and poke it uses.
   bbkit.py get PATH [LOCAL]              copy a file off the card
   bbkit.py put LOCAL [PATH] [--replace]  copy a file onto the card; never replaces one unless --replace
   bbkit.py rm PATH                       delete a file on the card
-  bbkit.py restart                       a clean reset, once stock is idle on the card and nothing plays or records
+  bbkit.py restart                       a clean reset, once stock is idle on the card and nothing plays or records;
+                                         waits for the unit to come back and says its new boot number
   bbkit.py shot OUT.png                  a screenshot (bench/bbshot.py, with the long peek)
   bbkit.py row CELL ROW [VALUE]          a pad's row, as bbusb.py set / get, through the kit's job 1 / 2
 
@@ -81,11 +82,9 @@ SPANS = {0x03: "knob", 0x05: "tap"}   # the jobs that span GUI passes: the box i
 CANCEL = 0x08
 
 
-def job(index, *args, timeout=5.0, base=None):
-    """run job `index` with up to six i32 arguments; (r0, r1, r2, r3), or KitError. While a knob or tap job runs the
-    unit answers every other request -8: none is sent then but a cancel. A knob or tap job that does not end within
-    `timeout` is cancelled, so it does not go on behind the next command."""
-    base = base if base is not None else block()
+def post(base, index, args):
+    """write the request for job `index` into the mailbox, seq last; (the mailbox, its seq). While a knob or tap job
+    runs the unit answers every other request -8: none is sent then but a cancel."""
     mb = base + MBOX
     epoch = bbusb.word(BOOTS)
     box = bbusb.peek(mb + 0x24, 0x30)                    # seq, done ... +0x40 state ... +0x50 the job running
@@ -96,6 +95,14 @@ def job(index, *args, timeout=5.0, base=None):
     seq = (max(seq_now, done) + 1) & 0xFFFFFFFF or 1
     a = [v & 0xFFFFFFFF for v in args] + [0] * (6 - len(args))
     write(mb, struct.pack("<IHHI6I", KIT1, index, 0, epoch, *a) + struct.pack("<I", seq))   # ascending: seq last
+    return mb, seq
+
+
+def job(index, *args, timeout=5.0, base=None):
+    """run job `index` with up to six i32 arguments; (r0, r1, r2, r3), or KitError. A knob or tap job that does not
+    end within `timeout` is cancelled, so it does not go on behind the next command."""
+    base = base if base is not None else block()
+    mb, seq = post(base, index, args)
     t0 = time.time()
     while bbusb.word(mb + 0x28) != seq:
         if time.time() - t0 > timeout:
@@ -110,6 +117,50 @@ def job(index, *args, timeout=5.0, base=None):
     if result:
         raise KitError(result, r)
     return tuple(r)
+
+
+def present():
+    """is a Blackbox on USB (without bbusb.dev()'s exit when not)"""
+    import usb.core
+    return usb.core.find(idVendor=bbusb.VID, idProduct=bbusb.PID) is not None
+
+
+def restart(back_within=30.0):
+    """job 0x4f, a clean reset: (boot count before, after, the reset's cause word RCC_RSR as fault.c recorded it). The
+    unit answers, then resets within microseconds, so the poll after the request nearly always finds the device gone:
+    that is the restart working, not a failure. Then it waits for the unit to come back, and reads its boot record."""
+    import usb.core
+    gone = (bbusb.NoDevice, usb.core.USBError)
+    base = block()
+    boots = bbusb.word(BOOTS)
+    t0 = time.time()
+    try:
+        mb, seq = post(base, 0x4F, [0x52455354])
+    except bbusb.NoDevice:                           # it took the request and reset before its status packet left
+        mb = None
+    while mb is not None:
+        try:
+            if bbusb.word(mb + 0x28) == seq:           # answered before it went: a refusal says why; 0, the reset follows
+                result, *r = struct.unpack("<5i", bbusb.peek(mb + 0x2C, 20))
+                if result:
+                    raise KitError(result, r)
+        except gone:
+            break
+        if time.time() - t0 > 5:
+            sys.exit("restart: no answer, and the unit is still on USB after 5 s (a build without the kit, or the card "
+                     "task is not running)")
+        time.sleep(0.02)
+    while time.time() - t0 < back_within:            # gone: wait for it to enumerate again
+        time.sleep(0.5)
+        if not present():
+            continue
+        try:
+            magic, rsr, now = struct.unpack("<III", bbusb.peek(BOOTS - 8, 12))   # fault.c's boot record
+        except gone:
+            continue
+        if magic == 0x31544F42 and now != boots:
+            return boots, now, rsr
+    sys.exit(f"restart: the unit left USB but is not back with a new boot record after {back_within:g} s")
 
 
 def put_name(base, text):
@@ -248,8 +299,9 @@ def main(argv):
             job(0x47, base=base)
             print(f"{args[0]}: deleted")
         elif cmd == "restart":
-            job(0x4F, 0x52455354)
-            print("restarting: the unit resets now (watch it re-enumerate; bbusb.py crash says why it last reset)")
+            before, now, rsr = restart()
+            cause = "software (SYSRESETREQ)" if rsr >> 24 & 1 else f"RSR {rsr:#010x}, not a software reset?"
+            print(f"restarted: boot #{now} (was #{before}), reset cause {cause}")
         elif cmd == "shot":
             import bbshot
             bbshot.main(args)

@@ -1247,6 +1247,82 @@ check(f"bbusb.py set right after a KIT1 job, a GUI pass after every word written
       f"next set once too ({posts}, {posts2})", posts == [(0x6E, 0, 0x12, 0x1C9, 11, 0)] and res == (0, 11) and res2[0] == 0
       and posts2 == [(0x6E, 0, 0x12, 0x1C9, 12, 0)], (posts, res, posts2, res2))
 
+# bbkit.py restart (review 12/11: it reported a failure when the restart worked). The card task answers, writes AIRCR
+# and the unit leaves USB within microseconds: here the emulator stops at the AIRCR write, the "USB" says no device
+# (bbusb.NoDevice) for a few looks, then the unit is back with fault.c's boot record moved on: boot BOOTS + 1, reset
+# cause software. Twice: the reset seen by the client's poll, and the reset landing before the request's own status
+# packet left (the long poke itself finds the unit gone).
+reset = {"aircr": [], "gone": 0}
+k.e.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, kind, a, size, v, _: (reset["aircr"].append(v & 0xFFFFFFFF), uc.emu_stop()),
+                begin=0xE000ED0C, end=0xE000ED0C)
+
+
+def unit_tasks():
+    """the three tasks once, unless the unit is resetting; the reset itself (the AIRCR write) takes it off USB"""
+    if reset["gone"]:
+        return
+    for task in (SCREEN, AUDIO, CARD):
+        try:
+            k.run(task)
+        except AssertionError:                             # stopped at the AIRCR write: never returns
+            reset["gone"] = 3
+            k.e.w32(BOOTS_AT - 4, 1 << 24)                 # what the next boot's fault.c records: software reset, ...
+            k.e.w32(BOOTS_AT, k.e.r32(BOOTS_AT) + 1)       # ... one boot more
+            return
+
+
+def usb_up():
+    if reset["gone"]:
+        raise bbusb.NoDevice("no Blackbox (1209:0003) on USB")
+
+
+def present():
+    if reset["gone"]:
+        reset["gone"] -= 1
+        return False
+    return True
+
+
+class _UnitClock:
+    time = staticmethod(__import__("time").time)
+
+    @staticmethod
+    def sleep(_):
+        unit_tasks()
+
+
+bbusb.word = lambda a: (usb_up(), k.e.r32(a) & 0xFFFFFFFF)[1]
+bbusb.peek = lambda a, n=4: (usb_up(), bytes(k.e.uc.mem_read(a, n)))[1]
+bbkit.present = present
+bbkit.time = _UnitClock
+k.e.w32(BOOTS_AT - 8, 0x31544F42)                          # fault.c's boot record: magic, cause, count
+k.e.w32(BOOTS_AT - 4, 1 << 23)
+k.e.w32(BOOTS_AT, BOOTS)
+got = bbkit.restart(back_within=10)
+seq = k.e.r32(MB + 0x24)
+check(f"bbkit.py restart: the unit answers and resets, the client takes 'gone from USB' as the reset, waits for it back "
+      f"and reads the new boot record: (boot before, after, cause) = {got}", got == (BOOTS, BOOTS + 1, 1 << 24)
+      and reset["aircr"] == [0x05FA0004] and k.e.r32(MB + 0x28) == seq and k.e.r32(MB + 0x2C) == 0, (got, reset))
+k = card_kit()                                             # a fresh unit (the last one stopped inside its reset)
+preset_rig(k)
+reset = {"aircr": [], "gone": 0}
+k.e.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, kind, a, size, v, _: (reset["aircr"].append(v & 0xFFFFFFFF), uc.emu_stop()),
+                begin=0xE000ED0C, end=0xE000ED0C)
+k.e.w32(BOOTS_AT - 8, 0x31544F42)
+k.e.w32(BOOTS_AT - 4, 1 << 23)
+
+
+def poke_then_reset(a, data):
+    k.e.uc.mem_write(a, bytes(data))
+    unit_tasks()                                           # the card task runs it before the status packet goes
+    usb_up()
+
+
+bbusb.poke_bytes = poke_then_reset
+got = bbkit.restart(back_within=10)
+check(f"...and when the reset lands before the request's own status packet left (the long poke finds the unit gone): "
+      f"the same ({got})", got == (BOOTS, BOOTS + 1, 1 << 24) and reset["aircr"] == [0x05FA0004], (got, reset))
+
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and
 # b2load_thunk.S do not call it, build.sh leaves kit_b2 out of bank 2 (so the release's bank 2, and the bank 1 that
