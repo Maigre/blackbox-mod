@@ -39,6 +39,15 @@ for name, mod in mods:
         data[o:o + len(new)] = new
         print(f"{name}: {addr:#010x} {old.hex()} -> {new.hex()}")
 
+# The Mk1 bootloader (1.0.22) compares up to 4 bytes past a last chunk that is no multiple of 4. Up to the next 32-byte
+# boundary those are bytes it programmed itself; past it, erased flash against a stale buffer. So an image whose length
+# is 29, 30 or 31 modulo 32 ends its install on "Unable to verify" (notes/re/x7 section 4.2: read from the bootloader,
+# never seen on a unit). Stock is 24 modulo 32, so this is a cave of 5, 6 or 7 modulo 32: grow or shrink it by a few
+# bytes (a pad in src/, not here: the browser patcher writes the same bytes).
+assert len(data) % 32 not in (29, 30, 31), (
+    f"the image is {len(data)} bytes, {len(data) % 32} modulo 32: the unit's installer would fail its verify "
+    f"(notes/re/x7 section 4.2). Change the cave's size by a few bytes.")
+
 out_dir = os.path.join(ROOT, "out", "+".join(names))
 os.makedirs(out_dir, exist_ok=True)
 out = os.path.join(out_dir, "BLACKBOX.bin")

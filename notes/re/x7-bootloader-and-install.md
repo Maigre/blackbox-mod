@@ -349,9 +349,9 @@ needed after a failed install either way, and a power cut at the wrong moment ne
 §6.1's lock-and-jump route changes the weighing: no flash is written by code of ours, its likely failures are benign
 (a power cycle) or need hands, and its first bench trial erases nothing. It is still untried and unmodelled from the
 app's state. **If a buttonless install is ever wanted** (an automated bench), try that route first, on the bench unit,
-with no `BLACKBOX.bin` on the card; build §7's updater only if the route fails. Cheaper and worth doing now
-(*design*): a build-time check that `BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), and correct the
-fork's wording on bank 2 once §9's check has settled §4.3.
+with no `BLACKBOX.bin` on the card; build §7's updater only if the route fails. Cheaper: a build-time check that
+`BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), in `patch.py` since 37.5.0; and, still to do, correct
+the fork's wording on bank 2 once §9's check has settled §4.3.
 
 ## 9. Open
 
