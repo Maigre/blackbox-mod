@@ -25,7 +25,9 @@
  *         +0x44 KIT_VERSION << 16 | the table's size    +0x48.. the kit's own state (the computer never writes it)
  * Results: 0 done; -1 no such job; -2 stale epoch (a request from before the last reset: SDRAM keeps it, and it must
  * not run again); -3 a bad argument; -4 stock would not take it now (r0 says why); -5 not found; -6 a FatFs error (its
- * code in r0); -7 the wrong state (no file open, one open already, no touch down, one down already).
+ * code in r0); -7 the wrong state (no file open, one open already, no touch down, one down already); -8 busy: a job
+ * spanning passes runs (a knob, a tap; r0 its index), and until it ends every request but a cancel (0x08) is answered
+ * so, by the screen task.
  * MBX1, the 13-row request of 37.3.1d - 37.4.1d (bench/bbusb.py set / get), is still served at the same place with
  * the same offsets and results: +0x04 seq, +0x08 op / row / col, +0x0c id, +0x10 value; +0x14 done, +0x18 result,
  * +0x1c the store's value after.
@@ -47,7 +49,8 @@
 _Static_assert(CW_OFFSET + 0xf00u == KIT_AT && sizeof(struct cw_bank) <= 0xf00u, "the mailbox sits past cw_bank, in its 4 KB");
 
 enum { KIT_SCREEN, KIT_AUDIO, KIT_CARD };
-enum { R_OK = 0, R_INDEX = -1, R_EPOCH = -2, R_ARG = -3, R_REFUSED = -4, R_NOT_FOUND = -5, R_FATFS = -6, R_STATE = -7 };
+enum { R_OK = 0, R_INDEX = -1, R_EPOCH = -2, R_ARG = -3, R_REFUSED = -4, R_NOT_FOUND = -5, R_FATFS = -6, R_STATE = -7,
+       R_BUSY = -8 };
 #define R_LATER 1                     /* a job that spans passes: its done comes when it ends */
 
 struct kit_box {
@@ -339,13 +342,19 @@ static int screen_xy(int32_t x, int32_t y)
     return x >= 0 && x < 320 && y >= 0 && y < 240;
 }
 
-/* ---- jobs that span passes: the screen task steps the one running, once a pass, before it looks at anything new ---- */
+/* ---- jobs that span passes: the screen task steps the one running, once a pass, before it looks at anything new.
+   While one runs, the box is the screen task's alone (kit_gate): what the computer asks meanwhile is answered -8 or,
+   a cancel, ends it. So only this task writes done until it ends, and its answer is written only while its own
+   request is still in the box - done never goes back to an older seq, which would make the task of the newer request
+   run it a second time. It is answered before it lets the box go (run 0), so another task can take the next. ---- */
 static void finish(volatile struct kit_box *b, int r)
 {
-    b->r[0] = b->run == 0x03 ? b->run_count : (int32_t)b->touch_wid;
+    if (b->seq == b->run_seq) {
+        b->r[0] = b->run == 0x03 ? b->run_count : (int32_t)b->touch_wid;
+        reply(b, r, b->run_seq);
+    }
     b->run = 0;
     b->state = 0;
-    reply(b, r, b->run_seq);
 }
 
 static void step(volatile struct kit_box *b)
@@ -432,6 +441,23 @@ static int job_tap(volatile struct kit_box *b)
         return R_STATE;
     touch(b, 0, b->arg[0], b->arg[1]);
     return start(b, 0x05, (uint32_t)held - 1u, 0);
+}
+
+/* 0x08 cancel: ends the job spanning passes (a tap's contact lifted where it went down first); r0 its index (0: none
+   ran), r1 the knob's events posted or the tap's widget. The ended job's own request is never answered. */
+#define KIT_CANCEL 0x08u
+static int job_cancel(volatile struct kit_box *b)
+{
+    unsigned run = b->run;
+    b->r[0] = (int32_t)run;
+    b->r[1] = 0;
+    if (run == 0x05)
+        touch(b, 2, b->touch_x, b->touch_y);
+    if (run)
+        b->r[1] = run == 0x03 ? b->run_count : (int32_t)b->touch_wid;
+    b->run = 0;
+    b->state = 0;
+    return R_OK;
 }
 
 /* ---- buttons (x6 §3.2): the press, release or hold code of the button's own row in stock's table, written as stock's
@@ -855,6 +881,7 @@ static const job_fn JOBS[KIT_JOBS] = {
     [0x05] = job_tap,
     [0x06] = job_preset,
     [0x07] = job_presets,
+    [KIT_CANCEL] = job_cancel,
     [0x20] = job_button,
     [0x40] = job_open,
     [0x41] = job_rw,
@@ -877,10 +904,17 @@ __attribute__((noinline)) int kit_gate(unsigned task, volatile struct kit_box *b
 {
     if (b->magic != KIT_MAGIC || seq == b->done)
         return KIT_NONE;
-    barrier();
+    unsigned run = b->run;
+    if (run && (task != KIT_SCREEN || seq == b->run_seq))
+        return KIT_NONE;                           /* a job spans passes: its own request waits for its end, and the */
+    barrier();                                     /* box is the screen task's until then (finish) */
     unsigned index = b->index;
     if (index >= KIT_JOBS || !JOBS[index])
         return task == KIT_SCREEN ? R_INDEX : KIT_NONE;
+    if (run && index != KIT_CANCEL) {              /* any task's job, meanwhile: not now */
+        b->r[0] = (int32_t)run;
+        return R_BUSY;
+    }
     if (index >> 5 != task)
         return KIT_NONE;
     if (b->epoch != BOOTS)
@@ -899,10 +933,8 @@ void kit_run(unsigned task, uint8_t *block)
             b->touch_down = 0;
             b->state = 0;
         }
-        if (b->run) {                              /* a job spanning passes: one step, and nothing new meanwhile */
+        if (b->run)                                /* a job spanning passes: one step, then what is new (kit_gate) */
             step(b);
-            return;
-        }
     }
     if (task == KIT_CARD)
         card_upkeep(b);

@@ -10,6 +10,8 @@ Fork-only tool, like bench/bbusb.py, whose peek and poke it uses.
   bbkit.py play | stop                   the PLAY / STOP button pressed
   bbkit.py touch down|move|up [X Y]      the kit's own finger, in the screenshot's pixels (320 x 240)
   bbkit.py tap X Y [PASSES]              down, and up PASSES GUI passes later (default 3)
+  bbkit.py cancel                        end a knob or tap job still running (until it ends, the unit answers
+                                         every other job -8, busy)
   bbkit.py presets                       the preset list, by index
   bbkit.py preset NAME                   load it, as the PSET screen's Load does (then the Pads screen)
   bbkit.py ls [PATH]                     a folder of the card ("" = the root)
@@ -39,7 +41,8 @@ MBOX, DATA = 0xC000, 0x84900     # in the block: the mailbox; the kit's data are
 NAME, CHUNK, CHUNK_BYTES = 0x200, 0x400, 4096
 RESULTS = {0: "done", -1: "no such job (a build without it?)", -2: "stale: asked before the unit's last reset",
            -3: "bad argument", -4: "stock would not take it now", -5: "not found", -6: "FatFs error",
-           -7: "wrong state (no file open, one open already, no touch down, one down already)"}
+           -7: "wrong state (no file open, one open already, no touch down, one down already)",
+           -8: "busy: a knob or tap job is running (bbkit.py cancel ends it)"}
 BUSY = {1: "the transport plays", 2: "REC is held", 3: "file commands are queued", 4: "a preset load is pending",
         5: "the card's queue is busy", 6: "no card, or no kit data area"}
 KNOBS = {"tl": 0, "bl": 1, "tr": 2, "br": 3}
@@ -74,17 +77,32 @@ def write(addr, data):
     bbusb.poke_bytes(addr, data)
 
 
+SPANS = {0x03: "knob", 0x05: "tap"}   # the jobs that span GUI passes: the box is theirs until they end
+CANCEL = 0x08
+
+
 def job(index, *args, timeout=5.0, base=None):
-    """run job `index` with up to six i32 arguments; (r0, r1, r2, r3), or KitError"""
-    mb = (base if base is not None else block()) + MBOX
+    """run job `index` with up to six i32 arguments; (r0, r1, r2, r3), or KitError. While a knob or tap job runs the
+    unit answers every other request -8: none is sent then but a cancel. A knob or tap job that does not end within
+    `timeout` is cancelled, so it does not go on behind the next command."""
+    base = base if base is not None else block()
+    mb = base + MBOX
     epoch = bbusb.word(BOOTS)
-    seq_now, done = struct.unpack("<II", bbusb.peek(mb + 0x24, 8))
+    box = bbusb.peek(mb + 0x24, 0x30)                    # seq, done ... +0x40 state ... +0x50 the job running
+    seq_now, done = struct.unpack_from("<II", box)
+    if struct.unpack_from("<I", box, 0x1C)[0] == 1 and index != CANCEL:
+        sys.exit(f"job {index:#x} not sent: the unit is still running a {SPANS.get(box[0x2C], hex(box[0x2C]))} job "
+                 "(bbkit.py cancel ends it)")
     seq = (max(seq_now, done) + 1) & 0xFFFFFFFF or 1
     a = [v & 0xFFFFFFFF for v in args] + [0] * (6 - len(args))
     write(mb, struct.pack("<IHHI6I", KIT1, index, 0, epoch, *a) + struct.pack("<I", seq))   # ascending: seq last
     t0 = time.time()
     while bbusb.word(mb + 0x28) != seq:
         if time.time() - t0 > timeout:
+            if index in SPANS:
+                r = job(CANCEL, base=base)
+                how = f"after {r[1]} event(s)" if r[0] == 3 else "its contact lifted" if r[0] == 5 else "it had ended"
+                sys.exit(f"no end to the {SPANS[index]} job in {timeout:g} s: cancelled ({how})")
             sys.exit(f"no answer to job {index:#x} in {timeout:g} s (a build without the kit, bank 2 not live, or the "
                      "task that runs it is not running)")
         time.sleep(0.02)
@@ -194,6 +212,10 @@ def main(argv):
         elif cmd == "tap":
             x, y = int(args[0], 0), int(args[1], 0)
             print(f"tap {x},{y}: widget {job(0x05, x, y, int(args[2], 0) if len(args) > 2 else 3, timeout=30)[0]:#x}")
+        elif cmd == "cancel":
+            r = job(CANCEL)
+            print(f"cancelled the {SPANS[r[0]]} job ({'events posted' if r[0] == 3 else 'widget'} {r[1]})" if r[0] in SPANS
+                  else "nothing was running")
         elif cmd == "presets":
             for i, n in enumerate(presets()):
                 print(f"{i:3}  {n}")

@@ -217,6 +217,41 @@ def gate_suite(k):
     r = k.reply()
     k.run(SCREEN)
     out.append(("...and only the screen task steps it", not r["answered"] and k.e.r32(HW + 0x1274) == w0 + 2 and k.reply()["answered"]))
+    # while it runs the box is the screen task's: a request meanwhile is answered -8 (busy, r0 the job's index) by the
+    # screen task, whatever task it names, and never run; the job's own answer never goes back over the newer one
+    # (review 12/11: a knob's late done made the card task run a put's chunk a second time)
+    k.e.uc.mem_write(0x24009AB0 + 10 * 0x18 + 8, struct.pack("<H", 0xF7))   # PLAY's press code, so a run would show
+    g0, w0 = k.e.r32(0x240021BC + 0x604), k.e.r32(HW + 0x1274)
+    s_knob = k.ask(0x03, 0, 5, 4, 0)                       # four events, one a pass
+    k.run(SCREEN)
+    k.run(SCREEN)
+    r = k.reply()
+    out.append(("...its own request is not taken again while it runs", not r["answered"] and r["state"] == 1
+                and k.e.r32(HW + 0x1274) == w0 + 2))
+    s_btn = k.ask(0x20, 10, 0, seq=s_knob + 1)              # PLAY, the audio task's, asked meanwhile
+    k.run(AUDIO)
+    r_left = k.reply()
+    k.run(SCREEN)                                          # the third event, then the request: busy
+    r_busy = k.reply()
+    k.run(SCREEN)                                          # the fourth and last: the knob ends, unanswered
+    k.run(AUDIO)
+    out.append(("a request while a job spans passes: left by its own task, answered -8 (r0 3) by the screen task, never run",
+                r_left["unset"] and r_busy["answered"] and r_busy["result"] == -8 and r_busy["r"][0] == 3
+                and k.e.r32(0x240021BC + 0x604) == g0))
+    out.append(("...and the job's end does not write its answer over the newer one: done stays the newer seq, the box is "
+                "free (state 0), nothing runs twice", k.e.r32(MB + 0x28) == s_btn and k.reply()["state"] == 0
+                and k.e.r32(HW + 0x1274) == w0 + 4 and k.e.r32(0x240021BC + 0x604) == g0))
+    s = k.ask(0x03, 0, 5, 5, 0)
+    k.run(SCREEN)
+    r = k.job(SCREEN, 0x08, seq=s + 1)                     # a cancel: this pass steps the knob once more, then ends it
+    k.run(SCREEN)
+    out.append(("a cancel (job 8) ends it: answered 0, r0 its index (3), r1 the events posted (2); nothing posted after, "
+                "the knob's own answer never written", r["answered"] and r["result"] == 0 and r["r"][:2] == (3, 2)
+                and k.e.r32(HW + 0x1274) == w0 + 6 and k.e.r32(MB + 0x28) == s + 1 and k.reply()["state"] == 0))
+    r = k.job(SCREEN, 0x08)
+    out.append(("...with nothing running: answered 0, r0 0", r["answered"] and r["result"] == 0 and r["r"][:2] == (0, 0)))
+    r = k.job(SCREEN, 0x00)
+    out.append(("...and the next request runs", r["answered"] and r["result"] == 0 and r["r"][0] == 0x10060))
     k.ask(0x03, 0, 5, 3, 0)
     k.run(SCREEN)
     k.e.w32(BOOTS_AT, BOOTS + 1)                           # the unit reset under it: SDRAM kept the box
@@ -1000,6 +1035,32 @@ check(f"...nor with a block that does not start a cache line (the chunk's lines 
       r3 == (1, -4, 6) and len(fs.calls) == n0, r3)
 check("no card, or no data area (the block without its tail): -4, r0 6, FatFs not called",
       r["result"] == -4 and r["r"][0] == 6 and r2["result"] == -4 and r2["r"][0] == 6 and len(fs.calls) == n0, (r, r2, fs.calls[n0:]))
+# Review 12/11: a knob job spanning passes, then a card open and a read asked meanwhile (a computer that gave up
+# waiting for the knob). Before the fix the card task answered both, the knob's end wrote its own done over theirs,
+# and the card task ran the read a second time. Now both are answered -8 and never run, the knob's end leaves done
+# alone, and the card task takes the next request once the knob has ended.
+k = card_kit()
+fs = k.fs
+fs.files["A.BIN"] = bytearray(b"x" * 10)
+s_knob = k.ask(0x03, 0, 5, 3, 2)                           # three events, two passes apart
+k.run(SCREEN)
+name(k, "A.BIN")
+got = []
+for i, (index, args) in enumerate(((0x40, (0,)), (0x41, (4,)))):
+    k.ask(index, *args, seq=s_knob + 1 + i)
+    k.run(CARD)
+    k.run(SCREEN)
+    got.append((k.reply()["result"], k.reply()["r"][0]))
+for _ in range(8):
+    k.run(SCREEN)
+    k.run(CARD)
+calls, done_then, state = list(fs.calls), k.e.r32(MB + 0x28), k.reply()["state"]
+r = k.job(CARD, 0x40, 0)
+k.job(CARD, 0x44)
+check(f"a card open and a read asked while a knob job runs: each answered -8 (busy, r0 3) and never run; the knob's end "
+      f"leaves done at the read's seq; then the next open runs ({got}, FatFs before: {calls})",
+      got == [(-8, 3), (-8, 3)] and not calls and done_then == s_knob + 2 and state == 0 and r["result"] == 0
+      and [c[0] for c in fs.calls] == ["open", "close"], (got, calls, hex(done_then), r))
 
 # ====================================================================================================== 8b. a preset load by name
 # The screen task's job 6: stock's own FUN_0804290c reads the names off the list (F + 0x32c) until one is the asked-for,
@@ -1126,6 +1187,28 @@ bbkit.main(["button", "rec", "release"])
 codes = [k.e.r16(PANEL + i * 0x18) for i in range(2)]
 check(f"bbkit.py play, button rec release: PLAY's and REC's release codes in the GUI's ring ({[hex(c) for c in codes]})",
       codes == [0xF7, 0xF5], codes)
+w0 = k.e.r32(HW + 0x1274)
+try:
+    bbkit.job(0x03, 0, 1, 50, 1000, timeout=0.05)          # a knob job far longer than the client waits
+    gave_up = None
+except SystemExit as e_:
+    gave_up = str(e_)
+r = struct.unpack("<II", bytes(k.e.uc.mem_read(MB + 0x40, 4)) + bytes(k.e.uc.mem_read(MB + 0x50, 4)))
+check(f"bbkit.py: a knob job that does not end in its time is cancelled, so it does not go on behind the next command "
+      f"({gave_up!r})", gave_up and "cancelled (after 1 event(s))" in gave_up and r[0] == 0 and r[1] & 0xFF == 0
+      and k.e.r32(HW + 0x1274) == w0 + 1, (gave_up, r))
+k.ask(0x03, 0, 1, 50, 1000)                                # one left running (another client's, or a crashed one)
+k.run(SCREEN)
+seq0 = k.e.r32(MB + 0x24)
+try:
+    bbkit.job(0x00)
+    refused = None
+except SystemExit as e_:
+    refused = str(e_)
+check(f"bbkit.py: while a knob job runs, nothing is sent but a cancel ({refused!r})", refused and "still running a knob job"
+      in refused and k.e.r32(MB + 0x24) == seq0, refused)
+bbkit.main(["cancel"])
+check("bbkit.py cancel: the job ended, and the next command runs", k.e.r32(MB + 0x40) == 0 and bbkit.job(0x00)[0] == 0x10060)
 
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and
