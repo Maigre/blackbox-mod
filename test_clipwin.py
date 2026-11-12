@@ -2442,6 +2442,13 @@ def fields(r):
     return [struct.unpack(f_, bytes(r.uc.mem_read(r.pad + o, struct.calcsize(f_))))[0] for o, f_ in FIELDS]
 
 
+def recompute(r):
+    """fields(r) but 0x23C: since JOEBOX 2 it is the selection's end (clipsel.c, stretch_dsp.c), 0 / the file's length
+    when there is none, so a Region's told length no longer reaches it (no_sel); stock reads it nowhere"""
+    f = fields(r)
+    return f[:5] + f[6:]
+
+
 # Region Loop plays only [ls, le), Slip on top; Beat Count Auto from the region's length. Reference: the stock image
 # playing a 48 000-frame file - the region alone - with the same settings.
 ref = audio(frames=48000, beats=0, image=STOCK, cell=0x102)
@@ -2468,8 +2475,9 @@ for slip in (0, 480, -30, 7):
           and all(p == 24000 for _, p, _ in r.hints) and (not slip or r.hints), (out, zeros, peak, lat, pf[:4], r.hints[:3]))
     if slip == 0:
         check("  Beat Count Auto counts the region: frames per step, output samples per step, ticks per step, steps, wrap "
-              f"grid, length, file tempo and the clip ticks told the app equal stock's for the 48 000-frame file ({fields(r)})",
-              fields(r) == fields(ref_r) and fields(r)[2] * fields(r)[3] == 1920
+              f"grid, file tempo and the clip ticks told the app equal stock's for the 48 000-frame file ({fields(r)}); 0x23C, "
+              "JOEBOX 2's selection end, stays the file's 96 000 (no selection)",
+              recompute(r) == recompute(ref_r) and fields(r)[5] == 96000 and fields(r)[2] * fields(r)[3] == 1920
               and [p[1:] for p in r.posted if p[1] == 0x8D][-1:] == [p[1:] for p in ref_r.posted if p[1] == 0x8D][-1:],
               (fields(r), fields(ref_r), [p for p in r.posted if p[1] == 0x8D], [p for p in ref_r.posted if p[1] == 0x8D]))
 
@@ -2478,9 +2486,10 @@ rows = []
 for ls, le in ((0, 36000), (10000, 50000), (5000, 61000), (12345, 90000), (0, 95998)):
     a = scenario(frames=96000, beats=0, points=(ls, le, 1), cell=0x102, blocks=8)
     b = scenario(frames=le - ls, beats=0, image=STOCK, cell=0x102, blocks=8)
-    rows.append((le - ls, fields(a)[2] * fields(a)[3], fields(a) == fields(b)))
+    rows.append((le - ls, fields(a)[2] * fields(a)[3], recompute(a) == recompute(b) and fields(a)[5] == 96000))
 check(f"Beat Count Auto with regions of 36 000, 40 000, 56 000, 77 655 and 95 998 frames: every recompute field as stock's for "
-      f"that file ({[(v, c) for v, c, _ in rows]} (frames, clip ticks))", all(x for _, _, x in rows), rows)
+      f"that file ({[(v, c) for v, c, _ in rows]} (frames, clip ticks)); 0x23C, JOEBOX 2's selection end, the file's 96 000",
+      all(x for _, _, x in rows), rows)
 
 # Auto keeps a freshly loaded pad on File (its loop points the whole file, whatever Loop Mode), and File is v1 bit for bit
 for name, kw in (("Auto, [0, len) Loop Forward (what a load leaves)", dict(points=(0, 88615, 1))),
