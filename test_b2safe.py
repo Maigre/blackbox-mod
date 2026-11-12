@@ -5,8 +5,9 @@ A boot here is the real boot path: master_alloc (the delay constructor's hook: i
 then b2_present for the block's tail), then the audio task's waits (cpu_wait: the meter's start at the first wake,
 where a hold is applied, and the 32.8 s check every 376th). Between boots RCC_RSR is set to what that reset leaves on
 the unit (bench/bbusb.py's bits; a fault's reset and the loader's restart both read CPU + PIN + SOFTWARE), backup SRAM
-keeps what it held (after a power-on: noise), stock's block counter at 0x2400a58c starts again from 0 (.bss) and is
-set to the uptime a case needs. A crash by fault runs fault_record on a stacked frame, up to the reset it asks for; a
+keeps what it held (after a power-on: noise), stock's block counter at 0x2400a58c and the disk and screen tasks' stamps
+beside it start again from 0 (.bss) and are set to the uptime a case needs (a hung task's stamp stops where it hung). A
+crash by fault runs fault_record on a stacked frame, up to the reset it asks for; a
 watchdog reset leaves WWDG1RSTF. The card loader runs with stock's file calls stubbed, and b2_program (the flash write,
 test_b2load.py's) stubbed to put the card's payload in bank 2.
 
@@ -33,6 +34,7 @@ TRIES_N, SCANNING = 0x388003D0, 0x4E435332
 FLT1 = 0x31544C46
 SR2, ECC = 0x52002110, 1 << 25
 RCC_RSR, UPTIME = 0x580244D0, 0x2400A58C
+STAMP_DISK, STAMP_APP = 0x2400A584, 0x2400A588      # stock's watchdog stamps: pcmStreamer's loop, the screen task's app pass
 M = 0x2405FFD0
 B2CHK = M + 35
 DCCMVAC, AIRCR = 0xE000EF68, 0xE000ED0C
@@ -152,7 +154,8 @@ class Unit:
     def boot(self, rsr):
         """out of a reset that left `rsr`: the boot hook, then the audio task's first wake"""
         self.e.w32(RCC_RSR, rsr)
-        self.e.w32(UPTIME, 0)
+        for at in (UPTIME, STAMP_DISK, STAMP_APP):           # stock's .bss: 0 at every reset
+            self.e.w32(at, 0)
         self.allocs.clear()
         self.reads = self.runs = 0
         self.call("master_alloc", 0x24076000, 192000)
@@ -162,9 +165,13 @@ class Unit:
         for _ in range(n):
             self.e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)
 
-    def up(self, seconds):
-        """the unit stays up: stock's block counter at `seconds`, and 376 wakes so the meter looks once"""
-        self.e.w32(UPTIME, int(seconds * PER_SECOND))
+    def up(self, seconds, hung=None):
+        """the unit stays up: stock's block counter at `seconds`, both tasks' stamps with it (a healthy task stamps on
+        every pass) unless `hung` ({stamp: second}) says that task stopped there, and 376 wakes so the meter looks once"""
+        blocks = int(seconds * PER_SECOND)
+        self.e.w32(UPTIME, blocks)
+        for at in (STAMP_DISK, STAMP_APP):
+            self.e.w32(at, int(hung[at] * PER_SECOND) if hung and at in hung else blocks)
         self.wake(376)
 
     def fault(self, seconds=5):
@@ -282,6 +289,22 @@ def good_boot(u):
     u.fault()
     u.watchdog()
     out.append(("...and two more crashed boots after that one make three: held", u.count() == 3 and u.held(), u.count()))
+    return out
+
+
+def hung_task(u):
+    """The audio runs the 32.8 s check, so it is alive by definition; the screen and disk tasks are what the watchdog
+    also waits on. One that hangs at second 25 stops its stamp there and the watchdog resets the unit 10 s later, at 35."""
+    out = []
+    for name, stamp in (("the screen task (the app pass's stamp)", STAMP_APP), ("the disk task (pcmStreamer's stamp)", STAMP_DISK)):
+        u.power_on()
+        u.fault()
+        u.fault()
+        u.up(33, hung={stamp: 25})
+        kept = u.count()
+        u.boot(WATCHDOG)
+        out.append((f"two crashed boots, then {name} hangs at second 25 while the audio runs on: at 33 s the count is STILL 2, "
+                    "and the watchdog's reset at 35 s makes three: held", kept == 2 and u.count() == 3 and u.held(), (kept, u.count())))
     return out
 
 
@@ -471,8 +494,8 @@ def cache(u):
     return out
 
 
-CASES = {f.__name__: f for f in (three_faults, three_watchdogs, faults_and_watchdogs, good_boot, hold_holds, honest, hold_ends,
-                                  new_payload, loader_loop, cache)}
+CASES = {f.__name__: f for f in (three_faults, three_watchdogs, faults_and_watchdogs, good_boot, hung_task, hold_holds, honest,
+                                  hold_ends, new_payload, loader_loop, cache)}
 
 
 # ---------------------------------------------------------------- mutants: one rule broken each, in the linked image
@@ -553,6 +576,20 @@ def never_clear():
     return [(x.address, b"\x70\x47\x00\xbf")] if x else None           # bx lr: the clear never written
 
 
+def stamp_gate(field):
+    """the branch that skips the 32.8 s clear while this stamp (#0x584 the disk task's, #0x588 the screen task's) is
+    under 12,288 blocks"""
+    i = insns("b2_crash_uptime")
+    hits = [i[k + 2] for k in range(len(i) - 2) if i[k].mnemonic.startswith("ldr") and f"#{field}]" in i[k].op_str
+            and is_("cmp", "#0x3000")(i[k + 1]) and branch("bcc", "blo")(i[k + 2])]
+    return hits[0] if len(hits) == 1 else None
+
+
+def no_wait():
+    disk, app = nop(stamp_gate("0x584")), nop(stamp_gate("0x588"))
+    return disk + app if disk and app else None
+
+
 def text_off():
     x = pair("cpu_tools", is_("ldrb", "#0xf3]"), is_("lsls", "#0x18"))[0]
     if not x or x.size != 4:
@@ -570,8 +607,9 @@ MUTANTS = [
      ["honest"]),
     ("a power-on does not clear the count", lambda: nop(after("b2_crash_boot", ldr_count, branch("bne"))), ["honest"]),
     ("a crash counts two", add2, ["good_boot"]),
-    ("the count clears at boot, not after 32.8 s", lambda: nop(after("b2_crash_uptime", is_("cmp", "#0x3000"), branch("bcc", "blo"))),
-     ["three_faults"]),
+    ("the count clears at boot, not after 32.8 s", no_wait, ["three_faults"]),
+    ("the clear does not wait for the disk task's stamp", lambda: nop(stamp_gate("0x584")), ["hung_task"]),
+    ("the clear does not wait for the screen task's stamp", lambda: nop(stamp_gate("0x588")), ["hung_task"]),
     ("a boot that stays up never clears the count", never_clear, ["good_boot"]),
     ("the 32.8 s clear also clears a hold", lambda: nop(after("b2_crash_uptime", is_("cmp", "#1"), branch("bhi"))), ["hold_holds"]),
     ("the hold needs four crashes", lambda: imm8(after("cpu_wait", ldr_count, is_("cmp", "#3")), 4), ["three_faults"]),

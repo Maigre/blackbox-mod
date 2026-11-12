@@ -26,9 +26,13 @@ _Static_assert((0x388003c8u & ~31u) == (0x388003d8u & ~31u), "the crash words le
 #define RSR_POR        (1u << 23)
 #define RSR_WWDG1      (1u << 28)
 
-/* Stock's watchdog supervisor (FUN_08046994) adds one at 0x2400a58c in every audio block; it is .bss, so 0 at every
-   reset. 12,288 blocks of 128 frames at 48 kHz = 32.8 s. */
-#define B2_UPTIME      (*(const volatile uint32_t *)0x2400a58cu)
+/* Stock's watchdog supervisor, three words at 0x2400a584 (fault.c's WDG_SUP): stamp A, the disk task's (pcmStreamer,
+   every pass of its loop), stamp B, the screen task's (every app pass, FUN_080a2258), and its count of audio blocks,
+   which FUN_08046994 adds one to in every block - whether it feeds the window watchdog or not. A stamp is a copy of the
+   count made by its own task, and the dog is fed only while both are within 3,750 blocks (10 s) of it. All three are
+   .bss, so 0 at every reset. Both stamps at B2_GOOD_BLOCKS or more = both tasks were alive after 12,288 blocks of 128
+   frames at 48 kHz, 32.8 s; the audio is, since it runs the check. */
+#define B2_STAMPS      ((const volatile uint32_t *)0x2400a584u)
 #define B2_GOOD_BLOCKS 0x3000u
 
 /* cpu_state.b2chk's last free bit (b2.h lists the others): held off, set with B2_UNPAIRED and B2_LOOKED */

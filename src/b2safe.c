@@ -19,6 +19,9 @@
  *   During a boot (b2_crash_uptime, from the meter every 376 wakes, about once a second): once the unit has run
  *     B2_GOOD_BLOCKS audio blocks (32.8 s), a count of 1 or 2 goes to 0. Not at boot: a payload that dies at second 5
  *     would never add up. B2_HOLD and over stays: a boot with bank 2 held off proves nothing about the payload.
+ *     "Run" means every task the watchdog waits on: the screen and disk tasks' own stamps (b2safe.h) must have
+ *     passed B2_GOOD_BLOCKS, not only the audio's count - the count goes on in a task that has stopped feeding the
+ *     dog, so a screen task hung at second 25 would clear the count at 32.8 s and be reset at 35 s, a 1 each boot.
  *   A count of B2_HOLD or more = HELD (b2_held):
  *     - cpu.c's start, at the meter's first block, sets b2chk to unpaired, looked and held: nothing runs bank 2 or
  *       reads it (no pairing scan), and the card loader stays out - it could only write the same payload again,
@@ -47,6 +50,6 @@ void b2_crash_boot(uint32_t rsr)
 
 void b2_crash_uptime(void)
 {
-    if (B2_UPTIME >= B2_GOOD_BLOCKS && *B2_CRASHES - 1u < B2_HOLD - 1u)
+    if (B2_STAMPS[0] >= B2_GOOD_BLOCKS && B2_STAMPS[1] >= B2_GOOD_BLOCKS && *B2_CRASHES - 1u < B2_HOLD - 1u)
         bkp_put(B2_CRASHES, 0);
 }
