@@ -7,19 +7,17 @@ PY=.venv/bin/python
 [ -x "$PY" ] || PY=python3               # needs unicorn, capstone and numpy
 [ -f host/libdsp.dylib ] || sh host/build.sh     # the host build of the DSP (clang, or CC / cc: host/build.sh), which several suites hold the firmware's against
 
-# Six suites run at a time: one by one the 31 suites take ~28 min (test_clipwin.py alone >11.6 min),
-# over an unattended turn's budget. Pool of 6, longest-known suites queued first, so the pool fills
-# with them immediately and the wall time tracks the longest suite instead of the serial sum.
+# One by one the suites take ~28 min, over an unattended turn's budget: they run in a pool as wide as the box
+# (CHECK_JOBS to change it). The fork's runner (bench/suites.py) queues the longest first and runs a suite over ~2 min
+# as shards of its own file (bench/shard.py), leaving one log and one exit status per suite all the same.
 # xargs -P, not `jobs`: /bin/sh is dash on Debian, where `jobs -p` in a script counts nothing.
-heavy="test_clipwin.py test_munchi.py test_relapse.py test_confetti.py test_fx2.py test_switch.py test_smash.py"
-order() {
-  for t in $heavy; do [ -f "$t" ] && echo "$t"; done
-  for t in test_*.py; do
-    case " $heavy " in *" $t "*) ;; *) echo "$t" ;; esac
-  done
-}
+J=${CHECK_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 6)}
 rm -f out/*.rc                           # a worker killed mid-run must not leave the last run's 0 behind
-order | xargs -n 1 -P 6 sh -c '"$0" "$1" > "out/$1.log" 2>&1; echo $? > "out/$1.rc"' "$PY"
+if [ -f bench/suites.py ]; then
+  "$PY" bench/suites.py "$J"
+else
+  ls test_*.py | xargs -n 1 -P "$J" sh -c '"$0" "$1" > "out/$1.log" 2>&1; echo $? > "out/$1.rc"' "$PY"
+fi
 
 bad=0
 total=0
