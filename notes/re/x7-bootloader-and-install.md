@@ -355,6 +355,12 @@ the fork's wording on bank 2 once §9's check has settled §4.3.
 
 ## 9. Open
 
+- **The install of 12/11 (37.4.1d → 37.5.0d, BACK + INFO, both files on the card)** settles nothing on bank 2: boot 2's
+  reset cause was SOFTWARE and the loader's try count 1, so the first boot wrote bank 2, but the payload had changed
+  and it would have been written either way. What it did show: the installer leaves `BLACKBOX.BIN` on the card
+  (`stat` through the bench kit: still there, 786 145 B), so INFO alone at a later power-on would install it again.
+  The cheap check is now one BACK + INFO with the card as it is: the same two files, so a SOFTWARE restart at boot 2
+  can only mean the installer erased bank 2.
 - **Bank 2 at install** (§4.3): at the next install with an unchanged `BBEXTRA.BIN`, watch for the self-restart and
   read boot 2's reset cause: SOFTWARE means the installer had erased bank 2. Or, with a dev build (the peek is the
   app's own, so nothing can be read between the install screen and the first boot): install with `BLACKBOX.bin` only,
