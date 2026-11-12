@@ -435,14 +435,17 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
 - **The mailbox** is §9.2's at block + `0xC000`; the unit's own state from `+0x48`: the screen task's boot stamp and
   the job spanning passes (`+0x4C` seq, `+0x50` index, `+0x52` wait, `+0x54`..`+0x67` its counts), the kit's touch
   (`+0x51` down, `+0x68` x, `+0x6C` y, `+0x70` widget id), the card task's boot stamp `+0x74`, the last file job's GUI
-  ms `+0x78`, the open file `+0x7C` (0 none, 1 read, 2 write). Each task resets its own part when the boot count moved.
-  `+0x44` = version 1 << 16 | `0x60` slots.
+  ms `+0x78`, the open file `+0x7C` (0 none, 1 read, 2 write). Each task resets its own part when the boot count moved,
+  and `master_alloc` writes 0 to the magic and both boot stamps at every boot (§13.1). `+0x44` = version 1 << 16 |
+  `0x60` slots.
 - **The gate**: bank 1's `kit_poll(task)` (`master_block()` and `b2_live()`, 32 B) then bank 2's `kit_gate`: magic
   `KIT1`, seq ≠ done, index < `0x60` with a job (else the screen task answers −1), `index >> 5` = the task, epoch =
-  the boot count (else −2). A job spanning passes (knob, tap) blocks new requests until it ends.
+  the boot count (else −2). While a job spans passes (knob, tap) the box is the screen task's: every other request
+  is answered −8 (busy, r0 the job's index) until it ends or a cancel (`0x08`) ends it (§13.1).
 - **The jobs** (§9.3's table, as built): `0x00` info, `0x01` / `0x02` row set / get, `0x03` knob, `0x04` touch,
   `0x05` tap, `0x06` preset load by name, `0x07` the preset list by index (r0 count, r1 pending, r2 queued, the name to
-  `+0x200`), `0x20` button, `0x40`..`0x47` open, read, write, seek, close, stat, list, delete, `0x4F` restart. Not
+  `+0x200`), `0x08` cancel (§13.1), `0x20` button, `0x40`..`0x47` open, read, write, seek, close, stat, list, delete,
+  `0x4F` restart. Not
   built: §9.3's "preset state" with the current preset's name (its place in the app was not found).
 - **Touch**: the kit's contact runs through the tracker's own three calls from the knob-scan hook (§4's first choice);
   under Unicorn its calls are the same, in the same order, with the same points, as `FUN_0808B050`'s for a finger
@@ -464,8 +467,13 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
   is now **stalled**: a full 64-byte answer would leave the computer waiting for the rest. An older build does exactly
   that, so `bbusb.peek` asks once with a 0.25 s timeout and falls back to 64-B requests for that process.
 - **The long poke is `0x40` / `0x54`**, wLength 4..4 096 bytes into the RAMs the word poke may write; usbdev.c's
-  `receive()` hands endpoint 0's OUT entries to `kit_usb_out` while it runs, which keeps the words, re-arms the
-  endpoint, and after the last sends the empty status packet.
+  `receive()` hands endpoint 0's OUT entries to `kit_usb_out` while it runs, which keeps the words (none past
+  wLength, whatever the host sends), re-arms the endpoint, and after the last sends the empty status packet.
+  **A wider reach than §9.2 chose**, which had the long poke write only the mailbox page and the data area: as built
+  it writes up to 4 KB into any RAM the word poke may write (DTCM and the stacks, AXI SRAM, SRAM1–4, backup SRAM,
+  SDRAM; never flash, never a register). No new kind of reach - the word poke writes each of those words already -
+  but a host's wrong address now costs up to 4 KB of RAM, not 4 B. Kept so: bounding it to the kit's areas costs
+  bank 1 bytes in `request()` (the block's address), and `bench/` writes only the mailbox and the data area with it.
 - **Their flags are `DAINTMSK` bits**, which every reset clears (backup SRAM and SDRAM would not): bit 0 (endpoint 0
   IN's interrupt, on only while a long peek runs) and bit 16 (endpoint 0 OUT's, which `GINTMSK` never lets through:
   the long poke's flag). The interrupt calls bank 2 only while one is up, so it never does in a boot that did not
@@ -474,7 +482,7 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
 - **The card's DMA**: stock reads and writes whole sectors with SDMMC1's IDMA straight into or out of the caller's
   buffer (`FUN_0807FEF0`, `HAL_SD_ReadBlocks_DMA`: `IDMABASE0` = the buffer) and has no data cache maintenance by
   address anywhere (only the set / way invalidate at boot, `0x080441E0`); SDRAM is write-back cached (x2). So the kit
-  writes out and forgets the chunk's lines before each read or write and forgets them again after a read, and wants
+  writes out and forgets the chunk's lines before each read or write and again after a read (§13.1), and wants
   the block on a cache line's start (on the unit `0xC0435720`, 37.4.1d, 12/11; the handle `0x24009BFC` holds SDMMC1,
   `0x52007000`, read the same day). Without it a `get` could hand back the chunk's previous bytes from the cache.
 - **Bank 1, measured** (`arm-none-eabi-size -A out/cave.elf`): base dev `.cave` 51 874 B; the dispatcher and the rows
@@ -485,3 +493,43 @@ claim here ran under Unicorn on the patched image; none has run on the unit (it 
   +8 B for it). Release `.cave` 51 258, unchanged.
 - **Bank 2**: base `.bank2` 24 656 B (both builds); dev with the kit 28 500 B (`BBEXTRA.BIN` 28 544); release
   24 656 B, unchanged.
+- **Upstream's files it touches** (in `main`): `src/usbdev.c`, `src/b2load_thunk.S`, `patches/cpu.py` (the call-outs
+  §9 named), and beyond them `src/master.c` (`KIT_BYTES`, the block-size assert, the boot-time clearing of §13.1),
+  `build.sh` (`KIT_SRCS`, `PUBLIC_BUILD` for the `.S` files), `test_prism.py` (the dev block's size) and
+  `test_usbdev.py` (the long transfers, the bank-2 probe of §13.1). Each under `#ifndef PUBLIC_BUILD` or a dev-only
+  branch; a release is byte for byte the base's.
+
+### 13.1 After the review (12/11)
+
+An independent review attacked pass 2 the same day; what it found and what changed (`wip/blackbox-t-054`):
+
+- **A job spanning passes no longer lets another run beside it.** A knob job's end wrote its own `done` over the
+  answer to a card job asked meanwhile, and the card task ran that job a second time (a `put`'s chunk written twice,
+  a second `f_read`). Now `kit_gate` leaves every new request to the screen task while one runs, which answers it
+  **−8 (busy, r0 the job's index)**, unless it is the new **cancel job `0x08`**: it ends the running job (a tap's
+  contact lifted where it went down) and answers r0 its index, r1 the knob's events posted or the tap's widget. The
+  job's end writes its answer only while its own request is still in the box, before it lets the box go. MBX1 is
+  served during the run. `bbkit.py` sends nothing but a cancel while the box's state (`+0x40`) is 1, cancels a knob
+  or tap job that has not ended in its time, and has `bbkit.py cancel`.
+- **The interrupt's two gates are tested.** `test_usbdev.py` now watches bank 2's code: enumeration, MIDI, the audio
+  stream and ordinary requests with the host's status packet on endpoint 0 never enter it from the interrupt; with
+  bank 2 erased and not paired, nothing enters it at all. Removing `DAINTMSK & KIT_IN` or `& KIT_OUT` fails it.
+- **After a card read the chunk's lines are written out as well as forgotten.** `f_read` also copies bytes into the
+  buffer with the CPU (`FUN_08084200`: a partial sector, its window's sector); a line taken into the cache during
+  the read would hold them, and forgetting it lost them. Still open: a line with both CPU-copied and DMA-written
+  bytes (a read from no sector's start, after a seek) taken into the cache during that read.
+- **`bbusb.py set` clears the box before it switches it to MBX1.** After a KIT1 request, the GUI task read KIT1's
+  words at `+4` and `+0x14` as MBX1's seq and done once the magic landed, and set the row twice. When the box does
+  not hold MBX1, `set` now writes the magic 0, then seq = done, then the request. The firmware is unchanged: an
+  older `bbusb.py` (the old order) still double-runs on this build, so use this build's.
+- **`bbkit.py restart` reports the restart.** The unit answers and resets within microseconds, so the client's next
+  poll finds no device: that is now the success. It waits up to 30 s for the unit back and prints the new boot
+  number and the reset cause from `fault.c`'s boot record (software: `RSR` bit 24).
+- **`master_alloc` clears the box at every boot** (dev builds): the magic and both boot stamps. `fault.c`'s boot count,
+  the epoch, starts again at 1 after a power-on (the unit read #1 after its 14:44 re-plug), so after a power cut short
+  enough for SDRAM to keep the box, a request, a knob job, the kit's contact or its open file (whose `FIL` meant the
+  last mount) would have passed for this boot's.
+- **Smaller**: the long poke's bound, a knob job meeting the knobs turned off, and a tap on a held contact each have a
+  check now; `master.c`'s block-size assert checks the release's sum (it had become true by construction).
+- **Bytes**: dev `.cave` 51 878 B (base + 4; `master_alloc` + 12), `.bank2` 28 568 B (`BBEXTRA.BIN` 28 608).
+  Release unchanged.
