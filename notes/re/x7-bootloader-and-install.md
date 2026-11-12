@@ -356,8 +356,12 @@ fork's wording on bank 2 once §9's check has settled §4.3.
 ## 9. Open
 
 - **Bank 2 at install** (§4.3): at the next install with an unchanged `BBEXTRA.BIN`, watch for the self-restart and
-  read boot 2's reset cause: SOFTWARE means the installer had erased bank 2. Or peek `0x08100000` before and after
-  the install screen, before the first boot (the card loader cannot run in between).
+  read boot 2's reset cause: SOFTWARE means the installer had erased bank 2. Or, with a dev build (the peek is the
+  app's own, so nothing can be read between the install screen and the first boot): install with `BLACKBOX.bin` only,
+  `BBEXTRA.BIN` taken off the card, then on the first boot peek `0x08100000` and the claim word at `0x081C0000`, which
+  nothing in the fork erases. All `0xFF` means the installer erased bank 2: with no file the card loader writes
+  nothing (`b2_load_poll` claims or programs only with a good file, or claims a bank already paired). Put
+  `BBEXTRA.BIN` back afterwards; the next boot rewrites bank 2 and restarts once.
 - **BACK alone at power-on** should show "Pot Input Test:  1.0.22" with no flash write: it proves PC2 = BACK and the
   version. Leave by power cycle; do not step to the SD Card Test pages (they write `TESTDATA.BIN`) nor hold INFO on
   the Clock Test page (calibration).
@@ -388,9 +392,9 @@ fork's wording on bank 2 once §9's check has settled §4.3.
   every sector erase logged, 9 sizes and 64 residues. Their outputs: `truth.txt`, `ui.txt`, `flash.txt`,
   `residues.txt` there.
 - A second reader's review the same day led to §4.2's card read error and the tail's dependence on the image's bytes;
-  §4.2's cut that needs a probe; §6.1. Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`):
-  the program and verify steps with chosen file bytes and card read failures, the verify's tail with the stale bytes
-  `0xFF` or not and six read-failure cases.
+  §4.2's cut that needs a probe; §6.1; §9's peek check. Each was reproduced before it went in. `fixcheck.py` (output
+  `fixcheck.txt`): the program and verify steps with chosen file bytes and card read failures, the verify's tail
+  with the stale bytes `0xFF` or not and six read-failure cases.
 - `heldrun.py` (output `heldrun.txt`): the boot run with both pins low and the words of the vector window it reads;
   the GPIOC registers it writes before the decision, and the installer with INFO held low on every pass. The
   bootloader readings behind §6.1 (GPIOC, the RCC reset, the caches, the watchdog) are `arm-none-eabi-objdump` reads
