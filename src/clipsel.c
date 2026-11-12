@@ -157,6 +157,15 @@ void sel_setup_stock(uint8_t *pad, void *clk);         /* clipsel_thunk.S: stock
  * 0x238 / 0x23c (sel_len reads them during setup) and our Beats into Beat Count; after: Beat Count back, and the
  * selection back into 0x238 / 0x23c (stock writes 0 / the selection's length there).
  */
+/* No selection: 0x238 / 0x23c back to 0 / the file's length after stock setup. Stock writes there the length it was
+   told, the file's here, but Clip Window tells it a Region's (clipwin.c's clipwin_len), which pad_sel would read as a
+   selection [0, region) and clip_read (sel_end) would cut the step that runs round the region's end. */
+static void no_sel(uint8_t *pad, int len)
+{
+    *(int32_t *)(pad + PAD_SEL_S) = 0;
+    *(int32_t *)(pad + PAD_SEL_E) = len;
+}
+
 void sel_setup(uint8_t *pad, void *clk)
 {
     void *sample = *(void **)(pad + PAD_SOURCE);
@@ -173,6 +182,7 @@ void sel_setup(uint8_t *pad, void *clk)
         *(int32_t *)(pad + PAD_SEL_S) = 0;
         *(int32_t *)(pad + PAD_SEL_E) = len;
         sel_setup_stock(pad, clk);
+        no_sel(pad, len);
         return;
     }
     /* the section's beats (set, or stock's guess on the section at the project tempo) -> frames per beat -> every
@@ -186,6 +196,7 @@ void sel_setup(uint8_t *pad, void *clk)
         *(int32_t *)(pad + PAD_SEL_S) = 0;
         *(int32_t *)(pad + PAD_SEL_E) = len;
         sel_setup_stock(pad, clk);
+        no_sel(pad, len);
         return;
     }
     if (total > TOTAL_MAX)
