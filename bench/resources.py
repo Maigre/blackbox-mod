@@ -172,7 +172,7 @@ class CFile:
         self.raw = open(os.path.join(tree.path, rel), encoding="utf-8", errors="replace").read()
         code, blank, self.comments = lex(self.raw)
         self.code_pp = code                   # comments out, preprocessor lines kept (macro bodies)
-        self.macros, self.fmacros, self.includes = {}, {}, []
+        self.macros, self.fmacros, self.includes, self.exclusive = {}, {}, [], []
         lines_c, lines_b = code.split("\n"), blank.split("\n")
         self.conds = []                       # per line (0-based): the #if conditions it sits under
         stack, dead = [], 0
@@ -218,6 +218,10 @@ class CFile:
                     m = re.match(r'"([^"]+)"', rest)
                     if m:
                         self.includes.append(m.group(1))
+                elif kw == "error" and not dead:
+                    # an #error under two flags: the builds exclude each other (CPU_PROF and SLICE_DIAG)
+                    pos_flags = [c for c in stack if re.fullmatch(r"\w+", c or "")]
+                    self.exclusive += [frozenset((a, b)) for a in pos_flags for b in pos_flags if a < b]
                 for j in range(i, k + 1):
                     lines_c[j] = " " * len(lines_c[j])
                     lines_b[j] = " " * len(lines_b[j])
@@ -917,6 +921,25 @@ def scan(path, label, do_build=False, stock=None):
                 if (f.rel, n) in bind and bind[(f.rel, n)] in roles[role]} | \
                {n for (r, n), a in bind.items() if a in roles[role] and n in f.macro_map()}
 
+    # ---- the patch tables first: the functions they name are hooks, whose id arguments are stock's own
+    pt = load_patches(path)
+    hook_names = set(pt["fake"].values())
+
+    def from_callers(fn, args_of_interest, depth=0):
+        """a helper's parameters as its callers pass them: [(caller file, caller fn, pos, env, {param: expr})]"""
+        out = []
+        for g in t.sources():
+            for _n, cfn, cpos, cargs in calls(g, {fn.name}):
+                exprs = {p: cargs[fn.params.index(p)] for p in args_of_interest
+                         if p in fn.params and fn.params.index(p) < len(cargs)}
+                combos = envs(loops_at(g, cfn, cpos))
+                if combos is None:
+                    warn.append(f"{g.rel}:{g.line(cpos)}: a loop around {fn.name}(…) could not be read")
+                    continue
+                for env in combos:
+                    out.append((g, cfn, cpos, env, exprs))
+        return out
+
     # ---- parameter registrations and store adds
     params, adds, forwarded = [], [], []
     for f in t.sources():
@@ -925,31 +948,47 @@ def scan(path, label, do_build=False, stock=None):
             if len(args) < 2:
                 continue
             idx, line = args[1], f.line(pos)
+            kind = "list" if "list" in name else "num" if "num" in name else "?"
+            li = 2 if kind == "list" else 3
+            sites = []                                  # (file evaluating, fn, pos, env, id expr, xml expr, label expr)
             if re.fullmatch(r"\w+", idx) and idx in fn.params:
-                forwarded.append({"file": f.rel, "func": fn.name, "line": line, "call": name})
-                continue
-            loops = loops_at(f, fn, pos)
-            combos = envs(loops)
-            if combos is None:
-                warn.append(f"{f.rel}:{line}: a loop around {name}(…, {idx}) could not be read")
-                continue
-            for env in combos:
-                try:
-                    v = f.eval(idx, env, pos)
-                except Unresolved as e:
-                    warn.append(f"{f.rel}:{line}: id `{idx}` of {name} not read ({e})")
+                if fn.name in hook_names:               # a hook forwarding the stock call it stands in for
+                    forwarded.append({"file": f.rel, "func": fn.name, "line": line, "call": name})
                     continue
-                rec = {"id": v, "file": f.rel, "module": module_of(f.rel), "func": fn.name, "line": line,
-                       "cond": list(f.cond(pos))}
+                # a helper of ours taking the id as a parameter: its callers say which ids
+                want = [idx] + [a for a in (args[-1], args[li] if len(args) > li else "") if a in fn.params]
+                callers = from_callers(fn, want)
+                if not callers:
+                    warn.append(f"{f.rel}:{line}: {fn.name} registers its parameter `{idx}` and nothing calls it")
+                for g, cfn, cpos, env, ex in callers:
+                    sites.append((g, cfn, cpos, env, ex.get(idx), (g, ex[args[-1]]) if args[-1] in ex else (f, args[-1]),
+                                  (g, ex[args[li]]) if len(args) > li and args[li] in ex else (f, args[li] if len(args) > li else None),
+                                  fn.name))
+            else:
+                combos = envs(loops_at(f, fn, pos))
+                if combos is None:
+                    warn.append(f"{f.rel}:{line}: a loop around {name}(…, {idx}) could not be read")
+                    continue
+                sites = [(f, fn, pos, env, idx, (f, args[-1]), (f, args[li] if len(args) > li else None), None)
+                         for env in combos]
+            for g, cfn, cpos, env, e, (xf, xe), (lf, le), via in sites:
+                try:
+                    v = g.eval(e, env, cpos)
+                except Unresolved as x:
+                    warn.append(f"{g.rel}:{g.line(cpos)}: id `{e}` of {name} not read ({x})")
+                    continue
+                rec = {"id": v, "file": g.rel, "module": module_of(g.rel), "func": cfn.name, "line": g.line(cpos),
+                       "cond": list(g.cond(cpos))}
+                if via:
+                    rec["via"] = via
                 if name in sadd:
                     adds.append(rec)
                 else:
-                    kind = "list" if "list" in name else "num" if "num" in name else "?"
                     rec["kind"] = kind
-                    rec["xml"] = f.string(args[-1], env, pos)
-                    li = 2 if kind == "list" else 3
-                    rec["label"] = f.string(args[li], env, pos) if len(args) > li else None
+                    rec["xml"] = xf.string(xe, env if xf is g else {}, cpos if xf is g else pos)
+                    rec["label"] = lf.string(le, env if lf is g else {}, cpos if lf is g else pos) if le else None
                     params.append(rec)
+    man["exclusive_flags"] = sorted({tuple(sorted(x)) for f in t.files.values() for x in f.exclusive})
     man["params"] = sorted(params, key=lambda r: (r["id"], r["file"]))
     man["forwarded"] = forwarded
     man["store_adds"] = sorted(adds, key=lambda r: (r["file"], r["line"], r["id"]))
@@ -977,8 +1016,7 @@ def scan(path, label, do_build=False, stock=None):
             todo += graph.get(n, ())
         return seen
 
-    # ---- patches
-    pt = load_patches(path)
+    # ---- patches (loaded above)
     fake = pt["fake"]
     setlist = []
     chk = os.path.join(path, "check.sh")
@@ -1328,9 +1366,12 @@ def bkpsram(t, path):
 
 # ------------------------------------------------------------------------------------------------- in-tree rules
 
-def exclusive(c1, c2):
-    """two #if conditions that cannot both hold in one build: both set and different"""
-    return bool(c1) and bool(c2) and set(c1) != set(c2)
+def exclusive(c1, c2, pairs=()):
+    """two #if conditions that cannot hold in one build: X against !X, or two flags an #error keeps apart"""
+    s1, s2 = set(c1), set(c2)
+    if any("!" + x in s2 for x in s1) or any("!" + x in s1 for x in s2):
+        return True
+    return any(frozenset((x, y)) in pairs for x in s1 for y in s2)
 
 
 def ordered(man):
@@ -1367,13 +1408,14 @@ def check_tree(man):
     """what one tree must never hold: [(rule, text)]"""
     bad = []
     takes = {a for v in man["takes"].values() for a in v}
+    pairs = {frozenset(x) for x in man.get("exclusive_flags", [])}
     # parameter ids: one parameter per id, one id per xml name
     by_id = {}
     for p in man["params"]:
         by_id.setdefault(p["id"], []).append(p)
     for i, ps in sorted(by_id.items()):
         ident = {p["xml"] or f"{p['file']}:{p['func']}" for p in ps}
-        if len(ident) > 1 and not all(exclusive(a["cond"], b["cond"]) for a in ps for b in ps if a is not b and a["xml"] != b["xml"]):
+        if len(ident) > 1 and not all(exclusive(a["cond"], b["cond"], pairs) for a in ps for b in ps if a is not b and a["xml"] != b["xml"]):
             bad.append(("param-id", f"id {h(i)} registered for {len(ident)} parameters: " +
                         ", ".join(f"{p['xml'] or '?'} ({p['file']}:{p['line']})" for p in ps)))
         if i >= 500:
@@ -1390,7 +1432,7 @@ def check_tree(man):
     for i, a in enumerate(parts):
         for b in parts[i + 1:]:
             if a["offset"] < b["offset"] + b["size"] and b["offset"] < a["offset"] + a["size"] and a["size"] and b["size"]:
-                if a["nested_in"] == b["name"] or b["nested_in"] == a["name"] or exclusive(a["cond"], b["cond"]):
+                if a["nested_in"] == b["name"] or b["nested_in"] == a["name"] or exclusive(a["cond"], b["cond"], pairs):
                     continue
                 bad.append(("sdram", f"{a['name']} ({a['file']}) [{h(a['offset'])}, {h(a['offset'] + a['size'])}) and "
                                      f"{b['name']} ({b['file']}) [{h(b['offset'])}, {h(b['offset'] + b['size'])}) overlap"))
@@ -1413,7 +1455,7 @@ def check_tree(man):
         for b in rs[i + 1:]:
             if declared(a, b):
                 continue
-            if a["module"] != b["module"] and a["start"] < b["end"] and b["start"] < a["end"] and not exclusive(a["cond"], b["cond"]):
+            if a["module"] != b["module"] and a["start"] < b["end"] and b["start"] < a["end"] and not exclusive(a["cond"], b["cond"], pairs):
                 if (a["start"], a["end"]) == (b["start"], b["end"]) and set(a["types"]) & set(b["types"]):
                     continue                                    # one structure, named in two files
                 bad.append(("bkpsram", f"{a['file']} [{h(a['start'])}, {h(a['end'])}) ({a['from']}) and {b['file']} "
