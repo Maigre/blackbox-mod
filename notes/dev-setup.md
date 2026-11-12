@@ -73,14 +73,16 @@ it) and hands the suites to `bench/suites.py`, which queues them longest first (
 line `N suites, M failed` and the exit status are what they were. Each job's wall and CPU seconds go to
 `out/check-times.tsv`; `python3 bench/suites.py --table` prints them as below.
 
-**The whole check, measured** (mgr-ran, 2026-11-12 16:43 to 16:56, pool 8, load average 4.4 at the start and up to
-12.7, another session's test_clipwin running beside it): `32 suites, 0 failed`, exit 0, in 770 s with the build,
-4 362 CPU s. Last to end: test_clipwin's shard 2 (765 s; 567 CPU s) and test_munchi (721 s; 546 CPU s). Eight jobs on
-four cores run two to a core, at about half the speed of a suite alone (test_munchi: 397 CPU s run two at a time, 546
-here). Before, the check took as long as test_clipwin in one process: 3 116 s here beside its own shards (load 10 to
-20), 9.5 to 11.6 min on a calm box (the review). The five-minute target is not met: test_munchi, sequential, is now
-the floor (~400 to 550 CPU s on this box, by load), and a calm mgr-ran was not available to measure the check on; the
-only lever left under it is the instruction count (below).
+**The whole check, measured** (mgr-ran, 2026-11-12, pool 8, beside four other sessions): `32 suites, 0 failed`, exit 0,
+in 770 s with the build (16:43, load average 4.4 at the start, up to 12.7) and again in 726 s (bench/bbci.sh at
+6aecbd5, 17:35), each ~4 360 CPU s. Last to end both times: test_clipwin's shard 2 (720 to 765 s; 567 CPU s) and
+test_munchi (677 to 721 s; 542 to 546 CPU s). Eight jobs on four cores run two to a core, each at about half the speed
+of a suite alone (test_munchi: 397 CPU s run two at a time, 546 here), so on this box the check cannot go under
+~4 360 / 8 = 545 s while the work stays what it is. Before, the check took as long as test_clipwin in one process:
+another session's test_clipwin.py (its branch differs from this one in 44 lines of it) took 26 min and 1 558 CPU s
+alone on a calm box (load ~2, 17:08 to 17:35), and 3 116 s here beside its own shards (load 10 to 20); the review's
+9.5 to 11.6 min is older. The five-minute target is not met: test_munchi, sequential, is now the floor with test_clipwin's
+longest shard, and the lever under it is the instruction count (below).
 
 **Shards** (`bench/shard.py`): shard I of N runs a contiguous run of a suite's sections (cut at its `# ===` / `# ---`
 headers, and with a profile around any statement over 2 % of its seconds) and, with their output dropped and the
