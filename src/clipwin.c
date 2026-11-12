@@ -259,12 +259,16 @@ static __attribute__((noinline)) struct cw_bank *pad_bank(const uint8_t *pad, in
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
    0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
    and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
+int sel_len(void *sample, uint8_t *pad);   /* clipsel.c: JOEBOX 2's Clip selection, e - s (or the file's length) */
+
+/* With no Region the pad plays JOEBOX 2's selection, at the two sites its sel_len_b took (1 and 3; Thomas, answer
+   t-052-clip-pad-length: selection-unless-region); a Region wins (cw_len). */
 int32_t clipwin_len(void *src, uint8_t *pad, int site, int32_t clip)
 {
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     return b ? cw_lenhook(b, (unsigned)q, src, pad, site, clip)   /* clipwin_b2.c: the body (stage 3) */
-             : fw_src_len(src);
+             : site == 1 || site == 3 ? sel_len(src, pad) : fw_src_len(src);
 }
 
 /* H3'. Replaces bl FUN_08064a94 (the recompute, r0 = pad, r1 = the clock) at 0x08066fac (the synced wrap; t = the

@@ -193,6 +193,18 @@ __attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad
    first length) the pad takes its region (and its Fit) when it is at its wrap (clipwin_wrap) or stopped: set = the
    rows of its store (CW_SET_*), read only for that site. Site 1 also keeps len for the Waveform screen (flen: the
    view's own copy of the file's length is the app's, which can be another pad's, Gate 3 finding 12). */
+/* JOEBOX 2's Clip selection (clipsel.c's sel_len, which bank 2 cannot call): e - s when setup left one, else len. With
+   no Region the pad plays it at sites 1 and 3, the two sel_len_b took (Thomas, t-052-clip-pad-length:
+   selection-unless-region). */
+#define SEL_S       0x238
+#define SEL_E       0x23c
+#define SEL_MIN     512
+static int32_t sel_frames(const uint8_t *pad, int32_t len)
+{
+    int32_t s = *(const int32_t *)(pad + SEL_S), e = *(const int32_t *)(pad + SEL_E);
+    return (s != 0 || e != len) && s >= 0 && e <= len && e - s >= SEL_MIN ? e - s : len;
+}
+
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set)
 {
     int32_t rs;
@@ -210,7 +222,7 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
     if (site == 2 && (v || b->fon[q]) && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)
         return 1;
     if (!v)
-        return len;
+        return site == 1 || site == 3 ? sel_frames(pad, len) : len;
     /* A synced clip of one step (Sync >= the clip): stock times that step by the length (+0x204 = the region in output
        samples), not by the clip, so the seamless step would run past the next pass (doubling) or stop short of it (a
        gap), as stock does with a file that long. Time it by the clip, as stock times every step when there are two or
