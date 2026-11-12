@@ -29,6 +29,10 @@
 # src/cave.ld.in), bank2_size (out/bank2.bin, bytes), image_sha256 (the check's patched BLACKBOX.bin), extra_sha256
 # (BBEXTRA.BIN), seconds (all of it), check_seconds (./check.sh, the lock held), lock_wait_seconds, jobs (the pool),
 # host, started, run (the run's folder).
+# A run that is stopped (TERM, INT, HUP: a turn's time cap, Ctrl-C) stops its check, takes its worktree and its fetched
+# ref away and leaves verdict "error", error "interrupted by SIG..."; one killed outright (-9, the box off) is found by
+# the next bbci run on the box (its pid is gone and it left no verdict), which does the same for it. A request the
+# drain took says how it ended either way.
 # A unit that drains the spool when a request lands: bench/systemd/ (templates; enabling them is a line in there).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -66,6 +70,66 @@ with open(sys.argv[1], "w") as f:
 PY
 }
 
+killtree() {                              # $1 a pid: TERM to it, then to every process it had under it
+  set -- "$1" $(ps -o pid= --ppid "$1" 2>/dev/null)
+  kill -TERM "$1" 2>/dev/null
+  shift
+  for k in "$@"; do killtree "$k"; done
+}
+
+drop_worktree() {                         # $1 the run's folder, $2 the worktree, $3 its id, $4 keep (0/1)
+  if [ "$4" = 1 ] && [ -d "$2" ]; then
+    echo "worktree kept: $2" >> "$1/worktree.log"
+  elif [ -d "$2" ]; then
+    git -C "$REPO" worktree remove --force "$2" >> "$1/worktree.log" 2>&1 || { rm -rf "$2"; git -C "$REPO" worktree prune; }
+  fi
+  git -C "$REPO" update-ref -d "refs/bbci/$3" 2>/dev/null
+  return 0
+}
+
+reap() {                                  # runs killed outright (no trap ran): their worktree and ref out, a verdict
+  for p in "$WORK"/runs/*/pid; do
+    [ -f "$p" ] || continue
+    d=${p%/pid}
+    [ -f "$d/verdict.json" ] && continue
+    kill -0 "$(cat "$p")" 2>/dev/null && continue          # still running (or its pid taken again: left alone)
+    rid=$(basename "$d")
+    drop_worktree "$d" "$WORK/wt/$rid" "$rid" 0
+    (
+      for v in $(env | sed -n 's/^\(V_[A-Z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+      export V_REF="$(sed -n 1p "$d/request" 2>/dev/null)" V_REMOTE="$(sed -n 2p "$d/request" 2>/dev/null)"
+      export V_SHA="$(cat "$d/sha" 2>/dev/null)" V_VERDICT=error V_RUN="$d" V_HOST="$(hostname)"
+      export V_ERROR="interrupted: its process ($(cat "$p")) ended without a verdict; found by a later bbci run, $(date -Iseconds)"
+      json "$d/verdict.json"
+    )
+    [ -f "$d/spool-req" ] && echo "bbci: interrupted (killed), found later -> $d/verdict.json" >> "$(cat "$d/spool-req")"
+    echo "bbci: reaped $d (killed without a verdict)"
+  done
+}
+
+finish() {                                # write the verdict and say it; $1 the exit status
+  export V_ERROR V_SHA V_SUBJECT V_VERDICT V_SUITES V_FAILED V_FAILED_SUITES V_PASS V_FAIL V_B1USED V_B1SIZE V_B1FREE
+  export V_B2SIZE V_IMAGE V_EXTRA V_CHECK_SECONDS V_LOCK_SECONDS V_JOBS
+  export V_SECONDS=$(( $(date +%s) - t0 ))
+  json "$run/verdict.json"
+  [ -n "$V_SHA" ] && cp "$run/verdict.json" "$WORK/verdicts/$V_SHA.json"
+  line="bbci: $ref ${V_SHA:+${V_SHA%"${V_SHA#???????}"} }$V_VERDICT${V_SUITES:+: $V_SUITES suites, $V_FAILED failed}${V_ERROR:+ ($V_ERROR)}, ${V_SECONDS} s -> $run/verdict.json"
+  echo "$line"
+  [ -n "${BBCI_REQ:-}" ] && echo "$line" >> "$BBCI_REQ"
+  return "$1"
+}
+
+interrupted() {                           # $1 the signal: stop the check, clean up, an "error" verdict, leave
+  trap '' HUP INT TERM
+  trap - EXIT
+  if [ -n "${cpid:-}" ]; then killtree "$cpid"; sleep 1; fi
+  drop_worktree "$run" "$wt" "$id" "$keep"
+  V_VERDICT=error
+  V_ERROR="interrupted by $1 after $(( $(date +%s) - t0 )) s${cpid:+, during the check}"
+  finish 2
+  exit 2
+}
+
 check_one() {                             # $1 ref, $2 remote (or empty), $3 keep (0/1)
   ref=$1 remote=$2 keep=$3
   t0=$(date +%s)
@@ -73,10 +137,19 @@ check_one() {                             # $1 ref, $2 remote (or empty), $3 kee
   export V_SHA="" V_SUBJECT="" V_VERDICT=error V_ERROR="" V_SUITES="" V_FAILED="" V_FAILED_SUITES="" V_PASS="" V_FAIL=""
   export V_B1USED="" V_B1SIZE="" V_B1FREE="" V_B2SIZE="" V_IMAGE="" V_EXTRA="" V_CHECK_SECONDS="" V_LOCK_SECONDS="" V_JOBS="${CHECK_JOBS:-}"
   mkdir -p "$WORK/runs" "$WORK/verdicts" "$WORK/wt"
+  reap
   run=$(mktemp -d "$WORK/runs/$(date +%Y%m%d-%H%M%S)-XXXX") || return 2
   id=$(basename "$run")
   export V_RUN="$run"
   wt="$WORK/wt/$id"
+  cpid=""
+  printf '%s\n' "$ref" "$remote" > "$run/request"
+  [ -n "${BBCI_REQ:-}" ] && echo "$BBCI_REQ" > "$run/spool-req"
+  echo $$ > "$run/pid"                    # for reap(): a run whose pid is gone and has no verdict was killed
+  trap 'interrupted SIGHUP' HUP
+  trap 'interrupted SIGINT' INT
+  trap 'interrupted SIGTERM' TERM
+  trap 'interrupted "an unexpected exit"' EXIT
   sha=""
   if [ -n "$remote" ]; then
     if git -C "$REPO" fetch -q --no-write-fetch-head "$remote" "$ref:refs/bbci/$id" > "$run/fetch.log" 2>&1; then
@@ -90,12 +163,13 @@ check_one() {                             # $1 ref, $2 remote (or empty), $3 kee
   rc=2
   if [ -n "$sha" ]; then
     V_SHA=$sha
+    echo "$sha" > "$run/sha"
     V_SUBJECT=$(git -C "$REPO" log -1 --format=%s "$sha")
     if git -C "$REPO" worktree add -q --detach "$wt" "$sha" > "$run/worktree.log" 2>&1; then
       [ -n "$remote" ] && git -C "$REPO" update-ref -d "refs/bbci/$id"
       ln -sf "$STOCK" "$wt/firmware/BLACKBOX-3.1.9.bin"
       [ -d "$VENV" ] && ln -sfn "$VENV" "$wt/.venv"
-      (
+      (                                   # in the background, so a signal reaches the trap while it runs
         [ -f "$ENVF" ] && . "$ENVF"
         if ! sh "$HERE/doctor.sh" -C "$wt" > "$run/doctor.log" 2>&1; then
           exit 3
@@ -107,8 +181,11 @@ check_one() {                             # $1 ref, $2 remote (or empty), $3 kee
         echo $(( $(date +%s) - c1 )) > "$run/check.seconds"    # the check's own time, the lock held
         echo $(( c1 - c0 )) > "$run/lock.seconds"              # how long it waited for the lock
         exit $c
-      )
+      ) &
+      cpid=$!
+      wait "$cpid"
       c=$?
+      cpid=""
       if [ $c = 3 ] && [ ! -f "$run/check.seconds" ]; then
         V_ERROR="the box is not ready: $(grep -c '^MISS' "$run/doctor.log") missing (doctor.log)"
       else
@@ -149,23 +226,13 @@ check_one() {                             # $1 ref, $2 remote (or empty), $3 kee
         [ -f "$img" ] && V_IMAGE=$(sha256sum "$img" | cut -d' ' -f1)
         [ -f "$wt/out/BBEXTRA.BIN" ] && V_EXTRA=$(sha256sum "$wt/out/BBEXTRA.BIN" | cut -d' ' -f1)
       fi
-      if [ "$keep" = 1 ]; then
-        echo "worktree kept: $wt" >> "$run/worktree.log"
-      else
-        git -C "$REPO" worktree remove --force "$wt" >> "$run/worktree.log" 2>&1 || rm -rf "$wt"
-      fi
     else
       V_ERROR="git worktree add failed (worktree.log)"
-      [ -n "$remote" ] && git -C "$REPO" update-ref -d "refs/bbci/$id" 2>/dev/null
     fi
   fi
-  export V_ERROR V_SHA V_SUBJECT V_VERDICT V_SUITES V_FAILED V_FAILED_SUITES V_PASS V_FAIL V_B1USED V_B1SIZE V_B1FREE
-  export V_B2SIZE V_IMAGE V_EXTRA V_CHECK_SECONDS V_LOCK_SECONDS V_JOBS
-  export V_SECONDS=$(( $(date +%s) - t0 ))
-  json "$run/verdict.json"
-  [ -n "$V_SHA" ] && cp "$run/verdict.json" "$WORK/verdicts/$V_SHA.json"
-  echo "bbci: $ref ${V_SHA:+${V_SHA%"${V_SHA#???????}"} }$V_VERDICT${V_SUITES:+: $V_SUITES suites, $V_FAILED failed}${V_ERROR:+ ($V_ERROR)}, ${V_SECONDS} s -> $run/verdict.json"
-  return $rc
+  drop_worktree "$run" "$wt" "$id" "$keep"
+  trap - HUP INT TERM EXIT
+  finish $rc
 }
 
 [ $# -ge 1 ] || usage
@@ -201,9 +268,9 @@ case $1 in
         echo "empty request" >> "$req"
         continue
       fi
-      out=$(check_one "$r" "$rm_" "$k")
-      echo "$out" >> "$req"
-      echo "$out"
+      BBCI_REQ=$req                       # check_one appends how it ended: a verdict, or interrupted
+      check_one "$r" "$rm_" "$k"
+      BBCI_REQ=
     done
     ;;
   --last)
