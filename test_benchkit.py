@@ -449,6 +449,17 @@ k.run(SCREEN)
 r2 = k.reply()
 check("...a full ring: the event waits for the next pass instead of overwriting one",
       not r1["answered"] and r2["answered"] and r2["r"][0] == 1 and k.e.r32(HW + 0x1274) == 10 + 65, (r1, r2))
+w = k.e.r32(HW + 0x1274)
+k.ask(0x03, 1, 4, 3, 0)
+k.run(SCREEN)                                              # the first event
+k.e.uc.mem_write(HW + 0x18E1, b"\x00")                    # stock turns the knobs off before the next
+k.run(SCREEN)
+r = k.reply()
+k.e.uc.mem_write(HW + 0x18E1, b"\x01")
+k.run(SCREEN)
+check("...stock turning the knobs off while a knob job runs ends it at its next event: -4, r0 the events posted (1), "
+      "nothing posted after", r["answered"] and r["result"] == -4 and r["r"][0] == 1 and r["state"] == 0
+      and k.e.r32(HW + 0x1274) == w + 1, (r, k.e.r32(HW + 0x1274) - w))
 
 # ====================================================================================================== 5. buttons
 # The kit's press is held against stock's own scan FUN_080437d4 run for real on the same table, with the button's pin
@@ -645,6 +656,14 @@ for _ in range(5):
 check(f"tap (job 5, held 3 passes): down in its pass, up three passes later, answered then with the widget's id ({seen})",
       [x[1] for x in seen] == [["hit", "down"], [], [], ["find", "up"], []] and [x[0] for x in seen] == [False, False, False, True, True]
       and k.reply()["r"][0] == 0x77, seen)
+k.job(SCREEN, 0x04, 0, 100, 50)                            # job 4's contact down
+k.calls.clear()
+r = k.job(SCREEN, 0x05, 40, 60, 3)
+during = list(k.calls)
+k.job(SCREEN, 0x04, 2)
+check(f"a tap while job 4's contact is down: -7, no hit test, no widget call; that contact still lifts where it went down "
+      f"({r['result']}, {during}, {k.calls})", r["result"] == -7 and not during and r["state"] == 0
+      and [c[:3] for c in k.calls] == [("find", 0x280, 0x77), ("up", WID, (100, 50))], (r, during, k.calls))
 
 # ====================================================================================================== 7. a restart
 # The card task's job 0x4f: answered, the box's two cache lines written out, then SYSRESETREQ (AIRCR 0x05fa0004) - only

@@ -446,6 +446,11 @@ else:
     early, sent = long_poke(0xC0103000, data[:200][::-1])
     check("  ...200 bytes: 64, 64, 64, 8; the bytes after them untouched", sent == [b""] and
           bytes(e.uc.mem_read(0xC0103000, 204)) == data[:200][::-1] + data[200:204], sent)
+    e.uc.mem_write(0xC0103000, b"\x55" * 256)
+    early, sent = long_poke(0xC0103000, b"q" * 256, 200)
+    check("  ...a host that sends more than wLength (four full packets for 200 bytes): 200 bytes written, the 56 after "
+          "them untouched, the status packet once, after the last", early == [] and sent == [b""]
+          and bytes(e.uc.mem_read(0xC0103000, 256)) == b"q" * 200 + b"\x55" * 56, (early, sent))
     refused = [long_poke(a_, b"x" * 64, n_)[0] for a_, n_ in ((0x08100000, 64), (0x500010AC, 4), (0xC0103000, 4100),
                                                                (0xC0103000, 0), (0xC0103002, 64), (0x2407FFC0, 128))]
     check(f"  ...stalled, nothing written, into flash, a register, above 4 096 bytes, for none, unaligned, past AXI SRAM's end "
