@@ -1,0 +1,14 @@
+# bbci-spool.service - fork-only template (bench/systemd/): run every request in bbci's spool, one at a time.
+# Started by bbci-spool.path when a request lands (bench/bbci.sh --enqueue <ref> [--remote <name>]). A user unit:
+# @CLONE@ is the fork's clone, @WORK@ bbci's work dir. Installing and enabling it is one line, from the clone:
+#   mkdir -p ~/.config/systemd/user && for u in service path; do sed -e "s|@CLONE@|$PWD|g" -e "s|@WORK@|/data/dev/bbci|g" bench/systemd/bbci-spool.$u > ~/.config/systemd/user/bbci-spool.$u; done && systemctl --user daemon-reload && systemctl --user enable --now bbci-spool.path
+# (and `loginctl enable-linger $USER` once, for it to run with nobody logged in). Off again:
+#   systemctl --user disable --now bbci-spool.path
+[Unit]
+Description=blackbox-mod bbci: check the spooled refs, one at a time
+
+[Service]
+Type=oneshot
+Environment=BBCI_WORK=@WORK@
+ExecStart=/bin/sh @CLONE@/bench/bbci.sh --drain
+Nice=10

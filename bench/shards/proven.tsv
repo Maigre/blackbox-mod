@@ -1,0 +1,3 @@
+# the shard plans bench/shard.py SUITE --prove N found equal to the whole run; bench/suites.py shards a suite only with one of these (the digest: shard.py SUITE --digest N). An edit to the suite, its profile or the planner that changes what a shard runs changes the digest: prove it again.
+# suite	shards	plan digest	proof
+test_clipwin.py	6	087b7bf49dbfb924	504 PASS + 0 FAIL, whole log, mgr-ran 2026-11-12

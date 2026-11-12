@@ -1,0 +1,204 @@
+# test_clipwin.py: CPU seconds of each top-level statement (bench/shard.py --profile, mgr-ran, 2026-11-12, beside four other sessions, load 6 to 12); under 0.05 s left out. The planner's weights: only their ratios matter
+# key	cpu	line	first words
+bcab709e15be	0.47	85	import numpy as np
+19a4ebc64680	0.06	86	from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
+5f78b7e5f167	0.12	96	e = Emu(IMAGE, "out/cave.elf")
+9018b8284208	0.08	370	regs = registrar(e, TABLE)
+a404f9839be9	0.11	371	st_m = Emu(STOCK, "out/cave.elf")
+5008543a786a	15.06	920	for name, sc in off_cases:
+077e69cb4a26	79.96	956	for name, sc, values in slip_cases:
+a726e2aeef66	20.47	981	for name, sc, slip in (("a retrigger (Launch Trigger, Quant 
+71e80c079d5d	0.22	995	r = scenario(frames=1392000, beats=29, sync=1, slip=3840, ce
+8f50a3e3129c	0.11	1007	r = Rig(cell=0x102)
+3265cca54dec	0.52	1020	r.run(300)
+0811f7e66f33	7.72	1029	for name, sc, exact in (("96 000 frames, Slip 7, Sync 1/4 (t
+06e9a51da3f5	0.19	1048	r = scenario(frames=96000, slip=-30, cell=0x102, blocks=40)
+205ea0a9e87d	20.88	1055	for frames in (96000, 88615):
+fb7e92bb62a7	3.66	1096	ref = audio(frames=96000, cell=0x102)
+632319231c6c	3.06	1104	cw = audio(frames=96000, cell=0x102, pre=user_late)
+9a529e3d4691	1.61	1121	r = scenario(frames=96000, sync=6, cell=0x102, pre=change_no
+beb739a872cf	1.15	1147	r = scenario(frames=96000, at=193000, blocks=960, cell=0x102
+2d79d2a4582b	2.57	1164	ref = audio(frames=96000, at=193000, blocks=960, cell=0x102)
+860a55daffd6	1.18	1165	cw = decode(scenario(dc=True, frames=96000, at=193000, block
+6c6f37cc9855	0.62	1195	r, before, held = armed(False)
+8e6f4fce3fa6	0.79	1196	by = armed(True)[0]
+dfc94d5b7939	25.63	1236	for name, length, values in (("a shorter file (50 000 frames
+14cef625c8cb	29.88	1335	runs9 = {"stock 3.1.9": run9(image=STOCK), "37.2.x (no cw_re
+a9e395e1f1ab	10.71	1384	c_old, c_new = per_block(True), per_block(False)
+84659685132b	6.20	1412	for name, kw in (("a Slicer pad (no markers: its segments pa
+07ccea44c90f	6.01	1428	for name, kw in (("a Slicer pad (no markers)", dict(setup=la
+a352543c669e	2.50	1447	runs = [scenario(slip=960, cell=0x102, blocks=900, pre=to_sl
+c938c9112efc	4.94	1482	for b_ in (False, True):
+ee25d9e67e61	1.19	1498	a, ok, d = gate("0x401", all960, slip=960, blocks=400, cell=
+bd6f434402f5	0.55	1503	a, ok, d = gate("len 0", all960, silent=True, slip=960, bloc
+be1164cebe80	1.25	1506	a, ok, d = gate("len bad", all960, slip=960, blocks=400, fra
+951b18026e49	0.10	1510	a = Rig(block=False, cell=0x102)
+a0ff2a0774e6	0.46	1517	a.run(400)
+3a223318dbce	0.71	1518	b = scenario(slip=960, others=all960, cell=0x102, blocks=400
+9847e92df636	0.10	1614	cw_m = reader(IMAGE)
+43df20dfe50f	1.20	1615	for name, delta, pos, rate, frac, stereo, n, length in (
+1369ce15a8a2	0.10	1665	circ_m = reader(IMAGE, rotate=0)
+415e4b7216e8	0.41	1691	for v, name in MODES:
+9012dcd3b8fc	0.24	1711	long_m, long_ref = reader(IMAGE, length=LONG), reader(IMAGE,
+09453bd227b1	0.31	1712	for v, name in MODES[:6]:
+b94395431f77	0.08	1730	for v, name in ((4, "S950"), (7, "S950 Lo")):
+9add38b397bb	0.10	1748	base_m = reader(IMAGE)
+da88ff31cbce	0.79	1749	for name, prep, kw in (("the latch is not valid", lambda m: 
+3b68ddd4f33d	0.10	1780	m = reader(IMAGE)
+0e43ac23c8c5	8.56	1823	rate_case("44.1 kHz file (88 200 frames)", 88200, 44100, Fal
+4e5cf55b03b5	7.01	1824	rate_case("stereo 48 kHz", 96000, 48000, True, -30)
+09d997d79ffd	11.09	1825	rate_case("stereo 44.1 kHz", 88200, 44100, True, 3839)
+a1c7dc9bfe82	7.49	1826	rate_case("Pitch +7 semitones", 96000, 48000, False, 960, pi
+c474222d029c	0.08	1847	regs = registrar(e, TABLE)                             # a r
+d595279e3070	0.24	1982	for path in ("list", "turn"):
+7e89b595a189	0.10	2121	u = Emu(IMAGE, "out/cave.elf")
+ad9bec568254	2.33	2441	ref = audio(frames=48000, beats=0, image=STOCK, cell=0x102)
+90045ab730ed	15.25	2443	for slip in (0, 480, -30, 7):
+80981f0cd72c	1.80	2472	for ls, le in ((0, 36000), (10000, 50000), (5000, 61000), (1
+d8dec9337d01	29.61	2480	for name, kw in (("Auto, [0, len) Loop Forward (what a load 
+2c47da288327	1.36	2491	a = scenario(frames=96000, cell=0x102, blocks=900, points=RE
+5d06b534540d	1.09	2492	b = scenario(frames=96000, cell=0x102, blocks=900, points=RE
+e7c8cc73755d	2.81	2495	a = audio(frames=96000, beats=0, points=(24000, 72000, 0), r
+958bc360dc8e	2.76	2501	a = audio(frames=96000, beats=0, points=(24000, 72000, 0), r
+ee30f3b71658	17.26	2508	for ls, le, what in ((10000, 50000, "40 000 frames (1.67 bea
+04afbf2ee5c3	7.28	2523	for name, kw in (("Launch Trigger (a one-shot)", dict(launch
+3b4008011db2	13.68	2536	for ls, le, what in ((24000, 56000, "32 000 frames (1.33 bea
+1d9a2ff3ddec	4.60	2555	for launch, name in ((2, "Toggle"), (0, "Trigger")):
+6a5d0ba13a97	7.32	2595	cw = audio(frames=96000, beats=0, sync=5, points=(30000, 390
+f8e0f7fc0193	20.43	2623	for name, change in (("new loop points (Loop End 96 000 -> 4
+a8e83ad3fc4e	5.76	2650	ref_ = audio(**kw)
+d5753a3aba1c	12.21	2652	for blk, W, when in ((100, 336000, "inside step 0"), (265, 3
+714cb3d3b91a	5.09	2673	cw = audio(pre=lambda rr: (rr.param(0x92, 84000), rr.param(0
+f36f447aa389	9.63	2694	for mark in (1, 0):
+d5fd8f32084a	5.57	2722	st_ = audio(frames=96000, beats=2, image=STOCK, cell=0x102, 
+da954fcb8b3b	7.15	2723	cw = audio(frames=192000, beats=0, points=REG, cell=0x102, b
+a8e83ad3fc4e	5.06	2737	ref_ = audio(**kw)
+9b8f4d55dd01	3.79	2738	st_ = audio(frames=96000, beats=0, image=STOCK, cell=0x102, 
+8649c52a64e8	5.11	2739	cw = audio(pre=lambda rr: store(rr.m, 6, {0x4: 500, P_REGION
+862a7d13a473	5.63	2762	cw = audio(frames=96000, beats=0, sync=6, cell=0x102, points
+b20b726669de	5.06	2775	st_ = [scenario(dc=dc, frames=44100, src_rate=44100, stereo=
+a56e1ea34cc5	6.50	2776	cw_ = [scenario(dc=dc, frames=88200, src_rate=44100, stereo=
+808f3fdf35c3	14.35	2792	for length, slip in ((50000, 0), (50000, 960), (192000, 960)
+9b345c4a92ae	6.49	2832	for name, kw in (("a Slicer pad (no markers)", dict(setup=la
+73620939b59f	0.30	2840	a = scenario(points=REG, region=LOOP, cell=0x102, blocks=400
+e13d6b534b20	0.27	2841	b = scenario(points=REG, region=LOOP, cell=0x102, blocks=400
+90b8e9d1d489	0.70	2844	a = scenario(points=REG, region=LOOP, cell=0x401, blocks=400
+9597b7933bf4	0.76	2845	b = scenario(points=REG, region=LOOP, cell=0x401, blocks=400
+57ade827dbb3	0.11	2852	r = Rig(cell=0x102, h=True)
+8c47156e32ba	1.19	2866	r.run(700)
+6d759b1d51ca	10.48	2999	ref_ = audio(pre=ll_pre({}, sync=1), **kw)
+98b3d30a27dd	11.40	3000	cw = audio(pre=ll_pre({eng: 5, eng + 1500: 0}, sync=1), **kw
+b9a74cb99dc6	7.67	3021	ref_ = audio(pre=ll_pre({}), **kw)
+cce1225b17d9	9.13	3022	cw = audio(pre=ll_pre({1000: 1, 1750: 0}), **kw)
+e3c70f37338b	7.36	3037	st_ = audio(frames=96000, at=193000, blocks=2600, image=STOC
+b9a74cb99dc6	7.13	3053	ref_ = audio(pre=ll_pre({}), **kw)
+c636b9b12d5f	5.01	3054	cw = audio(pre=ll_pre({400: 3}), **kw)
+2542f5835a44	3.40	3069	cw = audio(pre=ll_pre({20: 1}), **kw)
+ca5662533b78	8.56	3086	cw = audio(pre=ll_pre({400: 3, 900: 2, 1400: 4}), **kw)
+1d55a45eaaff	5.95	3104	cw = audio(pre=ll_pre({600: 4}), **kw)
+f008ae84e7ed	4.45	3119	ref_ = audio(pre=ll_pre({}, slip=480), **kw)
+85583ddac17a	4.51	3120	cw = audio(pre=ll_pre({300: 3}, slip=480), **kw)
+fc09be085ac6	5.64	3138	mv = audio(pre=ll_pre({300: 3}, slip=480, then=lambda rr: (r
+48fc7b846703	10.07	3163	for name, kw in (("Quant None", dict(quant=8)), ("Sync None"
+6aff9ddbef28	2.92	3179	cw = audio(pre=ll_pre({200: 1}, then=lambda rr: rr.param(P_S
+d4112ac52083	5.26	3191	cw = audio(pre=ll_pre({900: 1}, then=lambda rr: rr.note_on()
+5e98aa9eba7e	6.35	3220	ref_ = audio(pre=ll_pre({}, sync=2, then=late_sync), **kw)
+dc9f166bf43d	5.62	3221	cw = audio(pre=ll_pre({371: 4}, sync=2, then=lambda rr: late
+cc2641a3f44f	4.94	3245	cw = audio(pre=ll_pre({200: 3, 600: 0, 618: 3, 1000: 0, 1300
+6d27b7c5ccbe	5.02	3267	cw = audio(pre=ll_pre({200: 3, 850: 3}, then=lambda rr: rr.n
+60bde7ced83f	5.62	3287	for length in (50000, 192000):
+1181b6d28b67	4.03	3321	cw, tr = ll_turn({450: 1, 493: 2, 536: 3})
+ee7318914e50	74.04	3338	for gap in (56, 64, 81, 16 * LL_SETTLE):
+e39c86631d9b	5.75	3345	cw, tr = ll_turn({450: 1, 825: 2, 1200: 3})
+43b86dab1584	5.96	3352	cw, tr = ll_turn({450: 3, 800: 0})
+8f50a3e3129c	0.17	3360	r = Rig(cell=0x102)
+c343b87b6c5c	1.77	3370	r.run(900)
+ebf50e20a22b	6.96	3385	cw = audio(pre=ll_pre({600: 4}, sync=2), **kw)
+3489d990c061	5.05	3388	st_ = audio(frames=120000, beats=5, at=287000, sync=2, block
+cb30ea6102e2	2.77	3406	nb = scenario(pre=ll_pre({1000: 1, 1750: 0}), bank2=False, *
+e4f9e209f0bd	2.29	3407	rf = scenario(pre=ll_pre({}), **kw)
+221af4924c00	1.55	3422	nb = scenario(bank2=False, **kw)
+0ed0d371b127	1.32	3423	by = scenario(bypass=True, **kw)
+ea6dabd5201f	1.42	3424	wb = scenario(**kw)
+7676f9e80362	1.56	3434	a = scenario(frames=96000, cell=0x102, blocks=900, points=RE
+5d06b534540d	1.27	3435	b = scenario(frames=96000, cell=0x102, blocks=900, points=RE
+94f3e233b318	0.10	3512	fu = Emu(IMAGE, "out/cave.elf")
+a264f419de10	40.25	3664	for what, kw in (("as a region", REG4), ("as a whole file", 
+095e5f15721d	27.04	3681	for name, pre in (("moved", lambda rr: (rr.param(0x92, RS4 +
+a757d3df999d	30.21	3699	for fit in (0, 1, 6):
+7dbab73b0753	32.94	3721	for fit in (0, 6):
+6cd56fa32693	28.66	3738	ds = {s_: fit_audio(1, beats=0, blocks=2300, cell=0x102, sli
+1f26f7fc92ed	0.45	3744	sm = seamless(ds[480], VL4)
+e07ac1aca561	13.83	3748	d = fit_audio(1, beats=0, blocks=2300, cell=0x102, vals={P_L
+beb99d2f9e9c	23.56	3756	d = fit_audio(1, beats=0, blocks=2300, cell=0x102, frames=82
+e24627d15660	0.54	3757	sm, r = seamless(d, 82465), d["rig"]
+934015a42e7a	13.90	3763	d = fit_audio(1, beats=0, blocks=2300, cell=0x102, setup=lam
+2454e5ac74a5	0.60	3764	sm, r = seamless(d, VL4), d["rig"]
+766634813405	11.50	3771	for fit, want in ((0, 94438), (1, 95999)):
+88766deae672	377.23	3802	for kind, b_, quant, sync in ([(k, b, 3, s_) for k in ("File
+5debea83330a	19.60	3815	st14 = poly(14, sync="1/16", image=STOCK, fit=0, bc=14)
+ca54a928e8fc	9.69	3816	st7 = poly(7, sync="1/4", image=STOCK, fit=0, bc=7)
+022ef07a46d3	7.32	3817	st5 = poly(5, sync="1/2", image=STOCK, fit=0, bc=5)
+333251aa9471	108.57	3839	for what, a, want_ps, want_big in (
+e9e51637f2f0	11.78	3870	d = fit_audio(0, beats=0, blocks=2300, cell=0x102, vals={P_S
+7652527220f6	0.21	3874	sm_before, sm_after = seamless(d, VL4, since=ps[1] - 1000, r
+b3173e04af74	63.73	3881	for quant, what in ((1, "Quant 4 bars"), (3, "Quant 1 bar"))
+1613a444a216	102.31	3908	for beats_, at in ((16, 300000), (16, 700000), (13, 300000))
+5a9d61a69911	8.44	3926	for what, kw in (("a region, Slip 480", dict(points=REG, sli
+ec96d94b877d	0.19	3979	r = Rig(cell=0x102, h=True, frames=192000)
+8c47156e32ba	2.46	3993	r.run(700)
+94b26435565e	102.30	4033	for what, kw in (("48 kHz mono, rate 1", dict()), ("Fit Auto
+a6ae144e7e9b	10.22	4047	d0 = audio(blocks=2300, vals={P_FADE: 0}, **{**FREG, "points
+e75c4191e4bb	9.55	4048	d5 = audio(blocks=2300, vals={P_FADE: 50}, **{**FREG, "point
+15d1672ab802	33.74	4064	try:
+2f6d23279c24	46.41	4081	for what, kw in (("Launch Trigger", dict(launch=0)), ("Loop 
+b392c52670d3	4.45	4113	a, b = (scenario(blocks=1500, vals={P_FADE: f_, P_SYNC: 3}, 
+50edd9badb2a	6.34	4127	for fade in (0, 250):
+b9e18b03926a	26.45	4178	for what, kw in PH.items():
+67365291b706	7.29	4196	d, nd = audio(**kw), audio(setup=h5_out, **kw)
+221af4924c00	1.46	4204	nb = scenario(bank2=False, **kw)
+50d7a2c4df8c	1.01	4205	sti = scenario(image=STOCK, **kw)
+897fff069ff9	0.16	4351	sc = Screen()
+b8072dbc4bde	0.64	4404	for what, vals_, length in (("the setup's values", CLIP12, 1
+d0aaabf215d3	0.32	4432	for nm, scr in (("stock", Screen(STOCK)), ("hooks bypassed",
+ac59964ff1c8	0.16	4442	sm = Screen()
+f489b1777c81	0.21	4498	rt, s_ = slip_run(True, 0.7, 40)
+8ffb35d24545	0.21	4499	bare, _ = slip_run(False, 0.7, 40)
+1615e293697e	0.23	4503	rt, s_ = slip_run(True, 6, 20, sign=-1, start=300)
+bc46659ffdb1	0.20	4504	bare, _ = slip_run(False, 6, 20, sign=-1, start=300)
+bafbcf06a51f	0.16	4550	lv = Screen()
+4c04f8db22f8	0.20	4563	l0 = Screen()
+317eec47a5b4	0.16	4610	jv = Screen()
+c03c5b0a4d51	0.16	4652	fv = Screen()
+0f58cd69ed91	0.15	4657	nb2 = Screen(bank2=False)
+719caddfd8c9	0.16	4677	lh = Screen()
+4cabfc2b6b56	0.16	4694	sp = Screen()
+07e9f7580844	0.16	4722	br = Screen()
+f9be376c7651	0.17	4744	sl = Screen()
+626087831e4c	0.31	4757	nb2, kref = Screen(bank2=False), Screen(stock_knob=True)
+0e1405656c3f	0.06	4759	for scr in (nb2, kref):
+4fa659de84ed	1.50	4777	for name, steps in (("Sample", [0]), ("Granular", [3]), ("Sl
+735d0f5db324	0.48	4802	for mode in (4, 5):
+570268ffd55a	0.11	4902	lc = Corners()
+694f32493812	0.09	4903	st_lc = Corners(STOCK)
+86fb3a00ee6d	1.21	4928	for n, texts in LINES.items():
+83e322f14455	0.18	4978	for n, (t1, t2) in (("TR", ("LpE 102000", "LpE 96000")), ("T
+6a12bbec7808	0.11	4991	nb_lc = Corners(bank2=False)
+24aee8781080	0.16	5005	ms = Screen()
+9efc4123bfe6	0.05	5011	for mode, was in ((1, 0), (0, 1), (3, 0), (2, 3), (1, 2), (0
+e8e19a6b0f2e	0.25	5032	c_ours, c_stock = cost(lc, "TL", "LpS 12345678"), cost(st_lc
+cdf742cda523	0.29	5072	png("out/halo-preview.png", [frame(st_lc), frame(lc)])
+ba3dab951379	0.34	5126	mbx, ref = mb_screen(), mb_screen()
+8c273f220e79	49.11	5227	for name, kw, seamless_ in fa_cases:
+96512598c7cf	3.04	5262	lon, loff = fa_segs(fa_run(**kw))[0], fa_segs(fa_run(off=Tru
+e14c3f71f133	4.38	5270	fs = fa_segs(fa_run(**kw))[0]
+d4dbb1c4557d	9.71	5279	ok, d = same(fa_run(attack=None, **kw), fa_run(attack=None, 
+515ae53bf643	10.62	5282	for name, kw in (("Slip 0, the whole file, Fit Off (no latch
+c59a619fdb7e	4.55	5330	fp_after, fp_sent = fp_run(((0x94, 0), (0x47, 3)))
+9727efc6062b	4.85	5335	fp_plain, fp_plain_sent = fp_run(())
+b3831c68e225	4.78	5336	fp_none, _ = fp_run((), load=False)
+72d12d64d761	0.22	5379	mv, mv_out = mv_run({P_TLKNOB: 1}, (+2000, -3600))
+a203122cdb47	0.28	5393	ls_, ls_out = mv_run({}, (+2000, -3600))
+8a0650f96c20	0.26	5399	fl, fl_out = mv_run({P_TLKNOB: 1, P_REGION: 1}, (+2000, -360
+4a1c004d5290	0.21	5408	gd, gd_out = mv_run({P_TLKNOB: 1}, (+2000, -3600), marks=gm)
+f3472b6c72b5	0.22	5414	sm, sm_out = mv_run({P_TLKNOB: 1}, (+2000,), mode=0)

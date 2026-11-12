@@ -1,0 +1,11 @@
+# bbci-spool.path - fork-only template (bench/systemd/): start bbci-spool.service whenever bbci's spool holds a
+# request. Installed and enabled with bbci-spool.service (the line is in its header).
+[Unit]
+Description=blackbox-mod bbci: watch the spool
+
+[Path]
+DirectoryNotEmpty=@WORK@/spool
+MakeDirectory=yes
+
+[Install]
+WantedBy=default.target
