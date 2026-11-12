@@ -7,9 +7,10 @@ PY=.venv/bin/python
 [ -x "$PY" ] || PY=python3               # needs unicorn, capstone and numpy
 [ -f host/libdsp.dylib ] || sh host/build.sh     # the host build of the DSP (clang, or CC / cc: host/build.sh), which several suites hold the firmware's against
 
-# One by one the suites take ~28 min, over an unattended turn's budget: they run in a pool as wide as the box
-# (CHECK_JOBS to change it). The fork's runner (bench/suites.py) queues the longest first and runs a suite over ~2 min
-# as shards of its own file (bench/shard.py), leaving one log and one exit status per suite all the same.
+# One by one the suites take about an hour of CPU, over an unattended turn's budget: they run in a pool as wide as the
+# box (CHECK_JOBS to change it). The fork's runner (bench/suites.py) queues the longest first and runs test_clipwin.py
+# as shards of its own file (bench/shard.py, with a plan bench/shards/proven.tsv holds; else whole), leaving one log
+# and one exit status per suite all the same.
 # xargs -P, not `jobs`: /bin/sh is dash on Debian, where `jobs -p` in a script counts nothing.
 J=${CHECK_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 6)}
 rm -f out/*.rc                           # a worker killed mid-run must not leave the last run's 0 behind
