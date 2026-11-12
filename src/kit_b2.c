@@ -717,10 +717,7 @@ __attribute__((noinline)) static void card_upkeep(volatile struct kit_box *b)
         file_close(b, d);
 }
 
-/* ---- a restart (x6 §7): stock 3.1.9 never resets itself in software, so the kit does it as b2load.c and fault.c do,
-   SYSRESETREQ behind a dsb, from the card task between two file command steps (no FatFs call half done), and only
-   while stock is idle on the card and nothing is being recorded. Not found yet: a flag that says a take is being
-   written to the card, so it refuses while the transport plays or REC is held. ---- */
+/* stock's state the preset load and the restart look at */
 #define SYSTEM      0x2400a9c0u                    /* the engine / system object (FUN_08070bf4) */
 #define CLOCK       (*(const uint8_t *const volatile *)(SYSTEM + 0x9a74u))   /* the transport's clock */
 #define PRESETS     ((const uint8_t *)0x2401f508u)  /* the preset manager F */
@@ -732,6 +729,67 @@ typedef int (*idle_fn)(uint32_t system);
 #define DCCMVAC     (*(volatile uint32_t *)0xe000ef68u) /* data cache: write this line out */
 #define AIRCR       (*(volatile uint32_t *)0xe000ed0cu)
 
+/* ---- a preset load by name (x6 §5): the GUI task finds the name in stock's preset list and posts the message the
+   PSET screen's Load button posts, {0x18, the list's index at +0xc}, to the app's handler FUN_080a1718, whose case 0x18
+   runs LoadBank (FUN_0809e218: the pads' sample work dropped, the card's command 0x22 queued) and shows the Pads screen.
+   LoadBank's own refusals are checked first, so the job can say which one held. ---- */
+#define PRESET_LIST ((uint8_t *)0x2401f834u)        /* F + 0x32c: {u32 count, ..., +0xc char **names, +0x10 re-sort} */
+#define D_SCRATCH   0x300u                         /* the data area's 256 bytes the kit reads a name into */
+typedef int (*preset_name_fn)(uint8_t *list, uint32_t i, char *to);
+#define fw_preset_name ((preset_name_fn)B2_FN(0x0804290c))   /* name i (re-sorting first when due), 1 while i < count */
+
+static int same(const char *a, const char *b)
+{
+    while (*a && *a == *b)
+        a++, b++;
+    return *a == *b;
+}
+
+/* 0x06 preset load (the name at +0x200, as the list has it): r0 the list's index. -5 not in the list; -4 with r0 4 a
+   load pending, 5 the card's queue busy (LoadBank would refuse it); -4 r0 6 no data area. */
+static int job_preset(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    if (!d) {
+        b->r[0] = 6;
+        return R_REFUSED;
+    }
+    if (!d[D_NAME])
+        return R_ARG;
+    uint32_t i = 0;
+    while (fw_preset_name(PRESET_LIST, i, (char *)d + D_SCRATCH) && !same((const char *)d + D_SCRATCH, (const char *)d + D_NAME))
+        i++;
+    if (i >= *(volatile uint32_t *)PRESET_LIST)
+        return R_NOT_FOUND;
+    b->r[0] = LOAD_NAME && *LOAD_NAME ? 4 : fw_streamer_idle(SYSTEM) ? 0 : 5;
+    if (b->r[0])
+        return R_REFUSED;
+    uint32_t msg[6] = {0x18, 0, 0, i, 0, 0};
+    fw_app_msg(APP, msg);
+    b->r[0] = (int32_t)i;
+    return R_OK;
+}
+
+/* 0x07 presets (the list's index, -1 for none): r0 the count, r1 1 while a load is pending, r2 the card's file commands
+   queued; r3 1 with the name at +0x200 when the index is in the list */
+static int job_presets(volatile struct kit_box *b)
+{
+    uint8_t *d = data_area(b);
+    if (!d) {
+        b->r[0] = 6;
+        return R_REFUSED;
+    }
+    b->r[3] = b->arg[0] >= 0 && fw_preset_name(PRESET_LIST, (uint32_t)b->arg[0], (char *)d + D_NAME);
+    b->r[0] = *(volatile int32_t *)PRESET_LIST;
+    b->r[1] = LOAD_NAME && *LOAD_NAME;
+    b->r[2] = (int32_t)(CMD_WRITE - CMD_READ);
+    return R_OK;
+}
+
+/* ---- a restart (x6 §7): stock 3.1.9 never resets itself in software, so the kit does it as b2load.c and fault.c do,
+   SYSRESETREQ behind a dsb, from the card task between two file command steps (no FatFs call half done), and only
+   while stock is idle on the card and nothing is being recorded. Not found yet: a flag that says a take is being
+   written to the card, so it refuses while the transport plays or REC is held. ---- */
 /* why stock is not idle: 0 it is; 1 the transport plays, 2 REC held, 3 file commands queued, 4 a preset load pending,
    5 the streamer busy */
 static int busy(void)
@@ -776,6 +834,8 @@ static const job_fn JOBS[KIT_JOBS] = {
     [0x03] = job_knob,
     [0x04] = job_touch,
     [0x05] = job_tap,
+    [0x06] = job_preset,
+    [0x07] = job_presets,
     [0x20] = job_button,
     [0x40] = job_open,
     [0x41] = job_rw,

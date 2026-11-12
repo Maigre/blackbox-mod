@@ -967,6 +967,66 @@ k.e.w32(PCHECK, BLOCK ^ PKEY)
 check("no card, or no data area (the block without its tail): -4, r0 6, FatFs not called",
       r["result"] == -4 and r["r"][0] == 6 and r2["result"] == -4 and r2["r"][0] == 6 and len(fs.calls) == n0, (r, r2, fs.calls[n0:]))
 
+# ====================================================================================================== 8b. a preset load by name
+# The screen task's job 6: stock's own FUN_0804290c reads the names off the list (F + 0x32c) until one is the asked-for,
+# and the message the PSET screen's Load button posts goes to the app's handler: run here for real, FUN_080a1718's case
+# 0x18 hands its index to LoadBank (FUN_0809e218, a recorder here) with 1 (remember it for settings.tml), then shows Pads.
+PLIST, PNAMES, PSTR = 0x2401F834, 0x24078300, 0x24078400
+PRESETS = ["BASICS", "Live Set 2", "DRUMS-01", "Live Set"]
+
+
+def preset_rig(k):
+    e = k.e
+    e.w32(PLIST, len(PRESETS))
+    e.w32(PLIST + 4, 16)
+    e.w32(PLIST + 0xC, PNAMES)
+    e.uc.mem_write(PLIST + 0x10, b"\x00")
+    at = PSTR
+    for i, n_ in enumerate(PRESETS):
+        e.w32(PNAMES + 4 * i, at)
+        e.uc.mem_write(at, n_.encode() + b"\0")
+        at += 0x20
+    e.w32(0x2401F508 + 0x390, 0x24078100)                  # LoadBank's "a load is pending" string: empty
+    e.uc.mem_write(0x24078100, b"\x00")
+    k.idle = [1]
+    e.stub(0x0807125C, lambda: e.uc.reg_write(66, k.idle[0]))
+
+
+k = Kit()
+preset_rig(k)
+del k.e.stubs[0x080A1718]                                  # the app's real handler this time
+loads, screens = [], []
+k.e.stub(0x0809E218, lambda: loads.append((k.e.arg(0), k.e.arg(1), k.e.arg(2))))
+k.e.stub(0x0809EAEC, lambda: screens.append((k.e.arg(1), k.e.arg(2))))
+name(k, "Live Set")
+r = k.job(SCREEN, 0x06)
+check(f"preset load (job 6, 'Live Set'): found at index 3 (not 'Live Set 2'), the Load button's message through the app's "
+      f"real handler: LoadBank(app, 3, 1), then the Pads screen ({loads}, {screens})",
+      r["result"] == 0 and r["r"][0] == 3 and loads == [(APP, 3, 1)] and screens == [(2, 0)], (r, loads, screens))
+loads.clear()
+name(k, "live set")
+r1 = k.job(SCREEN, 0x06)
+k.e.uc.mem_write(D_NAME, b"\0")
+r2 = k.job(SCREEN, 0x06)
+k.e.uc.mem_write(0x24078100, b"X")
+name(k, "BASICS")
+r3 = k.job(SCREEN, 0x06)
+k.e.uc.mem_write(0x24078100, b"\x00")
+k.idle[0] = 0
+r4 = k.job(SCREEN, 0x06)
+k.idle[0] = 1
+r5 = k.job(CARD, 0x06)
+check(f"...refused, nothing loaded: a name not in the list as it is written (-5), none (-3), a load pending (-4, r0 4), "
+      f"the card's queue busy (-4, r0 5); and the card task leaves it",
+      (r1["result"], r2["result"], r3["result"], r3["r"][0], r4["result"], r4["r"][0]) == (-5, -3, -4, 4, -4, 5)
+      and r5["unset"] and not loads, (r1, r2, r3, r4, r5))
+names_back = []
+for i in range(5):
+    r = k.job(SCREEN, 0x07, i)
+    names_back.append(bytes(k.e.uc.mem_read(D_NAME, 32)).split(b"\0")[0].decode() if r["r"][3] else None)
+check(f"presets (job 7): r0 the count, each name by its index into the name area, none past the end ({names_back})",
+      names_back == PRESETS + [None] and r["r"][:3] == (4, 0, 0), (names_back, r))
+
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and
 # b2load_thunk.S do not call it, build.sh leaves kit_b2 out of bank 2 (so the release's bank 2, and the bank 1 that
