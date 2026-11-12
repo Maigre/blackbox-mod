@@ -9,6 +9,7 @@ import struct
 import sys
 
 from emu import STACK, Emu
+from unicorn.arm_const import UC_ARM_REG_SP
 
 IMAGE = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+master+fault+cave/BLACKBOX.bin"
 fails = 0
@@ -48,7 +49,7 @@ e.stub(0x08098D0C, value=STORE)
 e.stub(0x080BD74E, lambda: POPUP.append(e.arg(1)))
 e.stub(0x08098D40, value=1)
 e.stub(0x080A5038, lambda: ROWS.append((e.arg(1), e.arg(2))))
-e.stub(e.sym["chop_request"] & ~1, lambda: REQS.append((e.arg(0), e.arg(1), e.arg(2), e.arg(3))))
+e.stub(e.sym["chop_request"] & ~1, lambda: REQS.append((e.arg(1), e.arg(2), e.arg(3), struct.unpack("<I", bytes(e.uc.mem_read(e.uc.reg_read(UC_ARM_REG_SP), 4)))[0])))   # arg 0: chop_cave; want on the stack)
 e.uc.mem_write(REF, struct.pack("<IHH", 0x080EAF38, 2 << 4 | 1, 0))      # pad row 2 col 1 = 9
 
 # --- the list

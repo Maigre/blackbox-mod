@@ -21,6 +21,14 @@ def check(label, cond, detail=""):
 
 
 e = Emu(IMAGE, "out/cave.elf")
+CV = e.sym["chop_cave"]                            # bank 1's table: chop.c (bank 2) reaches the cave through it
+
+
+def req(q, op, unit, want):
+    """chop_request(cv, q, op, unit, want): the fifth argument goes on the stack, which Emu.call does not write"""
+    e.uc.mem_write(STACK, struct.pack("<I", want & 0xFFFFFFFF))
+    return e.call("chop_request", CV, q, op, unit)
+
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
 CELL, BUF, POS, MSGS = 0x24060000, 0x24061000, 0x24062000, []
@@ -273,16 +281,16 @@ def scan_run():
 
 
 def poll1():
-    e.call("chop_poll")
+    e.call("chop_poll", CV)
 
 
 def poll():
     """one GUI frame; a scan that it starts runs to the end (audio blocks) and the next frame places"""
     scan_run()
-    e.call("chop_poll")
+    e.call("chop_poll", CV)
     if cr()["phase"] == 2:                        # CHOP_PH_SCAN
         scan_run()
-        e.call("chop_poll")
+        e.call("chop_poll", CV)
 
 
 def cr():
@@ -292,7 +300,7 @@ def cr():
 
 MSGS.clear()
 req0 = e.r32(TJ + 156)
-e.call("chop_request", 6, 1, 2, 16)               # Beats, a beat each
+req(6, 1, 2, 16)               # Beats, a beat each
 check("Beats requested on pad 6: waiting on the tempo, the detector asked for pad 6",
       cr()["phase"] == 1 and e.r32(TJ + 156) == req0 + 1 and e.r32(TJ + 164) == 6, (cr(), e.r32(TJ + 156)))
 poll()
@@ -312,7 +320,7 @@ check("... beat 50's grid point (6000 after it) takes its hit, not the click 16 
       [p for p in lst() if 49 * FPB < p < 52 * FPB])
 check("... and the detector's job is taken (idle again)", e.r32(TJ) == 0)
 
-e.call("chop_request", 6, 2, 0, 8)                # Find 8, tempo known, the whole file scanned: no rescan
+req(6, 2, 0, 8)                # Find 8, tempo known, the whole file scanned: no rescan
 f0 = FETCHES[0]
 check("Find with the tempo known and the file scanned: straight to the picks (no detector, no rescan)",
       cr()["phase"] == 2 and e.r32(CJ) == 2, cr())
@@ -323,37 +331,37 @@ check(f"... 8 Find chops placed, all on hits, none in the silence, nothing read 
       len(f1) == 8 and all(p in HD for p in f1) and FETCHES[0] == f0 and cr()["phase"] == 0, (f1, FETCHES[0] - f0))
 check("... and PlayThru on (0xf2 = 1) in the pad's store and to the engine (Find plays on past a chop)",
       (CELL, 0xF2, 1) in SETS and (0x2400A9C0, 0x102, 0xF2, 1) in EPARAMS, (SETS, EPARAMS))
-e.call("chop_request", 6, 2, 0, 8)                # roll again
+req(6, 2, 0, 8)                # roll again
 poll()
 check(f"a re-roll of Find: another set {[beat_of(p) for p in lst()]}", lst() != f1 and len(lst()) == 8, lst())
 
-e.call("chop_forget", 6)                          # a new sample on pad 6 (chop_header_post)
+e.call("chop_forget", CV, 6)                          # a new sample on pad 6 (chop_header_post)
 check("a new sample: the old scan is dropped (it can never be reused for the new file)",
       e.r32(CJ) == 0 and e.r32(CJ + 8) == 0, (e.r32(CJ), e.r32(CJ + 8)))
-e.call("chop_request", 6, 2, 0, 8)
+req(6, 2, 0, 8)
 check("Find after a new sample: the detector again, not a re-roll", cr()["phase"] == 1 and e.r32(TJ + 164) == 6, cr())
-e.call("chop_forget", 5)
+e.call("chop_forget", CV, 5)
 check("chop_forget on another pad leaves pad 6's run alone", cr()["phase"] == 1, cr())
 
-e.call("chop_request", 6, 3, 0, 16)               # Random 16, the tempo fails
+req(6, 3, 0, 16)               # Random 16, the tempo fails
 detected(0.0, 0.0, ok=False)
 poll()
 check("the detector fails: nothing placed, fail 1", cr()["phase"] == 0 and cr()["fail"] == 1, cr())
-e.call("chop_request", 6, 1, 2, 16)               # nobody answers
+req(6, 1, 2, 16)               # nobody answers
 for _ in range(1801):
     poll1()
 check("no answer for ~30 s of GUI frames: gives up, fail 2", cr()["phase"] == 0 and cr()["fail"] == 2, cr())
 
 # --- a long file: grid chops scan only as far as their 128 points; Find later goes on from there
-e.call("chop_forget", 6)
-e.call("chop_request", 6, 1, 0, 16)               # Beats 1/4: 128 points x 6000 = 768,000 frames of 1,536,000
+e.call("chop_forget", CV, 6)
+req(6, 1, 0, 16)               # Beats 1/4: 128 points x 6000 = 768,000 frames of 1,536,000
 detected(120.0, 0.0)
 poll()
 part = e.r32(CJ + J_LEN)
 check(f"Beats 1/4 on a long file: the scan stops at frame {part} (past the last of 128 points + half a step), "
       f"{len(lst())} chops", cr()["phase"] == 0 and e.r32(CJ) == 2 and 127 * 6000 + 3000 < part < len(TL) // 2 + 8192
       and lst() == model(beats(len(TL), 0, FPB, 0.25), FPB / 4, hits_of(CJ)), (part, cr()))
-e.call("chop_request", 6, 2, 0, 8)                # Find needs the whole file: the same scan goes on
+req(6, 2, 0, 8)                # Find needs the whole file: the same scan goes on
 check("... then Find: the scan goes on from there (no detector, not from the start)",
       cr()["phase"] == 2 and e.r32(CJ) == 1 and e.r32(CJ + J_NEXT) >= part - 4096 and e.r32(CJ + J_LEN) == len(TL),
       (cr(), e.r32(CJ), e.r32(CJ + J_NEXT)))
@@ -363,8 +371,8 @@ check(f"... and its hits are the one-pass scan's ({len(hits_of(CJ))})", hits_of(
 # --- a scan whose audio never arrives gives up (the job's own count), and a slow but moving scan never times out
 STALL = [True]
 e.stubs[0x08063608] = lambda: (e.ret(0) if STALL[0] else cfetch2())
-e.call("chop_forget", 6)
-e.call("chop_request", 6, 3, 0, 16)
+e.call("chop_forget", CV, 6)
+req(6, 3, 0, 16)
 detected(120.0, 0.0)
 poll1()
 for _ in range(4100):
@@ -372,8 +380,8 @@ for _ in range(4100):
 poll1()
 check("the audio never arrives: the scan gives up after 4000 tries, fail 2", cr()["phase"] == 0 and cr()["fail"] == 2, cr())
 STALL[0] = False
-e.call("chop_forget", 6)
-e.call("chop_request", 6, 3, 0, 16)
+e.call("chop_forget", CV, 6)
+req(6, 3, 0, 16)
 detected(120.0, 0.0)
 poll1()
 frames = 0
@@ -399,15 +407,15 @@ def is_dice(t):
 
 
 def roll(q=6):
-    e.call("chop_roll_text", q, TXT)
+    e.call("chop_roll_text", CV, q, TXT)
     return e.cstr(e.uc.reg_read(UC_ARM_REG_R0))
 
 
 for _ in range(200):
     poll()                           # whatever the last test left: run out
 check("idle: a resting die", roll() == "[:.:]", roll())
-e.call("chop_forget", 6)                          # so this run waits on the detector (Rolling..)
-e.call("chop_request", 6, 1, 2, 16)               # Beats
+e.call("chop_forget", CV, 6)                          # so this run waits on the detector (Rolling..)
+req(6, 1, 2, 16)               # Beats
 seen = []
 for _ in range(48):
     seen.append(roll())
@@ -431,8 +439,8 @@ for _ in range(89):
 check("... still up just before ~1.5 s", roll() == f"{n} chops", roll())
 poll()
 check("... then the resting die", roll() == "[:.:]", roll())
-e.call("chop_forget", 6)                          # a new sample, so the detector runs (and fails)
-e.call("chop_request", 6, 3, 0, 16)               # Random, the tempo fails at once
+e.call("chop_forget", CV, 6)                          # a new sample, so the detector runs (and fails)
+req(6, 3, 0, 16)               # Random, the tempo fails at once
 detected(0.0, 0.0, ok=False)
 poll()
 check("a failure during the dice: the dice play out first", is_dice(roll()), roll())
@@ -447,8 +455,8 @@ for _ in range(200):
     poll()
 TEMPO[0] = 2                                      # x2: the detector read the song at half its tempo
 SETS.clear()
-e.call("chop_forget", 6)                          # a new sample: the detection is redone, and reads the code
-e.call("chop_request", 6, 1, 2, 16)               # Beats, a beat each
+e.call("chop_forget", CV, 6)                          # a new sample: the detection is redone, and reads the code
+req(6, 1, 2, 16)               # Beats, a beat each
 detected(120.0, 6000.0)                           # 120 detected -> 240 true: a beat = 12000 frames
 poll()
 p2 = lst()
@@ -460,7 +468,7 @@ check("... and Beat Count = the file's beats at the true tempo", (CELL, 0xD2, ro
 SETS.clear()
 TEMPO[0] = 1
 f0 = FETCHES[0]
-ok = e.call("chop_retempo", 6, 2, 1) is not None and e.uc.reg_read(UC_ARM_REG_R0)
+ok = e.call("chop_retempo", CV, 6, 2, 1) is not None and e.uc.reg_read(UC_ARM_REG_R0)
 poll()
 p3 = lst()
 check(f"re-tempo x2 -> 1/2 with the detection in hand: no detector, chops on a 48000 grid ({len(p3)}); the scan (stopped "
@@ -469,7 +477,7 @@ check(f"re-tempo x2 -> 1/2 with the detection in hand: no detector, chops on a 4
       and 0 < FETCHES[0] - f0 <= 6 and e.r32(CJ + J_LEN) == len(TL), (ok, p3[:4], cr(), FETCHES[0] - f0))
 check("... Beat Count follows", (CELL, 0xD2, round(len(TL) / 48000)) in SETS, [x for x in SETS if x[1] == 0xD2])
 check("... with the dice cue", is_dice(roll()), roll())
-e.call("chop_retempo", 5, 1, 0)
+e.call("chop_retempo", CV, 5, 1, 0)
 check("re-tempo on a pad with no detection: 0 (the caller detects)", e.uc.reg_read(UC_ARM_REG_R0) == 0)
 TEMPO[0] = 0
 
@@ -478,14 +486,14 @@ for _ in range(60):
     poll()
 req1 = e.r32(TJ + 156)
 f0 = FETCHES[0]
-e.call("chop_request", 6, 1, 1, 16)               # Beats 1/2 beat
+req(6, 1, 1, 16)               # Beats 1/2 beat
 check("a Chop change (tempo known, the file scanned): straight to the placement (no detector)", cr()["phase"] == 2, cr())
 poll()
 q3 = lst()
 check(f"... placed at once, nothing read again ({len(q3)})",
       e.r32(TJ + 156) == req1 and cr()["phase"] == 0 and FETCHES[0] == f0
       and q3 == model(beats(len(TL), 6000, FPB * 2, 0.5), FPB, hits_of(CJ)), (e.r32(TJ + 156), cr(), q3[:3]))
-e.call("chop_request", 6, 3, 0, 8)                # Random on the same scan: no rescan
+req(6, 3, 0, 8)                # Random on the same scan: no rescan
 check("Random after that: the same scan reused", cr()["phase"] == 2 and e.r32(CJ) == 2, (cr(), e.r32(CJ)))
 poll()
 check(f"... and placed {len(lst())} chops on hits", cr()["phase"] == 0 and len(lst()) == 8 and all(p in hits_of(CJ) for p in lst()),
