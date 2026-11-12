@@ -75,6 +75,11 @@ reach the fork through `bench/sync-upstream.sh` (a hub watcher opens a task when
 
 - Build and test: [`notes/dev-setup.md`](notes/dev-setup.md) (Linux, no root: Arm GNU 14.2, a Python venv, Ghidra 12 +
   a JDK 21). `./check.sh` must print `N suites, 0 failed`.
+- Checking a branch: `bench/doctor.sh` says whether a box can run `./check.sh`, and prints the line that fixes each
+  miss. `./check.sh` runs the suites in a pool as wide as the box, `test_clipwin.py` as six shards of its own file
+  when `bench/shards/proven.tsv` holds the proof of that plan, whole otherwise (D-046; after an edit to that suite:
+  `python3 bench/shard.py test_clipwin.py --prove 6`). `bench/bbci.sh <ref> [--remote <name>]` checks any ref in a
+  throwaway worktree and leaves `verdict.json`, an `error` one when it is stopped.
 - Install: copy the patched `BLACKBOX.bin` (and `BBEXTRA.BIN` when a build has one) to the card root, hold BACK + INFO
   while powering on, on the unit's normal power supply. Back to stock the same way with 1010music's file.
 - Before an upstream merge: `python3 bench/resources.py report . upstream/main` (add `--build --base $(git merge-base

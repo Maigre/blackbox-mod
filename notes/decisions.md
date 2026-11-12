@@ -117,6 +117,18 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   time: a knob or tap job holds the mailbox until it ends, a request made meanwhile is answered busy (−8), and a
   cancel job ends the running one; `bbkit.py` cancels a job that outlasts its time. `master_alloc` clears the box at
   every boot, because the boot count restarts at 1 after a power-on. Net bank 1: 4 B less than before the kit.
+- **D-046 (2026-11-12) — A long suite is split by the runner, never by editing it; a split runs only on a proven
+  plan** (hub #t-055). `bench/shard.py` runs a slice of a suite's sections and, without printing anything, the
+  statements of the other sections that the slice reads or that change what it reads (method calls followed by
+  name), worked out from the source at each run. The proof is `bench/shard.py <suite> --prove N`: the shards'
+  output joined is the whole run's line for line and the counts add up; it is recorded in
+  `bench/shards/proven.tsv` against a digest of the suite's text and of what each shard runs. `bench/suites.py`
+  shards a suite only when that digest still matches: any edit to the suite makes it run whole until it is proven
+  again, so a shard can never pass where the whole run fails. Only `test_clipwin.py` is split (6 shards);
+  `test_munchi`, `test_relapse` and `test_confetti` keep one emulator running from statement to statement and run
+  whole, so `test_munchi` sets the check's floor: about 12.5 min on mgr-ran, not the five the task aimed at.
+  `check.sh`'s pool is the box's core count (`CHECK_JOBS` overrides it); its diff against upstream stays the pool
+  and one call into `bench/suites.py`, with an xargs fallback when `bench/` is absent.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving

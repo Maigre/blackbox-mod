@@ -19,7 +19,9 @@ artwork. Those stay on the dev box under `/srv/dev/firmware/` (outside every clo
 - [`pr-map.md`](pr-map.md) — how the fork's work becomes JOEBOX pull requests: the layers, their state, the order.
 - [`upstream-first-contact.md`](upstream-first-contact.md) — the first-contact issue sent to JOEBOX (#4, 18/10);
   [`upstream-input-resample.md`](upstream-input-resample.md) — an issue text on a JOEBOX bug (F-m), Thomas's to send.
-- [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root.
+- [`dev-setup.md`](dev-setup.md) — building, testing and Ghidra on Linux without root; the check's time per suite;
+  the shards, their proof and its record (`bench/shard.py --prove`, `bench/shards/proven.tsv`); `bench/doctor.sh`;
+  `bench/bbci.sh`.
 - [`resources.md`](resources.md) — the scarce things (parameter ids and where they are read, stock functions our code
   calls, settings-store entries, the boot SDRAM block, backup SRAM, patched stock bytes, bank 1), where
   `bench/resources.py` reads each, the `resources:` tags, and the report to run at every upstream release, with its
