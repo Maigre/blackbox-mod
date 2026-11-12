@@ -12,9 +12,10 @@ What is checked, on the tree this runs in (read statically: no build needed for 
 3. against the compiled code, when the image is built (check.sh builds it first): each registration hook and each
    store-defaults hook run under Unicorn with the stock registrars / store_add stubbed, and the ids they really
    register or add compared with what part 1 read from the sources.
-4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule (a registered id taken again, an xml
-   name taken again, an SDRAM part on another, a backup-SRAM word on another module's, a call site patched twice, a
-   TAKES that allows it, a wanted site, a store pushed past its cap); each must fail the rule it targets.
+4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule (a registered id taken again, directly
+   and through a helper that takes the id as a parameter, an xml name taken again, an SDRAM part on another, a
+   backup-SRAM word on another module's, a call site patched twice, a TAKES that allows it, a wanted site, a store
+   pushed past its cap); each must fail the rule it targets.
 NOT checked: that the tags' stock facts are right (stock's own store entries, the cap sites: notes/resources.md says
 how they were counted), sizes the sources do not state (a part with no budget gets the room up to the next part).
 """
@@ -147,6 +148,10 @@ free_id = next(i for i in range(0x100, 0x1F4) if i not in taken)
 p0 = man["params"][0]
 mutant(f"id {R.h(p0['id'])} registered again for another parameter",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f'void zz_register(void *t) {{ fw_register_list(t, {R.h(p0["id"])}, "Zz:", 0, 0, "zzmutant"); }}\n'),
+       "param-id")
+mutant(f"... the same through a helper that takes the id and the xml name as parameters",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + 'static void zz_reg(void *t, int id, const char *x) { fw_register_list(t, id, "Zz:", 0, 0, x); }\n'
+                     f'void zz_register(void *t) {{ for (int k = 0; k < 2; k++) zz_reg(t, {R.h(p0["id"] - 1)} + k, "zzmutant"); }}\n'),
        "param-id")
 mutant(f"xml name {p0['xml']!r} on the free id {R.h(free_id)}",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f'void zz_register(void *t) {{ fw_register_list(t, {R.h(free_id)}, "Zz:", 0, 0, "{p0["xml"]}"); }}\n'),
