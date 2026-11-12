@@ -14,8 +14,8 @@ What is checked, on the tree this runs in (read statically: no build needed for 
    register or add compared with what part 1 read from the sources.
 4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule (a registered id taken again, directly
    and through a helper that takes the id as a parameter, an xml name taken again, an SDRAM part on another, a
-   backup-SRAM word on another module's, a call site patched twice, a TAKES that allows it, a wanted site, a store
-   pushed past its cap); each must fail the rule it targets.
+   backup-SRAM word on another module's and a `shares` tag that allows it, a call site patched twice and a TAKES that
+   allows it, a wanted site, a store pushed past its cap); each must fail the rule it targets, or pass it when allowed.
 NOT checked: that the tags' stock facts are right (stock's own store entries, the cap sites: notes/resources.md says
 how they were counted), sizes the sources do not state (a part with no budget gets the room up to the next part).
 """
@@ -167,6 +167,11 @@ mutant(f"a backup-SRAM word on {bk['file']}'s {R.h(bk['start'])}",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(bk['start'])}u)\n"
                      "void zz_poke(void) { ZZ_WORD = 0; }\n"),
        "bkpsram")
+mutant(f"... the same, a `resources: shares` tag naming both modules",
+       lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_WORD (*(volatile uint32_t *){R.h(bk['start'])}u)\n"
+                     f"/* resources: shares at={R.h(bk['start'])} with=zz_mutant,{bk['module']} */\n"
+                     "void zz_poke(void) { ZZ_WORD = 0; }\n"),
+       "bkpsram", expect=False)
 call = next(p for p in man["patches"] if p["applied"] and p["kind"] == "call" and p["callee"])
 
 

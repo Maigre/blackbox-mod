@@ -1842,7 +1842,8 @@ def md_report(r):
     L += ["## SDRAM block", "",
           f"Ours {h(sd['ours']['block'])} (core {h(sd['ours']['core'])}), theirs {h(sd['theirs']['block'])}; merged "
           f"{h(sd['merged_on_ours'])} on our layout, {h(sd['merged_on_theirs'])} on theirs"
-          + (f"; our core would grow to {h(sd['core_on_ours'])}" if sd.get("core_on_ours") else "") + ".", ""]
+          + (f"; our core would grow to {h(sd['core_on_ours'])}" if sd.get("core_on_ours")
+             and sd["core_on_ours"] != sd["ours"]["core"] else "") + ".", ""]
     for side in ("theirs", "ours"):
         for a in sd.get(f"allocations_{side}_only", []):
             L += [f"Only {side}: {a['file']}:{a['line']} {a['func']}({a['expr']}) = {'/'.join(h(x) for x in a['sizes']) or '?'} "
