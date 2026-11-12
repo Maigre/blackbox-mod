@@ -20,9 +20,10 @@ read twice (decompile and disassembly of the same bytes); *inferred* = a reasoni
    `0x0804007C` jumps to `0xFFFFFFFF`). High confidence.
 3. **The install.** It looks for `BLACKBOX.BIN` at the root of the SD card, erases **bank 1 sectors 2–7 and bank 2
    sectors 0–6, on every install whatever the file's size**, programs the file from `0x08040000` in file order (into
-   bank 2 if it is longer than 786,432 B, never past `0x081DFFE0`), verifies it byte for byte and restarts. No check
-   of the file's content. **It never touches bank 2 sector 7** (the factory calibration) and never bank 1 sectors 0–1
-   (itself). ✓ High confidence on the code; the bank 2 erase disagrees with one bench line (§4.3).
+   bank 2 if it is longer than 786,432 B, never past `0x081DFFE0`), reads it back against flash and restarts. No
+   check of the file's content, and a card read error is taken for the end of the file (§4.2). **It never touches
+   bank 2 sector 7** (the factory calibration) and never bank 1 sectors 0–1 (itself). ✓ High confidence on the code;
+   the bank 2 erase disagrees with one bench line (§4.3).
 4. **It never updates itself.** The only erases in the dump are the installer's two and the calibration's one (bank 2
    sector 7); no path writes below `0x08040000`. ✓ / *static*. High confidence.
 5. **No buttonless path through the stock bootloader.** Its only input the app could influence would have to survive a
@@ -35,7 +36,8 @@ read twice (decompile and disassembly of the same bytes); *inferred* = a reasoni
 
 Side findings: **INFO alone starts the installer** (✓ in the code, never tried); the bootloader's MPU region 3 is
 the Device mapping under JOEBOX's patch RAM in D-013 (§5); a `BLACKBOX.bin` whose length is 29, 30 or 31 modulo 32
-fails the installer's verify in the model (§4.2).
+fails the installer's verify in the model unless 1–3 particular bytes of it are `0xFF` (§4.2); a card read error
+part way through can end in "Success!" with a partial app (§4.2).
 
 ## 1. What is in the dump
 
@@ -123,8 +125,8 @@ its message forever, no reset.
 |---|---|---|
 | search | `0x080047EC` | `f_stat` then `f_open` (read) of `"BLACKBOX.BIN"` (`0x08018534`) at the card root. Only the SD card (SDMMC1, `0x52007000`) is linked to FatFs: no USB stick. FatFs matches the name in any case (*inferred*). The size used later is the directory entry's |
 | erase | `0x08004948` → `0x080048EC` | unlock both banks, clear both banks' error flags, then two sector erases: **bank 1 sectors 2–7** (`0x08040000–0x080FFFFF`), then **bank 2 sectors 0–6** (`0x08100000–0x081DFFFF`). Unconditional |
-| program | `0x08004998` | 32 KB reads into AXI SRAM `0x24029320`, each programmed as 256-bit flash words from `0x08040000` on, in file order (the vectors first), the last chunk rounded up to 32 B with whatever the buffer held. At `0x08100000` it waits for bank 1, clears both banks' flags and goes on into bank 2. `0x0800495C` writes no word above `0x081DFFE0`: past it the rest is dropped and the step still reports success |
-| verify | `0x08004834` | reopen, reread in 32 KB chunks, compare byte for byte from `0x08040000` |
+| program | `0x08004998` | 32 KB reads into AXI SRAM `0x24029320`, each programmed as 256-bit flash words from `0x08040000` on, in file order (the vectors first), the last chunk rounded up to 32 B with whatever the buffer held. At `0x08100000` it waits for bank 1, clears both banks' flags and goes on into bank 2. `0x0800495C` writes no word above `0x081DFFE0`: past it the rest is dropped and the step still reports success. `f_read`'s return code is never looked at (`0x080049D0`): a read that delivers 0 bytes ends the step with success, and each chunk is programmed over the length asked for, not the length delivered |
+| verify | `0x08004834` | reopen, reread in 32 KB chunks, compare byte for byte from `0x08040000`. The same two gaps (`0x08004878`): a read that delivers 0 bytes ends the verify with success, and a chunk is compared over the length asked for |
 | done | `0x08015608` | "Success! Restarting.", 180 passes, `NVIC_SystemReset`. The next boot decides as in §2: with a button still held it is the bootloader again |
 
 Every size run (728,696 B = stock 3.1.9, 784,448, 786,432, 786,507, 786,508, 1,703,936, 1,704,000, 0, 31): the same 13
@@ -135,17 +137,29 @@ sector erases, bank 1 sectors 0–1 and bank 2 sector 7 byte for byte as before.
 - **No content check.** Any file named `BLACKBOX.BIN` is erased over and programmed: a truncated download, a WAV with
   the wrong name. ✓ A 0-byte file passes all four steps ("Success!") and leaves bank 1 erased: the next boot finds
   no app and shows the factory test pages.
+- **A card read that fails part way through.** Neither the program nor the verify looks at `f_read`'s return code;
+  both take a read that delivers no bytes for the end of the file and report success. ✓ (`fixcheck.py`, a 728,696 B
+  file, FatFs's error sticking after the first failure): a failure at chunk 5 in both passes → "Success! Restarting."
+  with only the first 163,840 B in flash; a failure half way through chunk 5 in both passes → "Success!" with that
+  chunk's second half programmed from stale buffer bytes; a failure in the program pass only → "Unable to verify.";
+  a failure in the verify pass only, or earlier in it than in the program pass → "Success!". So the verify catches a
+  short program pass only when its own reads get further. A card that fails at the same place, or earlier, on the
+  second read leaves a partial app behind a success message: the next boot jumps into it, and hands repair it.
 - **A file over 786,432 B** (`0xC0000`) spills into bank 2 sector 0; ✓ in the model it programs and verifies (75 and
   76 B over). `src/cave.ld` records that JOEBOX's 3.1.G, 76 B over, failed "unable to verify" on a unit: this read
   does not explain that. Either way `cave.ld`'s cap stays right: a tail in bank 2 sector 0 is a foreign payload to
   `b2load.c`, which then leaves the effects off.
 - **A file over 1,703,936 B** is cut at `0x081DFFE0` and fails the verify. ✓ Sector 7 stays intact.
-- **The verify's tail.** For a last chunk whose length is not a multiple of 4, the compare runs 4 bytes past it.
-  The bytes up to the next 32-byte boundary were programmed from the same stale buffer the verify sees again; the
-  ones past it are erased flash against stale buffer bytes. ✓ In the model, of 64 sizes (every residue modulo 32,
-  twice), exactly those of length ≡ 29, 30 or 31 (mod 32) fail "Unable to verify." **A prediction, never seen on a
-  unit.** Stock 3.1.9 is ≡ 24. A fork image is stock + the cave, so it is safe while the cave's size is not ≡ 5, 6
-  or 7 (mod 32) (37.4.1's release cave, 50,954 B, is ≡ 10); padding the image to a multiple of 32 B would close it.
+- **The verify's tail.** For a last chunk whose length is not a multiple of 4, the compare runs 4 bytes past it
+  (`0x0800487C`). The bytes up to the next 32-byte boundary were programmed from the same stale buffer the verify
+  sees again, so they match. For a length ≡ 29, 30 or 31 (mod 32), 1–3 compared bytes lie past that boundary: erased
+  flash (`0xFF`) against stale buffer bytes, which for a file over 32 KB are the file's own bytes 32,768 B before the
+  boundary (the previous chunk's, at the same buffer offset). Such a file fails "Unable to verify." **unless those
+  1–3 bytes happen to be `0xFF`**. ✓ In the model, of 64 sizes with random bytes (every residue modulo 32, twice),
+  exactly the ≡ 29, 30 and 31 fail; the same three sizes with those bytes set to `0xFF` verify (`fixcheck.py`).
+  **A prediction, never seen on a unit.** Stock 3.1.9 is ≡ 24. A fork image is stock + the cave, so it is safe while
+  the cave's size is not ≡ 5, 6 or 7 (mod 32) (37.4.1's release cave, 50,954 B, is ≡ 10). A build-time check on the
+  image's length closes it without changing a byte; padding the image to a multiple of 32 B would too.
 - **A cut install.** Power lost before the first chunk is programmed: no app, the factory test pages. After it: the
   vectors are there, so the bootloader jumps into a partial app. Both need hands, and hands always work: the
   installer never erases the bootloader.
@@ -258,8 +272,9 @@ The stock installer has the same exposure in the first two rows, and a worse cut
 **Keep the hands.** No buttonless path exists through the stock bootloader, and the one we could build adds a failure
 with no repair on the unit (row 3 above) to save a two-finger hold at power-on. Hands are needed after a failed install
 either way. Build the updater only for a real unattended need (an automated bench), from §7, first on the bench unit
-with a known-good `BLACKBOX.bin` on the card. Cheaper and worth doing now (*design*): pad `BLACKBOX.bin` to a multiple
-of 32 B (§4.2), and correct the fork's wording on bank 2 once §9's check has settled §4.3.
+with a known-good `BLACKBOX.bin` on the card. Cheaper and worth doing now (*design*): a build-time check that
+`BLACKBOX.bin`'s length is not ≡ 29, 30 or 31 (mod 32) (§4.2), and correct the fork's wording on bank 2 once §9's
+check has settled §4.3.
 
 ## 9. Open
 
@@ -270,6 +285,7 @@ of 32 B (§4.2), and correct the fork's wording on bank 2 once §9's check has s
   version. Leave by power cycle; do not step to the SD Card Test pages (they write `TESTDATA.BIN`) nor hold INFO on
   the Clock Test page (calibration).
 - INFO alone starting the installer: in the code, never tried.
+- A card read error ending in "Success!" (§4.2): the code run in the model with FatFs stubbed; never seen on a unit.
 - The option bytes (write protection of sectors 0–1, RDP, boot addresses, bank swap) are not in the dump; the dev
   build's peek does not reach the flash registers (`0x52002000`). Not read.
 - JOEBOX's 3.1.G "unable to verify" at 76 B over (§4.2); the name "1.7.F" (§1).
@@ -289,3 +305,7 @@ of 32 B (§4.2), and correct the fork's wording on bank 2 once §9's check has s
   state machine for five outcomes; `flashrun.py`, the real erase / program / verify functions with FatFs stubbed and
   every sector erase logged, 9 sizes and 64 residues. Their outputs: `truth.txt`, `ui.txt`, `flash.txt`,
   `residues.txt` there.
+- A second reader's review the same day led to §4.2's card read error and the tail's dependence on the image's bytes.
+  Each was reproduced before it went in. `fixcheck.py` (output `fixcheck.txt`): the program and verify steps with
+  chosen file bytes and card read failures, the verify's tail with the stale bytes `0xFF` or not and six read-failure
+  cases.
