@@ -603,6 +603,86 @@ check(f"tap (job 5, held 3 passes): down in its pass, up three passes later, ans
       [x[1] for x in seen] == [["hit", "down"], [], [], ["find", "up"], []] and [x[0] for x in seen] == [False, False, False, True, True]
       and k.reply()["r"][0] == 0x77, seen)
 
+# ====================================================================================================== 7. a restart
+# The card task's job 0x4f: answered, the box's two cache lines written out, then SYSRESETREQ (AIRCR 0x05fa0004) - only
+# while stock is idle on the card and nothing plays or records. Reached here through b2load_thunk itself (the card
+# loop's file command step, stubbed, runs after it).
+from unicorn import UC_HOOK_MEM_WRITE  # noqa: E402
+
+k = Kit()
+CMDS = 0x2401F508
+RCLOCK = 0xC0100000                                        # the clock object: in SDRAM here (it is 0x12900 B)
+k.e.w32(ENGINE + 0x9A74, RCLOCK)
+k.e.uc.mem_write(RCLOCK, bytes(0x40))
+k.e.uc.mem_write(RCLOCK + 0x128D4, b"\x00")
+k.e.w32(CMDS + 0x390, 0x24078100)
+k.e.uc.mem_write(0x24078100, b"\x00")
+idle = [1]
+k.e.stub(0x0807125C, lambda: k.e.uc.reg_write(66, idle[0]))
+k.e.stub(0x08092F5C)                                       # stock's file command step, after the thunk
+k.e.stub(sym["b2_load_poll"] & ~1)                         # the card loader has had its look this boot
+resets, cleaned = [], []
+
+
+order = []
+
+
+def on_write(uc, kind, a, size, v, _):
+    if a == 0xE000ED0C:
+        resets.append(v & 0xFFFFFFFF)
+        order.append("reset")
+        uc.emu_stop()
+    elif a == 0xE000EF68 and v & 0xFFFFFFFF >= BLOCK:
+        cleaned.append(v & 0xFFFFFFFF)
+        order.append("clean")
+    elif a == MB + 0x28:
+        order.append("done")
+
+
+k.e.uc.hook_add(UC_HOOK_MEM_WRITE, on_write, begin=0xE000E000, end=0xE000EFFF)
+k.e.uc.hook_add(UC_HOOK_MEM_WRITE, on_write, begin=MB + 0x28, end=MB + 0x28)
+
+
+def card_step(k):
+    """the card loop's call of its file command step, through b2load_thunk (r0 the step's argument)"""
+    try:
+        k.e.call(sym["b2load_thunk"], 0x2400A9C0, count=5_000_000)
+        return "returned"
+    except AssertionError:                                 # emu_stop() on the reset: it never returns
+        return "reset"
+
+
+refused = {}
+for why, setup, undo in ((1, lambda: k.e.uc.mem_write(RCLOCK + 0x38, b"\x01"), lambda: k.e.uc.mem_write(RCLOCK + 0x38, b"\x00")),
+                         (2, lambda: k.e.uc.mem_write(RCLOCK + 0x128D4, b"\x01"), lambda: k.e.uc.mem_write(RCLOCK + 0x128D4, b"\x00")),
+                         (3, lambda: k.e.w32(CMDS + 0x124, 4), lambda: k.e.w32(CMDS + 0x124, 0)),
+                         (4, lambda: k.e.uc.mem_write(0x24078100, b"P"), lambda: k.e.uc.mem_write(0x24078100, b"\x00")),
+                         (5, lambda: idle.__setitem__(0, 0), lambda: idle.__setitem__(0, 1))):
+    setup()
+    k.ask(0x4F, 0x52455354)
+    refused[why] = (card_step(k), k.reply()["result"], k.reply()["r"][0])
+    undo()
+check(f"restart refused, no reset, with its reason in r0, while: the transport plays (1), REC is held (2), file commands "
+      f"are queued (3), a preset load is pending (4), the streamer is busy (5) ({refused})",
+      all(v == ("returned", -4, why) for why, v in refused.items()) and not resets, refused)
+k.ask(0x4F, 0x12345678)
+bad = (card_step(k), k.reply()["result"])
+k.ask(0x4F, 0x52455354, epoch=BOOTS - 1)
+stale = (card_step(k), k.reply()["result"])
+k.ask(0x4F, 0x52455354)
+k.run(SCREEN)
+k.run(AUDIO)
+other = k.reply()
+check(f"...a wrong check word: -3; a restart asked before the last reset: -2 (it must not run twice); the screen and audio "
+      f"tasks leave it ({bad}, {stale})", bad == ("returned", -3) and stale == ("returned", -2) and other["unset"] and not resets)
+order.clear()
+got = card_step(k)
+r = k.reply()
+check(f"restart with stock idle: answered (done, result 0) and the box's two cache lines written out first, then AIRCR = "
+      f"0x05fa0004 (SYSRESETREQ), from the card task ({got}, {[hex(x) for x in resets]}, {[hex(x) for x in cleaned]})",
+      got == "reset" and resets == [0x05FA0004] and r["answered"] and r["result"] == 0 and cleaned == [MB, MB + 0x20]
+      and order == ["done", "clean", "clean", "reset"], (got, r, order))
+
 # ====================================================================================================== 9. the release build
 # A release (RELEASE=1: PUBLIC_BUILD) compiles none of the kit: kit.c and kit_b2.c are empty, usbdev.c and
 # b2load_thunk.S do not call it, build.sh leaves kit_b2 out of bank 2 (so the release's bank 2, and the bank 1 that

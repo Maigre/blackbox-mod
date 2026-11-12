@@ -382,6 +382,56 @@ static int job_button(volatile struct kit_box *b)
     return R_OK;
 }
 
+/* ---- a restart (x6 §7): stock 3.1.9 never resets itself in software, so the kit does it as b2load.c and fault.c do,
+   SYSRESETREQ behind a dsb, from the card task between two file command steps (no FatFs call half done), and only
+   while stock is idle on the card and nothing is being recorded. Not found yet: a flag that says a take is being
+   written to the card, so it refuses while the transport plays or REC is held. ---- */
+#define SYSTEM      0x2400a9c0u                    /* the engine / system object (FUN_08070bf4) */
+#define CLOCK       (*(const uint8_t *const volatile *)(SYSTEM + 0x9a74u))   /* the transport's clock */
+#define PRESETS     ((const uint8_t *)0x2401f508u)  /* the preset manager F */
+#define CMD_READ    (*(const volatile uint32_t *)(PRESETS + 0x120u))   /* its file command ring */
+#define CMD_WRITE   (*(const volatile uint32_t *)(PRESETS + 0x124u))
+#define LOAD_NAME   (*(const char *const volatile *)(PRESETS + 0x390u))  /* a preset load asked for, not done yet */
+typedef int (*idle_fn)(uint32_t system);
+#define fw_streamer_idle ((idle_fn)B2_FN(0x0807125c))   /* LoadBank's own "is the card's command queue empty" */
+#define DCCMVAC     (*(volatile uint32_t *)0xe000ef68u) /* data cache: write this line out */
+#define AIRCR       (*(volatile uint32_t *)0xe000ed0cu)
+
+/* why stock is not idle: 0 it is; 1 the transport plays, 2 REC held, 3 file commands queued, 4 a preset load pending,
+   5 the streamer busy */
+static int busy(void)
+{
+    const uint8_t *clock = CLOCK;
+    if (clock && clock[0x38])
+        return 1;
+    if (clock && clock[0x128d4])
+        return 2;
+    if (CMD_READ != CMD_WRITE)
+        return 3;
+    if (LOAD_NAME && *LOAD_NAME)
+        return 4;
+    return fw_streamer_idle(SYSTEM) ? 0 : 5;
+}
+
+/* 0x4f restart ("REST" = 0x52455354 as a check): answered 0, then the unit resets; -4 with busy()'s reason in r0 */
+static int job_restart(volatile struct kit_box *b)
+{
+    if ((uint32_t)b->arg[0] != 0x52455354u)
+        return R_ARG;
+    int why = busy();
+    if (why) {
+        b->r[0] = why;
+        return R_REFUSED;
+    }
+    reply(b, R_OK, b->seq);                        /* answered first: SDRAM keeps it through the reset, and the next */
+    DCCMVAC = (uint32_t)b;                         /* boot's count makes the request stale (-2), so it never runs twice */
+    DCCMVAC = (uint32_t)b + 0x20u;
+    __asm__ volatile("dsb");
+    AIRCR = (0x5fau << 16) | (1u << 2);            /* SYSRESETREQ */
+    for (;;)
+        ;
+}
+
 static const job_fn JOBS[KIT_JOBS] = {
     [0x00] = job_info,
     [0x01] = job_row,
@@ -390,6 +440,7 @@ static const job_fn JOBS[KIT_JOBS] = {
     [0x04] = job_touch,
     [0x05] = job_tap,
     [0x20] = job_button,
+    [0x4f] = job_restart,
 };
 
 /*
