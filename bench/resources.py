@@ -849,12 +849,13 @@ def build_info(tree_path, do_build):
     if not os.path.isfile(mp):
         return None
     lines = open(mp, encoding="utf-8", errors="replace").read().split("\n")
-    sections, cur, objs, pending = {}, None, {}, None
+    sections, cur, objs, pending, spans = {}, None, {}, None, {}
     for line in lines:
         m = re.match(r"^(\.\w+)\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)", line)
         if m:
             cur = m.group(1)
             sections[cur] = int(m.group(3), 16)
+            spans[cur] = (int(m.group(2), 16), [])
             continue
         if re.match(r"^\S", line):
             cur = None if not line.startswith(" ") else cur
@@ -873,13 +874,23 @@ def build_info(tree_path, do_build):
             continue
         if not isinstance(m, tuple):
             m = m.groups()
-        name, _a, size, obj = m
+        name, at, size, obj = m
         size = int(size, 16)
         if not size:
             continue
-        obj = os.path.basename(obj) if obj else "(fill)"
-        bank = "bank1" if cur == ".cave" else "bank2"
-        objs.setdefault(obj, {"bank1": 0, "bank2": 0})[bank] += size
+        spans[cur][1].append((int(at, 16), size, os.path.basename(obj) if obj else "(fill)"))
+    # what each input section really occupies: up to the next one's address. A merged string section
+    # (.rodata.str1.1) is listed at full size under every object, but all the strings sit in the first one and the
+    # others start where the next section does (0 B): summing the listed sizes overcounts by 2.5..3.5 KB
+    for sec, (start, ents) in spans.items():
+        if sec not in (".cave", ".bank2", ".b2head"):
+            continue
+        end = start + sections[sec]
+        for i, (at, size, obj) in enumerate(ents):
+            nxt = ents[i + 1][0] if i + 1 < len(ents) else end
+            real = min(size, max(0, nxt - at)) if nxt >= at else size
+            bank = "bank1" if sec == ".cave" else "bank2"
+            objs.setdefault(obj, {"bank1": 0, "bank2": 0})[bank] += real
     ld = os.path.join(where, "out", "cave.ld")
     ld = ld if os.path.isfile(ld) else os.path.join(where, "src", "cave.ld.in")
     cave_len = None
@@ -1929,10 +1940,12 @@ def bank_report(bo, bt, base, add):
     res = {"method": "ours + theirs - base, per object" if bb and bb.get("built") else "the larger side, per object",
            "objects": rows, "merged_bank1": m1, "merged_bank1_high": hi1, "both_shrank": shaky, "merged_bank2": m2,
            "cave_length": cap, "ours_bank1": bo.get("cave_used"), "theirs_bank1": bt.get("cave_used")}
-    if cap and m1 > cap:
+    if cap and max(m1, hi1) > cap:
+        span = (f"{m1}..{hi1}" if hi1 != m1 else f"{m1}")
+        over = (f"{m1 - cap:+}..{hi1 - cap:+}" if hi1 != m1 else f"{m1 - cap:+}")
         add("bank1", "flash bank 1 (the cave)", f"{bo.get('cave_used')} B", f"{bt.get('cave_used')} B",
-            f"merged estimate {m1}" + (f"..{hi1}" if hi1 != m1 else "") + f" B > {cap} B: about {m1 - cap}"
-            + (f"..{hi1 - cap}" if hi1 != m1 else "") + f" B over ({res['method']}"
+            f"merged estimate {span} B of {cap} B, {over} B against it"
+            + (": the low end fits, the high end does not" if m1 <= cap < hi1 else "") + f" ({res['method']}"
             + (f"; both sides shrank {', '.join(shaky)}: the high end counts the larger side" if shaky else "") + ")")
     return res
 

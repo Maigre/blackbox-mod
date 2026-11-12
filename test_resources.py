@@ -109,6 +109,11 @@ if os.path.isfile(IMG) and os.path.isfile(ELF) and man["patch_sets"]:
                    "only read": [R.h(i) for i in sorted(set(static) - set(dyn))]})
 else:
     print(f"PASS the compiled-code comparison is skipped: no {os.path.relpath(IMG, ROOT)} (check.sh builds it)")
+b = R.build_info(ROOT, False)
+if b and b.get("built"):
+    n1 = sum(v["bank1"] for v in b["objects"].values())
+    check(f"bank-1 bytes per object add up to the cave's size: {n1} B = {b['cave_used']} B (out/cave.map; a merged "
+          f"string section counted once)", n1 == b["cave_used"], {"objects": n1, "cave": b["cave_used"]})
 
 
 # ---- 4. mutants
