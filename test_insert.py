@@ -27,7 +27,7 @@ img = open(IMG, "rb").read()
 BASE = 0x08040000
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
-e.uc.mem_map(0xC0000000, 0x90000)
+e.uc.mem_map(0xC0000000, 0xA0000)
 BLOCK, BANK = 0xC0000000, 0xC0000000 + 0x1D110 + 0x56800  # in master.c's tail (behind its 0x1D110-byte core), behind Prism's
 PMEM, PCHECK, UI = 0x38800F70, 0x38800F74, 0x38800B1C
 APP = 0x24020088
