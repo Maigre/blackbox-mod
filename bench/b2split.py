@@ -16,9 +16,10 @@ compiled and (2) takes over the final link (the one given -T out/cave.ld). At th
        bank 2  every function, renamed <name>__b2, with what it reaches (static helpers, strings, tables);
        bank 1  what must stay: functions declared KEEP, data that stock or the cave reads (a name table a patch points
                stock at), and what those reach; its calls into moved functions land on the stubs;
-  4. generates one bank-1 stub per entry (16 bytes: a mov, a b.w, a pair word) and a shared dispatcher: bank 2 live
-     -> the body in bank 2; otherwise the fallback (the stock callee the patch replaced, the old vtable word, a declared
-     value, or a hand-written function);
+  4. generates one bank-1 stub per entry (16 bytes: a mov, a b.w, a pair word) and a shared dispatcher (a second one
+     that also saves d0-d7 for entries taking float arguments, read from their definition): bank 2 live -> the body;
+     otherwise the fallback (the stock callee the patch replaced, the old vtable word, a declared value, or a
+     hand-written function);
   5. answers bank 2's calls back into the cave through veneers in bank 2 that jump through a table whose address the
      dispatcher writes into one word of patch RAM (B2S_VEC) before every body: bank 2 holds neither a branch nor a
      data pointer into the cave (test_bank2.py), and its bytes do not depend on where the cave's code lands;
@@ -502,8 +503,6 @@ def split(cfg, link_argv, real_gcc):
             argv.append(os.path.relpath(os.path.join(OUT, "cave.ld"), ROOT))
         elif a in moved_objs:
             continue
-        elif a.startswith("-Wl,-Map="):
-            argv.append(a)
         else:
             argv.append(a)
     objs = [o for o, _, _ in placed_b1] + [o for o, _, _ in placed_b2] + [os.path.relpath(os.path.join(B1, "stubs.o"), ROOT)] + fb_objs
