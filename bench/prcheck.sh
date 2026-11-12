@@ -5,7 +5,8 @@
 #
 #   prcheck.sh [-C repo] [-j jobs] [-b base] [-k] [-o dir] branch...
 #     -C  the clone (default /home/mgr/Bakery/blackbox-mod); a branch is any rev it knows (fix/x, upstream/main, a sha)
-#     -j  how many at once (default 3; one ./check.sh is ~16 min of one core on mgr-ran)
+#     -j  how many at once (default 3; one ./check.sh is ~4 400 CPU s on mgr-ran). Each check.sh gets its share of
+#         the box as its pool: CHECK_JOBS = cores / jobs (at least 1), unless CHECK_JOBS is set already
 #     -b  also check this base (e.g. upstream/main): each branch's failing suites that the base passes are marked NEW,
 #         and its images and .cave are compared with the base's
 #     -k  keep the worktrees (default: removed when done; the logs are kept either way). A run that is killed
@@ -147,7 +148,7 @@ while getopts C:j:b:ko:r: o; do
     k) KEEP=1 ;;
     o) OUT=$OPTARG ;;
     r) REPORT=$OPTARG ;;
-    *) sed -n '2,15p' "$0"; exit 2 ;;
+    *) sed -n '2,16p' "$0"; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
@@ -156,8 +157,10 @@ if [ -n "$REPORT" ]; then
     report "$REPORT" "$(cat "$REPORT/base")" $keys
     exit 0
 fi
-[ $# -gt 0 ] || { sed -n '2,15p' "$0"; exit 2; }
+[ $# -gt 0 ] || { sed -n '2,16p' "$0"; exit 2; }
 [ "$(sha256sum "$STOCK" 2>/dev/null | cut -d' ' -f1)" = "$STOCK_SHA" ] || { echo "stock 3.1.9 image missing or wrong: $STOCK"; exit 1; }
+CORES=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 6)
+export CHECK_JOBS=${CHECK_JOBS:-$(( CORES / JOBS > 0 ? CORES / JOBS : 1 ))}   # check.sh's pool: JOBS of them share the box
 OUT=${OUT:-$WORK/runs/$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$OUT" "$WORK/tmp"
 if ! PATH="$TOOLS:$PATH" command -v clang > /dev/null; then   # host/build.sh before feat/linux-dev calls clang by name
@@ -170,7 +173,7 @@ keys=""
 for r in "${revs[@]}"; do keys="$keys $(key "$r")"; done
 echo "$keys" > "$OUT/revs"
 echo "${BASE:+$(key "$BASE")}" > "$OUT/base"
-echo "prcheck: ${#revs[@]} revs, $JOBS at a time, logs in $OUT"
+echo "prcheck: ${#revs[@]} revs, $JOBS at a time, each check.sh $CHECK_JOBS wide, logs in $OUT"
 for r in "${revs[@]}"; do printf '%s\0%s\0' "$r" "$OUT/$(key "$r")"; done |
     xargs -0 -n 2 -P "$JOBS" "$0" --one "$KEEP" "$REPO"
 report "$OUT" "${BASE:+$(key "$BASE")}" $keys | tee "$OUT/report.txt"
