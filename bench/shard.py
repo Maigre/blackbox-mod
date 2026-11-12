@@ -18,15 +18,25 @@ statements that read the failure counter: "N failed", the exit status).
                                    text, so an edit elsewhere in the file keeps them)
   shard.py SUITE --prove N [DIR]   run the suite whole (python3 SUITE) and as its N shards, side by side; proven when
                                    the shards' output, concatenated in order, is the whole run's line for line (the
-                                   verdict lines aside), so their check counts add up, and each exit status says
-                                   whether its own lines hold a FAIL; logs in DIR (default out/shard-prove);
+                                   verdict lines aside), their PASS and FAIL lines (verdicts included) add up to the
+                                   whole's, each exit status says whether its own lines hold a FAIL, and every shard
+                                   log is of the plan as it stands; logs in DIR (default out/shard-prove);
                                    --whole-log LOG takes a finished `python3 SUITE` run of the same text instead of
                                    running it (its exit status read from its lines); --compare runs nothing and
-                                   compares the logs and .rc files already in DIR
+                                   compares the logs and .rc files already in DIR. A proof is recorded in
+                                   bench/shards/proven.tsv against the plan's digest
+  shard.py SUITE --digest N        print the digest of the N-shard plan: the suite's text and what each shard runs.
+                                   bench/suites.py shards a suite only with a plan proven.tsv holds; any other runs whole
 
 The planner minimises the costliest shard, a shard's cost being the CPU seconds of everything it runs (the profile's;
 a statement the profile does not hold costs nothing, and without a profile a line stands for a second). With a
 profile, a statement over 2 % of the suite's seconds stands alone, so a slice may start beside it inside a section.
+
+A method call x.m() counts as everything the suite's own methods named m read and change (the module's globals, what
+they are handed), whatever class x is; a method named in PURE counts as reading only, unless a class of the suite or of
+the tree's modules it imports (emu.py, host/...) defines one that changes its object, what it is handed or a global.
+Not followed: a change made inside an imported module's own state, through a name the suite does not bind (type(x).a,
+getattr), or by a method of a library object to what it is handed. `--prove` is the check on all of it.
 """
 import ast
 import bisect
@@ -40,7 +50,8 @@ import sys
 import time
 
 HEAD = re.compile(r"^# ?(={3,}|-{3,})")
-PURE = {  # methods that only read their object: a call of one changes nothing (any other call on a global may)
+PURE = {  # methods that only read their object: a call of one changes nothing (any other call on a global may); a
+    # suite's Cx.pure drops those that a class of the suite or of its modules defines with a change (Screen.copy)
     "get", "keys", "values", "items", "copy", "count", "index", "find", "rfind", "startswith", "endswith", "format",
     "join", "split", "rsplit", "strip", "lstrip", "rstrip", "lower", "upper", "replace", "encode", "decode", "hex",
     "tolist", "astype", "sum", "mean", "max", "min", "argmax", "argmin", "nonzero", "round", "bit_length", "to_bytes",
@@ -50,8 +61,18 @@ PURE = {  # methods that only read their object: a call of one changes nothing (
 SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, ast.ListComp, ast.SetComp, ast.DictComp,
           ast.GeneratorExp)
 DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLANNER = open(os.path.abspath(__file__)).read()                  # a cached plan is this planner's
+PROVEN = os.path.join(HERE, "shards", "proven.tsv")
+
+
+class Cx:
+    """what the analysis of one suite knows: the module names it imports, what its defs (pmut) and the methods of its
+    and its modules' classes (mpmut) may change of what they are handed, the methods that only read their object"""
+
+    def __init__(self, modules):
+        self.modules, self.pmut, self.mpmut, self.pure = modules, {}, {}, set(PURE)
 
 
 def base_name(node):
@@ -103,49 +124,67 @@ def own(node):
     return nodes, nested
 
 
-def passed_on(call, pmut):
-    """the names whose objects a call hands to a parameter its def may change (pmut: def name -> (its positional
-    parameters, the ones it may change))"""
+def passed_on(call, cx):
+    """the names whose objects a call hands to a parameter that may be changed: f(x), f a def of the suite (cx.pmut:
+    def name -> (its positional parameters, the ones it may change)); x.m(y), m a method of the suite's or its modules'
+    classes (cx.mpmut: method name -> [(its positional parameters after self, the ones it may change)], one per class)"""
     f = call.func
-    if not isinstance(f, ast.Name) or f.id not in pmut:
+    if isinstance(f, ast.Name) and f.id in cx.pmut:
+        sigs = [cx.pmut[f.id]]
+    elif isinstance(f, ast.Attribute) and f.attr in cx.mpmut:
+        sigs = cx.mpmut[f.attr]
+    else:
         return set()
-    names, mut = pmut[f.id]
     out = set()
-    for i, a in enumerate(call.args):
-        if isinstance(a, ast.Starred):
-            break
-        if i < len(names) and names[i] in mut and isinstance(a, (ast.Name, ast.Attribute, ast.Subscript)):
-            out.add(base_name(a))
-    for kw in call.keywords:
-        if kw.arg in mut and isinstance(kw.value, (ast.Name, ast.Attribute, ast.Subscript)):
-            out.add(base_name(kw.value))
+    for names, mut in sigs:
+        for i, a in enumerate(call.args):
+            if isinstance(a, ast.Starred):           # f(*xs): xs may fill any parameter from here on
+                if any(x in mut for x in names[i:]):
+                    out.add(base_name(a.value))
+                break
+            if i < len(names) and names[i] in mut and isinstance(a, (ast.Name, ast.Attribute, ast.Subscript)):
+                out.add(base_name(a))
+        for kw in call.keywords:
+            if kw.arg in mut and isinstance(kw.value, (ast.Name, ast.Attribute, ast.Subscript)):
+                out.add(base_name(kw.value))
     return out - {None}
 
 
-def param_mutations(body):
-    """def name -> (its positional parameters, the parameters whose objects it may change: a subscript or attribute
-    store, a method call not in PURE, through a local alias (y = p, y = p.a), or handed on to a def that does);
-    a class: its __init__'s, self left out"""
-    info = {}
+def param_mutations(body, cx, meths=()):
+    """fill cx.pmut (def name -> (its positional parameters, the parameters whose objects it may change: a subscript
+    or attribute store, a method call not in cx.pure, through a local alias (y = p, y = p.a), or handed on to a def or
+    method that does); a class: its __init__'s, self left out) and cx.mpmut (the methods `meths`, by name: their
+    positional parameters after self, the ones they may change). Returns id(method) -> what it may change, self too."""
+    units = []                                  # (def name or None, the FunctionDef, its names at a call, alias roots)
     for s in body:
-        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            fn = s
+        if isinstance(s, FUNCS):
+            fn, skip = s, 0
         elif isinstance(s, ast.ClassDef):
             fn = next((x for x in s.body if isinstance(x, ast.FunctionDef) and x.name == "__init__"), None)
             if fn is None:
                 continue
+            skip = 1
         else:
             continue
         a = fn.args
+        names = [x.arg for x in a.posonlyargs + a.args][skip:]
+        units.append((s.name, fn, names, names + [x.arg for x in a.kwonlyargs]))
+    for fn in meths:
+        a = fn.args
         names = [x.arg for x in a.posonlyargs + a.args]
-        if isinstance(s, ast.ClassDef):
-            names = names[1:]
-        info[s.name] = (names, names + [x.arg for x in a.kwonlyargs], fn)
-    pmut = {nm: (names, set()) for nm, (names, _, _) in info.items()}
+        units.append((None, fn, names[1:], names + [x.arg for x in a.kwonlyargs]))
+    cx.pmut, cx.mpmut, muts = {}, {}, {}
+    for key, fn, names, allp in units:
+        sig = (names, set())
+        muts[id(fn)] = (fn, allp, sig[1])
+        if key is not None:
+            cx.pmut[key] = sig
+        else:
+            cx.mpmut.setdefault(fn.name, []).append(sig)
     changed = True
     while changed:
         changed = False
-        for nm, (names, allp, fn) in info.items():
+        for fn, allp, mut in muts.values():
             alias = {x: x for x in allp}
             for _ in range(3):
                 for n in ast.walk(fn):
@@ -154,24 +193,55 @@ def param_mutations(body):
                         for t in n.targets:
                             if isinstance(t, ast.Name) and b in alias and t.id not in alias:
                                 alias[t.id] = alias[b]
-            mut = pmut[nm][1]
             before = len(mut)
             for n in ast.walk(fn):
                 hit = set()
                 if isinstance(n, (ast.Subscript, ast.Attribute)) and isinstance(n.ctx, (ast.Store, ast.Del)):
                     hit.add(base_name(n))
                 elif isinstance(n, ast.Call):
-                    if isinstance(n.func, ast.Attribute) and n.func.attr not in PURE:
+                    if isinstance(n.func, ast.Attribute) and n.func.attr not in cx.pure:
                         hit.add(base_name(n.func.value))
-                    hit |= passed_on(n, pmut)
+                    hit |= passed_on(n, cx)
                 mut |= {alias[b] for b in hit if b in alias}
             changed |= len(mut) != before
-    return pmut
+    return {k: mut for k, (_, _, mut) in muts.items()}
 
 
-def scope_facts(node, outer, modules, pmut):
+def local_classes(path, body):
+    """the classes of the tree's own modules a suite imports: X.py beside it, or in a folder it puts on sys.path
+    (sys.path.insert(0, "host")), read from the suite's folder or the current one (the tree's root)"""
+    root = os.path.dirname(os.path.abspath(path))
+    dirs = [root]
+    names = set()
+    for n in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(n, ast.Import):
+            names |= {a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+            names.add(n.module.split(".")[0])
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("insert", "append") \
+                and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "path" \
+                and isinstance(n.func.value.value, ast.Name) and n.func.value.value.id == "sys":
+            for a in n.args:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                    dirs += [os.path.join(root, a.value), os.path.abspath(a.value)]
+    out = []
+    for nm in sorted(names):
+        for d in dirs:
+            f = os.path.join(d, nm + ".py")
+            if os.path.isfile(f):
+                try:
+                    out += [s for s in ast.parse(open(f).read(), f).body if isinstance(s, ast.ClassDef)]
+                except (OSError, SyntaxError, ValueError):
+                    pass
+                break
+    return out
+
+
+def scope_facts(node, outer, cx):
     """a def, class, lambda or comprehension: (the global names its code reads, the global names it may bind or
-    change), its nested scopes included. `outer`: the names local to the function scopes around it."""
+    change, the names of the methods it calls), its nested scopes included. `outer`: the names local to the function
+    scopes around it."""
+    modules = cx.modules
     nodes, nested = own(node)
     locs = params(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) else set()
     decl = {g for n in nodes if isinstance(n, ast.Global) for g in n.names}
@@ -189,7 +259,7 @@ def scope_facts(node, outer, modules, pmut):
 
     def glob(x):
         return x not in modules and (x in decl or (x not in locs and x not in outer))
-    reads, changes = set(), set()
+    reads, changes, mcalls = set(), set(), set()
     for n in nodes:
         if isinstance(n, ast.Name):
             if isinstance(n.ctx, ast.Load) and glob(n.id):
@@ -201,32 +271,38 @@ def scope_facts(node, outer, modules, pmut):
             if b and glob(b):
                 changes.add(b)
         elif isinstance(n, ast.Call):
-            if isinstance(n.func, ast.Attribute) and n.func.attr not in PURE:
+            if isinstance(n.func, ast.Attribute):
                 b = base_name(n.func.value)
-                if b and glob(b):
+                if b not in modules:
+                    mcalls.add(n.func.attr)
+                if n.func.attr not in cx.pure and b and glob(b):
                     changes.add(b)
-            changes |= {b for b in passed_on(n, pmut) if glob(b)}
+            changes |= {b for b in passed_on(n, cx) if glob(b)}
     inner = outer if isinstance(node, ast.ClassDef) else outer | locs
     for ch in nested:
-        r, c = scope_facts(ch, inner, modules, pmut)
+        r, c, m = scope_facts(ch, inner, cx)
         reads |= r
         changes |= c
-    return reads, changes
+        mcalls |= m
+    return reads, changes, mcalls
 
 
 class Walk:
     """one top-level statement, in evaluation order (roughly): the global names it reads before binding them, the
     names it binds, the names it binds for sure (a plain assignment at its top), the names whose objects it may change
-    (a subscript or attribute store, a method call), the names it calls methods on"""
+    (a subscript or attribute store, a method call), the names it calls methods on, the names of the methods it calls
+    (on anything, in its nested scopes too)"""
 
-    def __init__(self, modules, pmut):
-        self.modules, self.pmut = modules, pmut
+    def __init__(self, cx):
+        self.cx, self.modules = cx, cx.modules
         self.uses, self.binds, self.strong, self.mutates, self.methods = set(), set(), set(), set(), set()
+        self.mcalls = set()
 
     def nested(self, n, bound):
-        r, c = scope_facts(n, set(), self.modules, self.pmut)
+        r, c, m = scope_facts(n, set(), self.cx)
         self.uses |= r - bound
         self.mutates |= c - bound
+        self.mcalls |= m
 
     def expr(self, n, bound):
         if n is None:
@@ -250,12 +326,14 @@ class Walk:
             return
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
             b = base_name(n.func.value)
+            if b not in self.modules:
+                self.mcalls.add(n.func.attr)
             if b and b not in self.modules and b not in bound:
                 self.methods.add(b)
-                if n.func.attr not in PURE:
+                if n.func.attr not in self.cx.pure:
                     self.mutates.add(b)
-        if isinstance(n, ast.Call):             # f(x) where f may change its parameter: a change to x
-            self.mutates |= {b for b in passed_on(n, self.pmut) if b not in self.modules and b not in bound}
+        if isinstance(n, ast.Call):             # f(x) / y.m(x) where f / m may change its parameter: a change to x
+            self.mutates |= {b for b in passed_on(n, self.cx) if b not in self.modules and b not in bound}
         for c in ast.iter_child_nodes(n):
             self.expr(c, bound)
 
@@ -345,12 +423,13 @@ class Walk:
             if not top:                         # a def inside a loop or an if: count its body as run here
                 self.nested(s, bound)
             elif isinstance(s, ast.ClassDef):    # a class body runs when it is defined: what it reads, it needs
-                cw = Walk(self.modules, self.pmut)
+                cw = Walk(self.cx)
                 for b in s.body:
-                    if not isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not isinstance(b, FUNCS):
                         cw.stmt(b, set(), False)
                 self.uses |= cw.uses - bound
                 self.mutates |= cw.mutates - bound
+                self.mcalls |= cw.mcalls
             self.binds.add(s.name)
             if top:
                 self.strong.add(s.name)
@@ -395,27 +474,51 @@ class Suite:
 
     def analyse(self):
         body, n = self.body, len(self.body)
-        self.pmut = param_mutations(body)
-        self.fn = {k: scope_facts(s, set(), self.modules, self.pmut) for k, s in enumerate(body) if isinstance(s, DEFS)}
+        cx = self.cx = Cx(self.modules)
+        own_cls = [s for s in body if isinstance(s, ast.ClassDef)]
+        meths = [(f, True) for c in own_cls for f in c.body if isinstance(f, FUNCS)]
+        meths += [(f, False) for c in local_classes(self.path, body) for f in c.body if isinstance(f, FUNCS)]
+        while True:                             # a method named in PURE that changes something is not pure here
+            muts = param_mutations(body, cx, [f for f, _ in meths])
+            impure = {f.name for f, own_ in meths if f.name in cx.pure
+                      and (muts[id(f)] or (own_ and scope_facts(f, set(), cx)[1]))}
+            if not impure:
+                break
+            cx.pure -= impure
+        self.pmut = cx.pmut
+        self.fn = {k: scope_facts(s, set(), cx) for k, s in enumerate(body) if isinstance(s, DEFS)}
         self.defs = {}
         for k in sorted(self.fn):
             self.defs.setdefault(body[k].name, []).append(k)
-        self.multi = sorted(x for x, ks in self.defs.items() if len(ks) > 1)
+        self.def_idx = sorted(self.fn)
+        # the suite's own methods by name, every class that defines one: what a call x.name() reads, changes, calls
+        self.mfacts = {}
+        for f, own_ in meths:
+            if own_:
+                r, c, m = scope_facts(f, set(), cx)
+                R, C, M = self.mfacts.setdefault(f.name, (set(), set(), set()))
+                R |= r
+                C |= c
+                M |= m
         ws = []
         for s in body:
-            w = Walk(self.modules, self.pmut)
+            w = Walk(cx)
             w.stmt(s, set(), True)
             ws.append(w)
-        # the failure counter: what a top-level `check` declares global and assigns; the verdict: the trailing
-        # statements that read it and bind nothing else
+        # the failure counter: what a top-level `check` declares global and assigns
         self.counters = set()
         for k, s in enumerate(body):
             if isinstance(s, ast.FunctionDef) and s.name == "check":
                 self.counters |= {g for x in ast.walk(s) if isinstance(x, ast.Global) for g in x.names}
         self.counters = self.counters or {"fails"}
+        self._trans = {}
+        rc = [self.trans({x for x in w.uses if x in self.defs}, w.mcalls, k) for k, w in enumerate(ws)]
+        # the verdict: the trailing statements that read the counter, bind nothing else and call nothing that counts
+        # (a trailing check(..., fails == 0) is a case: it runs once, in its own part's shard)
         self.epilogue = set()
         for k in range(n - 1, -1, -1):
-            if ws[k].uses & self.counters and not (ws[k].binds | ws[k].mutates) - self.counters:
+            if ws[k].uses & self.counters and not (ws[k].binds | ws[k].mutates) - self.counters \
+                    and not rc[k][1] & self.counters:
                 self.epilogue.add(k)
             else:
                 break
@@ -436,11 +539,9 @@ class Suite:
                 if b and b != y and b not in self.modules:
                     self.alias.setdefault(y, set()).add(b)
                     self.alias.setdefault(b, set()).add(y)
-        self._trans = {}
         self.need, self.chg, self.strong, self.objreads, self.methods = [], [], [], [], []
         for k, w in enumerate(ws):
-            refs = {x for x in w.uses if x in self.defs}
-            r, c = self.trans(refs, k)
+            r, c = rc[k]
             mut = w.mutates | c
             for x in list(mut):
                 mut |= self.alias.get(x, set())
@@ -462,26 +563,27 @@ class Suite:
         i = bisect.bisect_left(ks, k)
         return ks[i - 1] if i else None
 
-    def trans(self, names, k):
-        """the globals read and changed by calling (or handing on) these names at statement k, every def they reach"""
-        sig = tuple(self.def_at(x, k) for x in self.multi)
+    def trans(self, names, mcalls, k):
+        """the globals read and changed at statement k by calling (or handing on) these names and by calling the
+        suite's methods of these names (mcalls): every def and method they reach"""
+        vis = bisect.bisect_left(self.def_idx, k)   # the defs bound before k: what a name in a body reaches from here
         reads, changes = set(), set()
-        for nm in names:
-            d = self.def_at(nm, k)
-            if d is None:
-                continue
-            key = (d, sig)
+        starts = [("d", d) for d in (self.def_at(nm, k) for nm in names) if d is not None]
+        starts += [("m", m) for m in mcalls if m in self.mfacts]
+        for st in starts:
+            key = (st, vis)
             if key not in self._trans:
-                rs, cs, seen, todo = set(), set(), set(), [d]
+                rs, cs, seen, todo = set(), set(), set(), [st]
                 while todo:
                     x = todo.pop()
                     if x in seen:
                         continue
                     seen.add(x)
-                    r, c = self.fn[x]
+                    r, c, m = self.fn[x[1]] if x[0] == "d" else self.mfacts[x[1]]
                     rs |= r
                     cs |= c
-                    todo += [y for y in (self.def_at(z, k) for z in r if z in self.defs) if y is not None]
+                    todo += [("d", y) for y in (self.def_at(z, k) for z in r if z in self.defs) if y is not None]
+                    todo += [("m", y) for y in m if y in self.mfacts]
                 self._trans[key] = (rs, cs)
             r, c = self._trans[key]
             reads |= r
@@ -599,6 +701,51 @@ class Suite:
     def where(self, lo, hi):
         return f"lines {self.first[lo]}-{self.body[hi - 1].end_lineno}"
 
+    def shard_sets(self, i, n):
+        """shard i of n: (first index, end index, est. CPU s, the statements it runs loud, every statement it runs)"""
+        lo, hi, c = self.slices(n)[i - 1]
+        own_ = set(range(lo, hi))
+        loud = own_ | self.epilogue | (self.preamble if i == 1 else set())
+        return lo, hi, c, loud, self.closure(own_) | loud
+
+    def digest(self, n):
+        """the N-shard plan as a hash: the suite's text and what each shard runs, loud and quiet"""
+        h = hashlib.sha1(self.src.encode())
+        for i in range(1, len(self.slices(n)) + 1):
+            lo, hi, c, loud, keep = self.shard_sets(i, n)
+            h.update(f"|{i} {sorted(loud)} {sorted(keep)}".encode())
+        return h.hexdigest()[:16]
+
+
+def proven_plans(suite):
+    """{N: digest} of the plans of this suite (its basename) that bench/shards/proven.tsv records as proven"""
+    out = {}
+    try:
+        for line in open(PROVEN):
+            f = line.rstrip("\n").split("\t")
+            if len(f) >= 3 and not line.startswith("#") and f[0] == os.path.basename(suite):
+                out[int(f[1])] = f[2]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def record_proof(suite, n, dig, note):
+    rows = []
+    try:
+        rows = [l for l in open(PROVEN) if not l.startswith("#") and l.strip()
+                and l.split("\t")[:2] != [os.path.basename(suite), str(n)]]
+    except OSError:
+        pass
+    rows.append(f"{os.path.basename(suite)}\t{n}\t{dig}\t{note}\n")
+    with open(PROVEN + f".{os.getpid()}", "w") as f:
+        f.write("# the shard plans bench/shard.py SUITE --prove N found equal to the whole run; bench/suites.py shards a "
+                "suite only with one of these (the digest: shard.py SUITE --digest N). An edit to the suite, its "
+                "profile or the planner that changes what a shard runs changes the digest: prove it again.\n"
+                "# suite\tshards\tplan digest\tproof\n")
+        f.writelines(sorted(rows))
+    os.replace(PROVEN + f".{os.getpid()}", PROVEN)
+
 
 def execute(suite, keep, loud, mark=None):
     """run the kept statements in file order as `python3 SUITE` would; one not loud prints nothing and leaves the
@@ -627,12 +774,9 @@ def execute(suite, keep, loud, mark=None):
 
 def shard(path, i, n):
     s = Suite(path)
-    lo, hi, c = s.slices(n)[i - 1]
-    own_ = set(range(lo, hi))
-    loud = own_ | s.epilogue | (s.preamble if i == 1 else set())
-    keep = s.closure(own_) | loud
+    lo, hi, c, loud, keep = s.shard_sets(i, n)
     print(f"     shard {i}/{n}: {s.where(lo, hi)}, {len(keep - loud - s.always - s.preamble)} statements of the other "
-          f"parts run quietly, est. {c:.0f} s", flush=True)
+          f"parts run quietly, est. {c:.0f} s, plan {s.digest(n)}", flush=True)
     execute(s, keep, loud, f"     shard {i}/{n}: its verdict")
 
 
@@ -702,16 +846,17 @@ def prove(path, n, out, whole_log=None, compare=False):
             g = open(os.path.join(out, f"{base}.{name}.err"), "w")
             procs.append((name, subprocess.Popen(cmd, stdout=f, stderr=g), f, g, time.time()))
         for name, p, f, g, t0 in procs:
-            rc[name] = p.wait()
+            _, status, ru = os.wait4(p.pid, 0)
+            rc[name] = p.returncode = os.waitstatus_to_exitcode(status)
             secs[name] = time.time() - t0
             f.close()
             g.close()
             with open(os.path.join(out, f"{base}.{name}.rc"), "w") as r:
-                r.write(f"{rc[name]} {secs[name]:.1f}\n")
+                r.write(f"{rc[name]} {secs[name]:.1f} {ru.ru_utime + ru.ru_stime:.1f}\n")   # exit, wall s, CPU s
     else:
         for name in ["whole"] + [f"{i}of{n}" for i in range(1, n + 1)]:
             try:
-                r, t = open(os.path.join(out, f"{base}.{name}.rc")).read().split()
+                r, t = open(os.path.join(out, f"{base}.{name}.rc")).read().split()[:2]
                 rc[name], secs[name] = int(r), float(t)
             except (OSError, ValueError):
                 pass
@@ -736,18 +881,27 @@ def prove(path, n, out, whole_log=None, compare=False):
     whole = whole_all[:len(whole_all) - tail] if tail else whole_all
     parts = [(b, ls) for b, ls, _ in parts]
     joined = [l for b, _ in parts for l in b]
+    dig = Suite(path).digest(n)                 # every shard log must be of the plan as it stands now
+    stale = [i for i, (_, ls) in enumerate(parts, 1)
+             if not any(l.startswith("     shard ") and l.endswith(f"plan {dig}") for l in ls[:1])]
 
     def count(ls):
         return sum(l.startswith("PASS ") for l in ls), sum(l.startswith("FAIL ") for l in ls)
     wc, sc = count(whole), [count(b) for b, _ in parts]
+    wa, sa = count(whole_all), [count(ls) for _, ls in parts]      # verdicts included: a check run twice shows here
     print(f"whole: exit {rc['whole']}, {wc[0]} PASS + {wc[1]} FAIL = {sum(wc)} checks, {secs['whole']:.0f} s")
     for i, (c, (_, ls)) in enumerate(zip(sc, parts), 1):
         print(f"shard {i}/{n}: exit {rc[f'{i}of{n}']}, {c[0]} PASS + {c[1]} FAIL = {sum(c)} checks, "
               f"{secs[f'{i}of{n}']:.0f} s  ({ls[0].strip() if ls else 'no output'})")
     tot = (sum(c[0] for c in sc), sum(c[1] for c in sc))
+    tot_all = (sum(c[0] for c in sa), sum(c[1] for c in sa))
     same = joined == whole
     print(f"shards: {tot[0]} PASS + {tot[1]} FAIL = {sum(tot)} checks; the shards' output, concatenated, is the "
           f"whole's line for line: {'yes' if same else 'NO'}")
+    if tot_all != wa:
+        print(f"  their logs, verdicts included: {tot_all[0]} PASS + {tot_all[1]} FAIL, the whole's {wa[0]} + {wa[1]}")
+    if stale:
+        print(f"  shard log(s) {stale}: not of the plan as it stands ({dig}): run them again")
     if not same:
         for j in range(max(len(joined), len(whole))):
             a = joined[j] if j < len(joined) else None
@@ -755,9 +909,14 @@ def prove(path, n, out, whole_log=None, compare=False):
             if a != b:
                 print(f"  first difference, line {j + 1}:\n    shards: {a}\n    whole:  {b}")
                 break
-    ok = same and tot == wc and (rc["whole"] != 0) == (wc[1] > 0) \
+    ok = same and tot == wc and tot_all == wa and not stale and (rc["whole"] != 0) == (wc[1] > 0) \
         and all((rc[f"{i}of{n}"] != 0) == (sc[i - 1][1] > 0) for i in range(1, n + 1))
-    print("PROVEN" if ok else "NOT PROVEN")
+    print(f"PROVEN (plan {dig})" if ok else "NOT PROVEN")
+    if ok and base.startswith("test_") and os.path.dirname(os.path.abspath(path)) == os.path.dirname(HERE):
+        # the tree's own suites only: what bench/suites.py may shard
+        record_proof(path, n, dig, f"{wa[0]} PASS + {wa[1]} FAIL, whole {'log' if whole_log else 'run'}, "
+                     f"{os.uname().nodename} {time.strftime('%Y-%m-%d')}")
+        print(f"recorded in {os.path.relpath(PROVEN)}")
     return 0 if ok else 1
 
 
@@ -768,6 +927,8 @@ def main(argv):
     path = argv[1]
     if argv[2] == "--plan":
         plan(path, int(argv[3]), "-v" in argv)
+    elif argv[2] == "--digest":
+        print(Suite(path).digest(int(argv[3])))
     elif argv[2] == "--profile":
         profile(path)
     elif argv[2] == "--prove":
