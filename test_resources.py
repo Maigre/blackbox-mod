@@ -4,20 +4,30 @@ What is checked, on the tree this runs in (read statically: no build needed for 
 1. the reading itself: every parameter id, store entry, block offset and allocation evaluated, every patch table
    imported, every tagged store's cap found at its sites. An id the reader could not evaluate is a FAIL, since a
    clash could hide behind it.
-2. the rules: one parameter per id and one id per xml name; SDRAM parts that do not overlap (unless one is declared
-   inside the other, or their #if builds exclude each other) and stay inside the block, master_block() parts inside
-   the core; backup-SRAM ranges of two modules apart; no stock byte patched by two modules unless the later one's
-   stock bytes are the earlier one's new bytes (a chain patch.py accepts) or a module's TAKES names the site; no
-   `resources: wants` site patched by another module; each tagged store's stock entries + ours within its cap.
+2. the rules: one parameter per id and one id per xml name; a module's copy of its own id under another name
+   (clipwin_b2.c's B2_P_SLIP, read through fw_setting) holds the value registered under the first name; SDRAM parts
+   that do not overlap (unless one is declared inside the other, or their #if builds exclude each other) and stay
+   inside the block, master_block() parts inside the core; backup-SRAM ranges of two modules apart; no stock byte
+   patched by two modules unless the later one's stock bytes are the earlier one's new bytes (a chain patch.py
+   accepts) or a module's TAKES names the site; no `resources: wants` site patched by another module; each tagged
+   store's stock entries + ours within its cap, and no hooked stock store_add that no tag names.
 3. against the compiled code, when the image is built (check.sh builds it first): each registration hook and each
    store-defaults hook run under Unicorn with the stock registrars / store_add stubbed, and the ids they really
    register or add compared with what part 1 read from the sources.
-4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule (a registered id taken again, directly
-   and through a helper that takes the id as a parameter, an xml name taken again, an SDRAM part on another, a
-   backup-SRAM word on another module's and a `shares` tag that allows it, a call site patched twice and a TAKES that
-   allows it, a wanted site, a store pushed past its cap); each must fail the rule it targets, or pass it when allowed.
-NOT checked: that the tags' stock facts are right (stock's own store entries, the cap sites: notes/resources.md says
-how they were counted), sizes the sources do not state (a part with no budget gets the room up to the next part).
+4. mutants, in a temporary copy of src/, patches/ and check.sh: one per rule and per way of writing it (a registered
+   id taken again directly and through a helper; an xml name taken again; a drifted copy
+   of an id; an SDRAM part on another as mem + OFF, through a parameter, an out-parameter, master_block() + OFF and
+   &mem[enum]; a backup-SRAM word on another module's, as a literal and as base macro + offset, and a `shares` tag that
+   allows it; a call site patched twice and a TAKES that allows it; a wanted site; a store pushed past its cap; a
+   hooked store_add no tag names); each must fail the rule it targets, or pass it when allowed. Forms the reader
+   cannot follow (an untraced block pointer, a literal block offset, a
+   backup-SRAM cast with a variable offset) must be said not read, which fails part 1. Report mutants, two copies of
+   this tree: the same free backup SRAM claimed by a module on each side (a row) or by one struct moved to another
+   file (no row), a parameter added on one of our ids (a row), a trampoline on a stock function we call (a row).
+NOT checked: a table of literal ids (clipwin_b2.c's region_rows) against the registrations: only a copy under a
+macro name is (the report lists every read of an id beside each id two trees both take); that the tags' stock facts
+are right (stock's own store entries, the cap sites: notes/resources.md says how they were counted); sizes the
+sources do not state (a part with no budget gets the room up to the next part).
 """
 import os
 import re
@@ -54,6 +64,9 @@ sd = man["sdram"]
 check(f"the SDRAM block: {R.h(sd['block'])} (core {R.h(sd['core'])}), {len(sd['parts'])} parts through "
       f"{sorted(sd['accessors'])}", sd["block"] and sd["parts"] and "master_block" in sd["accessors"])
 check(f"{len(man['bkpsram'])} backup-SRAM ranges read", len(man["bkpsram"]) > 0)
+check(f"{len(man['uses'])} ids read where they are used (through {', '.join(man['stock_api']['setting'])}); "
+      f"{len(man['uses_unread'])} computed at run time, not read", len(man["uses"]) > 0)
+check(f"{len(man['binds'])} stock functions bound with FN() / B2_FN()", len(man["binds"]) > 0)
 check(f"{len(man['stores'])} tagged stores, each cap found at its sites: " +
       ", ".join(f"{s['name']} {s['stock']}+{s['added']}/{s['cap']}" for s in man["stores"]),
       man["stores"] and all(s["cap"] is not None and s["stock"] is not None for s in man["stores"]))
@@ -62,6 +75,7 @@ check(f"{len(man['stores'])} tagged stores, each cap found at its sites: " +
 bad = R.check_tree(man)
 explain = {"param-id": "one parameter per id, every id below the registry's 500",
            "xml-name": "one id per xml name",
+           "param-use": "a module's copy of its own id (B2_P_SLIP for P_SLIP) holds the registered value",
            "sdram": "SDRAM parts apart, inside the block; master_block() parts inside the core",
            "bkpsram": "backup-SRAM ranges of two modules apart",
            "site": "no stock byte patched by two modules (chains and TAKES aside)",
@@ -187,6 +201,23 @@ mutant(f"... the same through a helper that takes the id and the xml name as par
 mutant(f"xml name {p0['xml']!r} on the free id {R.h(free_id)}",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f'void zz_register(void *t) {{ fw_register_list(t, {R.h(free_id)}, "Zz:", 0, 0, "{p0["xml"]}"); }}\n'),
        "xml-name")
+# a module's own id read under a copied name (clipwin_b2.c's B2_P_SLIP) that has drifted from the registered value
+named = next((p for p in man["params"] if p.get("id_name") and not p.get("via")), None)
+SET_AT = man["stock_api"]["setting"][0] if man["stock_api"]["setting"] else None
+twin = next((f"src/{named['module']}{x}.c" for x in ("_dsp", "_room", "_coef", "_img")
+             if not os.path.exists(os.path.join(ROOT, f"src/{named['module']}{x}.c"))), None) if named else None
+if named and SET_AT and twin:
+    SET = ("typedef int (*setting_fn)(const void *store, int id);\n"
+           f"#define fw_setting ((setting_fn)FN({SET_AT}))\n")
+    mutant(f"{twin} reads {named['module']}'s {named['id_name']} as ZZ_{named['id_name']} = {R.h(free_id)}, not {R.h(named['id'])}",
+           lambda d: put(d, twin, HEAD + SET + f"#define ZZ_{named['id_name']} {R.h(free_id)}\n"
+                         f"int zz_read(const void *store) {{ return fw_setting(store, ZZ_{named['id_name']}); }}\n"), "param-use")
+    mutant(f"... the same copy holding the registered value",
+           lambda d: put(d, twin, HEAD + SET + f"#define ZZ_{named['id_name']} {R.h(named['id'])}\n"
+                         f"int zz_read(const void *store) {{ return fw_setting(store, ZZ_{named['id_name']}); }}\n"), "param-use",
+           expect=False)
+else:
+    check("mutant: a drifted copy of an id (needs a registration by name, a setting binding, a free file name)", False)
 blk = next(p for p in sd["parts"] if p["accessor"] == "master_block" and not p["nested_in"])
 mutant(f"a 0x100-byte part on {blk['name']} ({R.h(blk['offset'])})",
        lambda d: put(d, "src/zz_mutant.c", HEAD + f"#define ZZ_OFFSET {R.h(blk['offset'] - sd['accessors']['master_block'])}u\n"
@@ -246,6 +277,29 @@ report_mutant(f"each tree's own module on the free backup SRAM at {gap}, one ran
 report_mutant(f"... the same structure in another file on the other side (code moved)",
               claim("zz_ours", "zza", "ZZA", "uint32_t w"), claim("zz_moved", "zza", "ZZA", "uint32_t w"), "bkpsram",
               expect=False)
+report_mutant(f"theirs registers our {p0['xml']!r} and another parameter on {R.h(p0['id'])}",
+              lambda d: None, lambda d: put(d, "src/zz_mutant.c", HEAD +
+                                            f'void zz_register(void *t) {{ fw_register_list(t, {R.h(p0["id"])}, "Zz:", 0, 0, "zzmutant"); }}\n'),
+              "param-id")
+# theirs puts a trampoline on the first bytes of a stock function our code calls through FN()
+patched_here = {a for p in man["patches"] for a in range(p["addr"], p["end"])}
+bound = next((b for b in man["binds"] if not set(range(b["addr"], b["addr"] + 4)) & patched_here), None)
+
+
+def tramp(d):
+    put(d, "patches/zz_mutant.py", "import os\nfrom thumb import ROOT, bl, symbols\n"
+        "sym = symbols(os.path.join(ROOT, 'out', 'cave.elf'))\n"
+        f"PATCHES = [({R.h(bound['addr'])}, bytes.fromhex('{stock[bound['addr'] - R.FLASH:bound['addr'] - R.FLASH + 4].hex()}'), "
+        f"bl({R.h(bound['addr'])}, sym['zz_hook']))]\n")
+    s_ = open(os.path.join(d, "check.sh")).read()
+    put(d, "check.sh", re.sub(r"(patch\.py\s+[\w ]*?)(\s+cave\b|\s*$)", r"\1 zz_mutant\2", s_, count=1, flags=re.M))
+
+
+if bound and stock:
+    report_mutant(f"theirs patches the entry of stock {R.h(bound['addr'])}, which our {bound['file']} calls as {bound['name']}",
+                  lambda d: None, tramp, "binds")
+else:
+    check("report mutant: a trampoline on a stock function we call (needs a binding and the stock image)", False)
 call = next(p for p in man["patches"] if p["applied"] and p["kind"] == "call" and p["callee"])
 
 

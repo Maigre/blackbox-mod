@@ -9,17 +9,25 @@ TREE, OURS, THEIRS, REF: a folder (a checkout, a worktree) or a git ref of the r
 (`upstream/main`, `maigre`, a sha), which is unpacked with `git archive` into a temporary folder. Both trees are only
 read: `--build` builds a copy of each in a temporary folder, never in the tree.
 
+Exit status: 0 clean, 1 a collision or a problem, 2 something not read (an id, a pointer, a patch table): a clash
+can hide there, so the console line counts it and an unread tree never reads as clean.
+
 What is read, and from where (notes/resources.md has the long form):
 - parameter ids: every call to a binding of the stock registrars (a macro of src/*.c bound to a stock address and
-  named *regist*), its id evaluated from the file's #defines, enums, loops and const arrays; the xml name says
-  which parameter it is.
+  named *regist*), directly or through a helper, its id evaluated from the file's #defines,
+  enums, loops and const arrays; the xml name says which parameter it is. Where ids are read: the calls of a
+  binding named *setting* (fw_setting).
+- stock functions called: every macro binding one with FN() / B2_FN(); the report flags one whose first bytes the
+  other tree patches.
 - store entries: every call to a binding named *store_add*, in the functions reached from the stock call sites the
   patch tables hook in place of a stock store_add; the stores, their caps and stock's own count come from
   `resources: store` tags (patches/duck.py, patches/comp.py) because nothing else states them.
 - the boot-time SDRAM block: master.c's allocation (a binding named *perm_alloc*), its accessors (master_block,
-  master_tail, prism_mem), and every `<block pointer> + NAME` in src/; a part's size is its STEM_BYTES, else the
+  master_tail, prism_mem), and every `p + NAME` / `&p[NAME]` in src/ whose pointer p is traced to an accessor (an
+  assignment, the callers of a parameter, an out-parameter, a macro); a part's size is its STEM_BYTES, else the
   smallest sizeof(struct) budget a _Static_assert gives it, else the room up to the next part.
-- backup SRAM: pointer casts of 0x388xxxxx addresses and the _Static_asserts that bound them.
+- backup SRAM: pointer casts whose operand evaluates (macros included) into 0x38800000..0x38800fff, and the
+  _Static_asserts that bound them.
 - patched stock bytes: each patches/*.py module is imported with a stand-in symbol table (no build needed), so every
   (site, stock bytes, new bytes) is known; a BL's target is read back as its symbol name. Page slots and caps are
   data patches like any other.
@@ -571,7 +579,10 @@ def loops_at(f, fn, pos):
         if not (j <= pos <= end):
             continue
         im = re.match(r"(?:[\w\s\*]*?\s)?(\w+)\s*=\s*(.+)$", parts[0], re.S)
-        cm = re.match(r"(\w+)\s*(<=|<|!=)\s*(.+)$", parts[1], re.S)
+        # the bound: `i < N`, or one `&&` conjunct of that form (`site == 1 && i < N`: at most those values)
+        conj = [c.strip() for c in parts[1].split("&&")] if "||" not in parts[1] else [parts[1]]
+        cm = next((x for x in (re.match(r"(\w+)\s*(<=|<|!=)\s*(.+)$", c, re.S) for c in conj)
+                   if x and im and x.group(1) == im.group(1)), None)
         if not im or not cm or im.group(1) != cm.group(1) or not re.fullmatch(r"\w+\s*\+\+|\+\+\s*\w+|\w+\s*\+=\s*1", parts[2]):
             out.append((im.group(1) if im else "?", None))
             continue
@@ -913,16 +924,21 @@ def scan(path, label, do_build=False, stock=None):
 
     # ---- bindings: macros naming a stock address, by role
     bind = {}                                     # (file, name) -> addr
-    roles = {"register": set(), "store_add": set(), "perm_alloc": set()}
+    roles = {"register": set(), "store_add": set(), "perm_alloc": set(), "setting": set()}
+    binds = []                                    # every stock function a macro binds with FN() / B2_FN()
     for f in t.files.values():
         for name, (body, _l, _c) in f.macros.items():
             m = re.search(r"\b(0x0?8[0-9a-fA-F]{6})\b", body)
             if m and "(" in body:
                 a = int(m.group(1), 16) & ~1
                 bind[(f.rel, name)] = a
-                for role, rx in (("register", r"regist"), ("store_add", r"store_add"), ("perm_alloc", r"perm_alloc")):
+                for role, rx in (("register", r"regist"), ("store_add", r"store_add"), ("perm_alloc", r"perm_alloc"),
+                                 ("setting", r"setting")):
                     if re.search(rx, name, re.I):
                         roles[role].add(a)
+                if re.search(r"\bB?2?_?FN\s*\(\s*" + m.group(1), body):
+                    binds.append({"addr": a, "name": name, "file": f.rel, "line": _l, "module": module_of(f.rel)})
+    man["binds"] = sorted(binds, key=lambda b: (b["addr"], b["file"]))
     man["stock_api"] = {k: sorted(h(a) for a in v) for k, v in roles.items()}
     man["stock_api_names"] = {h(a): sorted({n for (_r, n), b in bind.items() if b == a})
                               for v in roles.values() for a in v}
@@ -989,7 +1005,7 @@ def scan(path, label, do_build=False, stock=None):
                     warn.append(f"{g.rel}:{g.line(cpos)}: id `{e}` of {name} not read ({x})")
                     continue
                 rec = {"id": v, "file": g.rel, "module": module_of(g.rel), "func": cfn.name, "line": g.line(cpos),
-                       "cond": list(g.cond(cpos))}
+                       "cond": list(g.cond(cpos)), "id_name": e.strip() if re.fullmatch(r"\s*[A-Za-z_]\w*\s*", e or "") else None}
                 if via:
                     rec["via"] = via
                 if name in sadd:
@@ -999,6 +1015,30 @@ def scan(path, label, do_build=False, stock=None):
                     rec["xml"] = xf.string(xe, env if xf is g else {}, cpos if xf is g else pos)
                     rec["label"] = lf.string(le, env if lf is g else {}, cpos if lf is g else pos) if le else None
                     params.append(rec)
+    # ---- uses: the ids read through a binding named *setting* (fw_setting, fw_setting_set: (store, id))
+    uses, uses_unread = [], []
+    for f in t.sources():
+        for name, fn, pos, args in calls(f, names_for(f, "setting")):
+            if len(args) < 2:
+                continue
+            e = args[1]
+            if re.fullmatch(r"\w+", e) and e in fn.params:
+                todo = [(g, cfn, cpos, env, ex[e]) for g, cfn, cpos, env, ex in from_callers(fn, [e]) if e in ex]
+            else:
+                combos = envs(loops_at(f, fn, pos))
+                todo = [(f, fn, pos, env, e) for env in combos] if combos is not None else []
+            if not todo:
+                uses_unread.append(f"{f.rel}:{f.line(pos)}: {name}(…, {e})")
+            for g, cfn, cpos, env, ex in todo:
+                try:
+                    v = g.eval(ex, env, cpos)
+                except Unresolved:
+                    uses_unread.append(f"{g.rel}:{g.line(cpos)}: {name}(…, {ex})")
+                    continue
+                uses.append({"id": v, "file": g.rel, "module": module_of(g.rel), "func": cfn.name, "line": g.line(cpos),
+                             "call": name, "id_name": ex.strip() if re.fullmatch(r"\s*[A-Za-z_]\w*\s*", ex) else None})
+    man["uses"] = sorted({(u["id"], u["file"], u["line"]): u for u in uses}.values(), key=lambda u: (u["id"], u["file"], u["line"]))
+    man["uses_unread"] = sorted(set(uses_unread))
     man["exclusive_flags"] = sorted({tuple(sorted(x)) for f in t.files.values() for x in f.exclusive})
     man["params"] = sorted(params, key=lambda r: (r["id"], r["file"]))
     man["forwarded"] = forwarded
@@ -1157,6 +1197,13 @@ class BlockTracer:
                 if re.search(r"\bstatic\b", f.blank[k + 1:fn.a]):
                     self.static.add((f.rel, fn.name))   # its callers are in its own file only
         self.acc_call = re.compile(r"\b(" + "|".join(map(re.escape, acc)) + r")\s*\(\s*\)") if acc else None
+        self.sites = {}                       # name -> [(file, function, index of its "(")]: every call, one pass
+        call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+        for f in t.sources():
+            for fn in f.funcs:
+                for m in call_rx.finditer(f.blank, fn.a, fn.b):
+                    if m.group(1) in self.defs:
+                        self.sites.setdefault(m.group(1), []).append((f, fn, m.end() - 1))
         self.statics = {}                     # per file: names assigned from an accessor anywhere in it
         for f in t.sources():
             d = self.statics.setdefault(f.rel, {})
@@ -1226,10 +1273,12 @@ class BlockTracer:
         # a parameter: what its callers pass
         if ident in fn.params:
             k = fn.params.index(ident)
-            for g in ([f] if (f.rel, fn.name) in self.static else self.t.sources()):
-                for _n, cfn, _pos, cargs in calls(g, {fn.name}):
-                    if k < len(cargs):
-                        got |= self.classify(g, cfn, cargs[k], depth)
+            for g, cfn, o in self.sites.get(fn.name, []):
+                if (f.rel, fn.name) in self.static and g is not f:
+                    continue
+                cargs = split_top(g.code, g.blank, o + 1, match_close(g.blank, o))
+                if k < len(cargs):
+                    got |= self.classify(g, cfn, cargs[k], depth)
         # a macro standing for an address or an accessor call
         body = f.macro_map().get(ident)
         if not got and body:
@@ -1611,6 +1660,15 @@ def check_tree(man):
     for x, ids in sorted(by_xml.items()):
         if len(ids) > 1:
             bad.append(("xml-name", f"xml name {x!r} on {len(ids)} ids: {', '.join(h(i) for i in sorted(ids))}"))
+    # a module's copy of its own id under another name (clipwin_b2.c's B2_P_SLIP for clipwin.c's P_SLIP) that no
+    # longer holds the registered value: the read lands on whatever parameter has that id now
+    for u in man.get("uses", []):
+        for p in man["params"]:
+            n, m = u.get("id_name"), p.get("id_name")
+            if n and m and p["module"] == u["module"] and (n == m or n.endswith("_" + m)) and p["id"] != u["id"]:
+                now = ", ".join(sorted({q["xml"] or "?" for q in by_id.get(u["id"], [])})) or "no parameter of this tree"
+                bad.append(("param-use", f"{u['file']}:{u['line']} reads {n} = {h(u['id'])} through {u['call']}, but "
+                                         f"{p['file']}:{p['line']} registers {m} at {h(p['id'])}; {h(u['id'])} is {now}"))
     # SDRAM parts: no two claims overlap unless one is declared inside the other or the builds exclude each other
     parts = man["sdram"]["parts"]
     for i, a in enumerate(parts):
@@ -1693,13 +1751,32 @@ def report(ours, theirs, base=None, stock=None):
             d.setdefault(p["id"], []).append(p)
         return d
     io, it = idmap(ours), idmap(theirs)
+
+    def used(m, i):
+        us = [u for u in m.get("uses", []) if u["id"] == i]
+        return ", ".join(f"{u['file']}:{u['line']}" + (f" ({u['id_name']})" if u["id_name"] else "") for u in us)
+
     for i in sorted(set(io) & set(it)):
         xo = {p["xml"] or f"{p['file']}:{p['func']}" for p in io[i]}
         xt = {p["xml"] or f"{p['file']}:{p['func']}" for p in it[i]}
-        if not xo & xt:
+        # a row when the two sides do not hold the same parameters there: none in common, or one side adds another
+        if xo != xt and len(xo | xt) > 1:
+            uo, ut = used(ours, i), used(theirs, i)
             add("param-id", f"id {h(i)}",
                 "; ".join(f"{p['xml']} ({p['label']}) {p['file']}:{p['line']} {p['func']}" for p in io[i]),
-                "; ".join(f"{p['xml']} ({p['label']}) {p['file']}:{p['line']} {p['func']}" for p in it[i]))
+                "; ".join(f"{p['xml']} ({p['label']}) {p['file']}:{p['line']} {p['func']}" for p in it[i]),
+                ("" if not xo & xt else f"both hold {', '.join(sorted(xo & xt))}, and one side adds another")
+                + (f"{'; ' if xo & xt else ''}read here at: ours {uo or '-'}; theirs {ut or '-'} (they move with the id)"
+                   if uo or ut else ""))
+    for side, m, other, oid in (("ours", ours, theirs, it), ("theirs", theirs, ours, io)):
+        mine = idmap(m)
+        for u in m.get("uses", []):
+            if u["id"] in oid and u["id"] not in mine:
+                o = f"{u['file']}:{u['line']} {u['func']} reads {h(u['id'])}" + (f" ({u['id_name']})" if u["id_name"] else "") \
+                    + " (registered by no module here: stock's)"
+                t_ = "; ".join(f"{p['xml']} {p['file']}:{p['line']}" for p in oid[u["id"]])
+                add("param-use", f"id {h(u['id'])}", o if side == "ours" else t_, t_ if side == "ours" else o,
+                    "one side reads an id the other registers for its own parameter")
     xo = {}
     for p in ours["params"]:
         if p["xml"]:
@@ -1739,6 +1816,21 @@ def report(ours, theirs, base=None, stock=None):
         elif p["module"] != q["module"]:
             add("site-module", f"stock bytes {h(ov[0])}", f"{p['module']}.py", f"{q['module']}.py",
                 "the same bytes from two modules: patch.py refuses the second in a merged tree")
+    # a stock function one side calls (FN() / B2_FN()) whose first bytes the other side patches: in the merged image
+    # that call lands in the other side's hook (their slice.py's trampoline on 0x08064A94 -> sel_setup, which our
+    # clipwin.c calls as fw_recompute)
+    for side, m, mimg, oimg in (("ours", ours, img_o, img_t), ("theirs", theirs, img_t, img_o)):
+        seen = set()
+        for b in m.get("binds", []):
+            hit = [a for a in range(b["addr"], b["addr"] + 4) if a in oimg and (a not in mimg or mimg[a][0] != oimg[a][0])]
+            if not hit or (b["addr"], b["module"]) in seen:
+                continue
+            seen.add((b["addr"], b["module"]))
+            q = oimg[hit[0]][1]
+            mine = f"{b['file']}:{b['line']} {b['name']} calls stock {h(b['addr'])}"
+            theirs_ = f"{q['module']}.py patches {h(q['addr'])}: " + (f"-> {q['target']}" if q["target"] else q["new"])
+            add("binds", f"stock function {h(b['addr'])}", mine if side == "ours" else theirs_,
+                theirs_ if side == "ours" else mine, "a call into stock that the other side's patch turns into its hook")
     for side, mine, other, oname in (("ours", ours, ptt, "theirs"), ("theirs", theirs, po, "ours")):
         for tg in mine["tags"]:
             if tg["kind"] != "wants":
