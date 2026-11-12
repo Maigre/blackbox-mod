@@ -23,6 +23,9 @@
  *   +0x0c six i32 arguments  +0x24 seq
  *   unit: +0x28 done (= the seq served)   +0x2c result   +0x30 four values back   +0x40 1 while a job spans passes
  *         +0x44 KIT_VERSION << 16 | the table's size    +0x48.. the kit's own state (the computer never writes it)
+ * At every boot master_alloc (master.c) clears the magic and the two tasks' boot words (+0x48, +0x74): a request, a job
+ * or a file left in SDRAM by the boot before never counts as this boot's, even after a power cut short enough for
+ * SDRAM to keep them, where fault.c's boot count (the epoch, and those words' value) starts again at 1.
  * Results: 0 done; -1 no such job; -2 stale epoch (a request from before the last reset: SDRAM keeps it, and it must
  * not run again); -3 a bad argument; -4 stock would not take it now (r0 says why); -5 not found; -6 a FatFs error (its
  * code in r0); -7 the wrong state (no file open, one open already, no touch down, one down already); -8 busy: a job

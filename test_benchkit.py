@@ -1083,6 +1083,63 @@ check(f"a card open and a read asked while a knob job runs: each answered -8 (bu
       got == [(-8, 3), (-8, 3)] and not calls and done_then == s_knob + 2 and state == 0 and r["result"] == 0
       and [c[0] for c in fs.calls] == ["open", "close"], (got, calls, hex(done_then), r))
 
+# A boot after a power cut short enough for SDRAM to keep the box (review 12/11): fault.c's boot count, the epoch and
+# the tasks' boot words, starts again at 1 after a power-on, so on its own a request, the kit's contact or file, or a
+# job of the boot before would pass for this boot's. master_alloc, the once-a-boot hook (master.c), clears the magic
+# and both boot words. Run here for real, after backup SRAM lost its boot record with the power.
+
+
+def power_cut_and_boot(k):
+    e = k.e
+    e.uc.mem_write(0x38800FD8, bytes(16))                  # backup SRAM lost with the power: the boot record cleared
+    e.call("master_alloc", 0x24076000, 192000)             # the boot: fault.c counts boot 1 again, the block is the same
+    e.meter_up()
+    return e.r32(BOOTS_AT)
+
+
+def boot_kit():
+    k = card_kit()
+    touch_rig(k)
+    k.e.uc.mem_map(0x50003000, 0x1000)                     # WWDG1, which master_alloc's fault.c arms
+    k.e.stub(0x0806AA80)                                   # the delay's line
+    k.e.stub(0x0804436C, value=BLOCK)                      # stock's permanent allocator: the same block as before
+    k.e.w32(BOOTS_AT, 1)                                   # boot 1, after a power-on
+    k.e.w32(MB + 0x48, 1)
+    k.e.w32(MB + 0x74, 1)
+    return k
+
+
+k = boot_kit()
+fs = k.fs
+fs.files["F.BIN"] = bytearray(8)
+name(k, "F.BIN")
+before = [k.job(CARD, 0x40, 0, epoch=1)["result"], k.job(SCREEN, 0x04, 0, 100, 50, epoch=1)["result"]]
+s_stat = k.ask(0x45, epoch=1)                              # asked, not yet run when the power goes
+boots = power_cut_and_boot(k)
+n0 = len(fs.calls)
+k.calls.clear()
+k.e.w32(GUI_MS, 123456 + 20000)                            # long past the idle close of a file thought open
+for _ in range(3):
+    for task in (SCREEN, AUDIO, CARD):
+        k.run(task)
+after = (list(fs.calls[n0:]), list(k.calls), k.e.r32(MB), k.e.r32(MB + 0x28), k.e.r8(MB + 0x51), k.e.r8(MB + 0x7C))
+k.e.w32(GUI_MS, 123456)
+again = [k.job(SCREEN, 0x04, 0, 100, 50, epoch=1)["result"], k.job(CARD, 0x40, 0, epoch=1)["result"]]
+check(f"a power cut with SDRAM kept, then the boot (master_alloc; fault.c counts boot {boots} again): the request asked "
+      f"before it never runs, the kit's file of the boot before is forgotten, not closed (no FatFs call), its contact "
+      f"forgotten, no widget called; a new touch down and a new open work ({before}, {after}, {again})",
+      before == [0, 0] and boots == 1 and after == ([], [], 0, UNSET, 0, 0) and again == [0, 0], (before, after, again))
+k = boot_kit()
+w0 = k.e.r32(HW + 0x1274)
+k.ask(0x03, 0, 5, 50, 0, epoch=1)                          # a knob job of 50 events, running when the power goes
+k.run(SCREEN)
+boots = power_cut_and_boot(k)
+for _ in range(3):
+    k.run(SCREEN)
+check(f"...and a knob job running when the power went does not go on after the boot (1 event, then none; state 0)",
+      boots == 1 and k.e.r32(HW + 0x1274) == w0 + 1 and k.e.r32(MB + 0x40) == 0 and k.e.r8(MB + 0x50) == 0,
+      (k.e.r32(HW + 0x1274) - w0, k.e.r32(MB + 0x40)))
+
 # ====================================================================================================== 8b. a preset load by name
 # The screen task's job 6: stock's own FUN_0804290c reads the names off the list (F + 0x32c) until one is the asked-for,
 # and the message the PSET screen's Load button posts goes to the app's handler: run here for real, FUN_080a1718's case

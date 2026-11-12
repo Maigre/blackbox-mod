@@ -531,6 +531,16 @@ void master_alloc(int *line, int floats)
         *(volatile uint32_t *)(mem + 0x7000u) = 0;           /* filter.c's S950 bank */
         *(volatile uint32_t *)(mem + 0xb000u) = 0;           /* comp.c's clipper */
         *(volatile uint32_t *)(mem + 0xb100u) = 0;           /* clipwin.c's bank */
+#ifndef PUBLIC_BUILD
+        /* dev builds: the bench kit's mailbox, at the end of clipwin.c's 4 KB (kit_b2.c; fork-only). No request in it,
+           and neither its screen task's state nor its card task's is this boot's: fault.c's boot count starts again
+           at 1 after a power-on, so it cannot tell a boot after a power cut short enough for SDRAM to keep the box
+           from the boot before. */
+        volatile uint32_t *kit = (volatile uint32_t *)(mem + 0xc000u);
+        kit[0] = 0;                                          /* its magic */
+        kit[0x48 / 4] = 0;                                   /* the screen task's boot */
+        kit[0x74 / 4] = 0;                                   /* the card task's boot */
+#endif
         if (tail) {
             *(volatile uint32_t *)(mem + CORE_BYTES) = 0;                   /* Prism */
             *(volatile uint32_t *)(mem + CORE_BYTES + PRISM_BYTES) = 0;     /* insert.c's bank */
