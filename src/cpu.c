@@ -153,6 +153,8 @@ static uint8_t b2_checked(void);
  * because this label is redrawn on every entry to Tools; the version text beside it is set once when the screen is
  * built (3.2.y read plain "3.2.y" with the loader's "+" sitting unseen in cpu_name). Writes at most 18 bytes: since
  * t-059 the "!" reads "!held " while bank 2 is held off after crashed boots (b2safe.c), "!held 34/71%+3".
+ * Not in a USB_DIAG build: that label is the USB line, and five more characters in front could push it off a label
+ * whose width has not been seen, so a held unit shows "!" there as an unpaired one does.
  */
 #ifdef USB_DIAG
 char *usbdev_diag_text(char *p);             /* usbdev.c: "U3r2c1 +0.12%" */
