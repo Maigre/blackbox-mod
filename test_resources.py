@@ -5,7 +5,7 @@ What is checked, on the tree this runs in (read statically: no build needed for 
    imported, every tagged store's cap found at its sites. An id the reader could not evaluate is a FAIL, since a
    clash could hide behind it.
 2. the rules: one parameter per id and one id per xml name; a module's copy of its own id under another name
-   (clipwin_b2.c's B2_P_SLIP, read through fw_setting) holds the value registered under the first name; SDRAM parts
+   (read through fw_setting, as clipwin_b2.c's B2_P_SLIP was until D-048) holds the value registered under the first name; SDRAM parts
    that do not overlap (unless one is declared inside the other, or their #if builds exclude each other) and stay
    inside the block, master_block() parts inside the core; backup-SRAM and patch-RAM ranges of two modules apart,
    none past its memory's end (the split's dispatcher word, bench/b2split.py's VEC_RAM, declared by its tag); no stock byte
@@ -25,7 +25,7 @@ What is checked, on the tree this runs in (read statically: no build needed for 
    backup-SRAM or patch-RAM cast with a variable offset) must be said not read, which fails part 1. Report mutants, two copies of
    this tree: the same free backup SRAM claimed by a module on each side (a row) or by one struct moved to another
    file (no row), a parameter added on one of our ids (a row), a trampoline on a stock function we call (a row).
-NOT checked: a table of literal ids (clipwin_b2.c's region_rows) against the registrations: only a copy under a
+NOT checked: a table of literal ids (clipwin_b2.c's param_rows) against the registrations: only a copy under a
 macro name is (the report lists every read of an id beside each id two trees both take); that the tags' stock facts
 are right (stock's own store entries, the cap sites: notes/resources.md says how they were counted); sizes the
 sources do not state (a part with no budget gets the room up to the next part).
@@ -218,7 +218,7 @@ mutant(f"id {R.h(p0['id'])} registered again through a function-like macro wrapp
 mutant("the registrar held in a function-pointer variable",
        lambda d: put(d, "src/zz_mutant.c", HEAD + "void zz_register(void *t) { register_list_fn r = fw_register_list; "
                      f'r(t, {R.h(p0["id"])}, "Zz:", 0, 0, "zzmutant"); }}\n'), None)
-# a module's own id read under a copied name (clipwin_b2.c's B2_P_SLIP) that has drifted from the registered value
+# a module's own id read under a copied name (as clipwin_b2.c's B2_P_SLIP was) that has drifted from the registered value
 named = next((p for p in man["params"] if p.get("id_name") and not p.get("via")), None)
 SET_AT = man["stock_api"]["setting"][0] if man["stock_api"]["setting"] else None
 twin = next((f"src/{named['module']}{x}.c" for x in ("_dsp", "_room", "_coef", "_img")

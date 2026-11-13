@@ -795,9 +795,7 @@ typedef void (*b2_pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void
 #define fw_recompute    ((b2_recompute_fn)B2_FN(0x08064a94))
 #define fw_pad_param    ((b2_pad_param_fn)B2_FN(0x08067648))   /* the class-B param-set: what a 0x39 message does */
 #define B2_APP_PADS     (0x24020088u + 0x1840u)                 /* clipwin.c's APP_PADS: + row * 0xf0 + col * 0x30 */
-#define B2_P_SLIP       0x151                                   /* clipwin.c's P_SLIP, P_LOOPLEN, CLOCK_CTX */
-#define B2_P_LOOPLEN    0x152
-#define B2_CLOCK_CTX    0x128e0
+#define B2_CLOCK_CTX    0x128e0                                 /* clipwin.c's CLOCK_CTX */
 
 static const uint16_t param_rows[CW_PARAMS] = {0x150, 0x91, 0x92, 0x153, 0xfa, 0x151, 0x152, 0x47, 0x94};   /* CW_P */
 

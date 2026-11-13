@@ -49,7 +49,8 @@ the pair side by side (its own check judges it); the merged cave's estimate (our
 bank 1 at its high end.
 
 Inside one tree (`check`, `test_resources.py`), beyond one owner per thing: a module's copy of its own id under
-another name (`B2_P_SLIP` for `P_SLIP`, read through `fw_setting`) must hold the value registered under the first.
+another name, read through `fw_setting` (as `clipwin_b2.c`'s `B2_P_SLIP` for `P_SLIP` was until stage 1, D-048), must
+hold the value registered under the first.
 
 ### The tags
 
@@ -100,7 +101,8 @@ What it does not see, from the same merge:
   `sel_block` on the call of FUN_08067fa4 (the clip / slicer pads' block, which od.c and insert.c work inside) at
   `0x08068C6A`, and JOEBOX 2's hooks inside functions `test_clipwin.py` pins (t-052 turn 7). The tool knows no
   function's extent, so no row.
-- a table of literal ids inside one tree (`region_rows`): the in-tree rule follows a copy under a macro name only.
+- a table of literal ids inside one tree (`param_rows`, clipwin_b2.c, since stage 1: D-048; `region_rows` before):
+  the in-tree rule follows a copy under a macro name only.
   Ids read other than through `fw_setting` (compared with `knob + KNOB_PARAM`, in `clip_knobs`) are not reads to it.
 - that the store copy trusts the destination's size, so the pad's cap and the global's move together (t-052
   turn 5); each store is checked alone.

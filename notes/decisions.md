@@ -150,6 +150,18 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   `RELEASE=1` (`B2SPLIT=` builds without), and `./check.sh` fails on the tool's `--verify`. Bank 1 free: dev 287 ->
   1,784 B, release 915 -> 2,412 B; bank 2 +1,788 B in both. `test_repeat`'s idle block, called through the stub: 530
   -> 570 instructions (~0.041 % -> ~0.044 %); the unit's figure is the bench step's.
+- **D-048 (2026-11-13) — Clip Window stage 1: a pad's rows come from the engine's queue, from the store only until
+  the queue has carried them** (hub #t-044, plan #t-036). `clipwin_param` takes the class-B param-set call at
+  `0x080685D2` from JOEBOX 2's `sel_param` (`TAKES`, then `sel_param` as stock's was), and `cw_param` (bank 2) records
+  the pad's nine rows (`param_rows`: Region, Loop Start, Loop End, Fit, Loop Fade, Slip, Loop Len, Quant, Sync) in
+  cw_bank's `set` and `seen`; a pad's posts reach it in queue order, a preset load's re-post included (notes/re/x3
+  §1, t19). `cw_poll` and `cw_lenhook` read each row through `cw_row`: what the queue last carried once that row has
+  come through, the app's store until then. **This departs from the plan's « the store read goes »**: a row the queue
+  has not carried since the bank was cleared still comes from the store, because a cold boot zeroes the bank,
+  possibly after the project's load posted, and `test_clipwin.py`'s `store()` sections set rows that are never
+  posted. `region_rows` and the copied ids `B2_P_SLIP` / `B2_P_LOOPLEN` go (`notes/resources.md`: `param_rows` is a
+  table of literal ids, which the in-tree check does not follow). cw_bank grows to `0xB18`, magic `CWND`. Not on a
+  unit yet.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving

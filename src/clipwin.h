@@ -133,7 +133,7 @@ struct cw_bank {
                                         class-B param-set (cw_param), in CW_P_* order */
     uint16_t seen[16];               /* ...bit i: set[q][i] has come through the queue since the bank was cleared */
 };
-#define CW_MAGIC  0x43574e44u        /* "CWNC": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e44u        /* "CWND": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's CORE_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's CORE_BYTES gives the bank CW_BYTES");

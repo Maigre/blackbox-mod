@@ -1701,7 +1701,7 @@ def check_tree(man):
     for x, ids in sorted(by_xml.items()):
         if len(ids) > 1:
             bad.append(("xml-name", f"xml name {x!r} on {len(ids)} ids: {', '.join(h(i) for i in sorted(ids))}"))
-    # a module's copy of its own id under another name (clipwin_b2.c's B2_P_SLIP for clipwin.c's P_SLIP) that no
+    # a module's copy of its own id under another name (as clipwin_b2.c's B2_P_SLIP for clipwin.c's P_SLIP was) that no
     # longer holds the registered value: the read lands on whatever parameter has that id now
     for u in man.get("uses", []):
         for p in man["params"]:
