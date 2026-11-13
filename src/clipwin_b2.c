@@ -799,14 +799,24 @@ typedef void (*b2_pad_param_fn)(uint8_t *pad, void *clock, const void *msg, void
 #define B2_P_LOOPLEN    0x152
 #define B2_CLOCK_CTX    0x128e0
 
+static const uint16_t param_rows[CW_PARAMS] = {0x150, 0x91, 0x92, 0x153, 0xfa, 0x151, 0x152, 0x47, 0x94};   /* CW_P */
+
+/* Stage 1 (#t-044): the pad's row i (CW_P_*) as the engine's queue last carried it to the param-set (cw_param), or the
+   app's store while no post of it has come through since the bank was cleared (a cold boot zeroes the bank, and the
+   project's load may have posted before it) */
+static int32_t cw_row(const struct cw_bank *b, unsigned q, const void *store, unsigned i)
+{
+    return b->seen[q] & (1u << i) ? b->set[q][i] : fw_setting(store, param_rows[i]);
+}
+
 void cw_poll(struct cw_bank *b, uint8_t *engine)
 {
     unsigned q = b->scan++ & 15;
     const void *store = (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u);
-    int32_t slip = fw_setting(store, B2_P_SLIP);
-    unsigned ll = (unsigned)fw_setting(store, B2_P_LOOPLEN);
+    int32_t slip = cw_row(b, q, store, CW_P_SLIP);
+    unsigned ll = (unsigned)cw_row(b, q, store, CW_P_LOOPLEN);
     uint32_t msg[6];
-    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)fw_setting(store, P_SYNC) : 0, engine, msg);
+    int r = cw_tick(b, q, slip, ll, engine && (ll | b->ll[q]) ? (uint32_t)cw_row(b, q, store, CW_P_SYNC) : 0, engine, msg);
     uint8_t *pad = b->pad[q];
     if (r & 8)                           /* Fit: a fitted pad made at another tempo */
         fw_recompute(pad, engine);
@@ -836,7 +846,7 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
                 msg[1] = 0;
                 msg[2] = *(const uint32_t *)(pad + PAD_ID);
                 msg[3] = P_SYNC;
-                msg[4] = (uint32_t)fw_setting(store, P_SYNC);
+                msg[4] = (uint32_t)cw_row(b, q, store, CW_P_SYNC);
                 msg[5] = 0;
                 r |= 2;
             }
@@ -857,8 +867,7 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
 /* Stage 1 (#t-044): clipwin.c's clipwin_param hands every message the class-B process gives its param-set at
    0x080685d2 here, before JOEBOX 2's sel_param. A pad's 0x39 posts reach that call in the order they were posted, the
    re-post's too (notes/re/x3 section 1). The poll's own sends (cw_poll's fw_pad_param: Loop Len's forced Sync, F-p's
-   Sync) call the param-set directly, so they never land here. Records only, for now: nothing reads set yet. */
-static const uint16_t param_rows[CW_PARAMS] = {0x150, 0x91, 0x92, 0x153, 0xfa, 0x151, 0x152, 0x47, 0x94};   /* CW_P */
+   Sync) call the param-set directly, so they never land here. cw_poll and cw_lenhook read them through cw_row. */
 
 void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg)
 {
@@ -870,15 +879,14 @@ void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg)
         }
 }
 
-/* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the store rows the
-   region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE). */
-static const uint16_t region_rows[CW_SET_ROWS] = {0x150, 0x91, 0x92, 0x153, 0xfa};   /* CW_SET */
-
+/* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the pad's rows the
+   region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE), through
+   cw_row. */
 int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip)
 {
     int32_t len = fw_src_len(src), set[CW_SET_ROWS];
     for (unsigned i = 0; site == 1 && i < CW_SET_ROWS; i++)
-        set[i] = fw_setting((const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u), region_rows[i]);
+        set[i] = cw_row(b, q, (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u), i);   /* CW_SET_* == CW_P_* */
     return cw_len(b, q, pad, site, clip, len, set);
 }
 
