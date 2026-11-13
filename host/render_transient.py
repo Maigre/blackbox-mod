@@ -8,6 +8,7 @@ Then the renders: the 4X4DRUMS103 loop (measure/, 7.6 s), mono into both channel
 """
 import ctypes
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -26,7 +27,8 @@ MODELS = ["Differ", "Punch", "Smooth"]
 
 def lib():
     os.makedirs(os.path.dirname(LIB), exist_ok=True)
-    subprocess.run(["clang", "-O2", "-shared", "-fPIC", "-o", LIB, os.path.join(HERE, "..", "src", "transient.c")], check=True)
+    subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-shared", "-fPIC", "-o", LIB,
+                    os.path.join(HERE, "..", "src", "transient.c")], check=True)
     return ctypes.CDLL(LIB)
 
 
