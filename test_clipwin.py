@@ -5526,5 +5526,44 @@ check(f"stage 1: Slip 0 -> 960 posted in the last block before step 2's first re
       and bank_slip(r.m, 6) == 960, (lb_at, lb_ref and lb_ref[FET][:1], lb and (lb[0], lb[FET][:1]), bank_slip(r.m, 6)))
 
 
+
+# A preset load mid-play re-posts every entry of the pad's store, in store order, through the same param-set (x3 §2, t19:
+# the router keeps the order). A row re-posted at the value the bank holds changes nothing (cw_param redoes the pending
+# segments on a change only); a changed one acts as that row posted alone.
+pl_store = {0x4: 500, P_SLIP: 0, 0x47: 3, 0x94: 3}
+
+
+def pl_repost(vals, at=250):
+    def pre(rr):
+        if rr.block == at:
+            store(rr.m, rr.q, vals)                  # the app writes its store, then posts it
+            for pid, v in sorted(vals.items()):
+                rr.param(pid, v)
+    return pre
+
+
+pl_ok, pl_d = same(scenario(frames=96000, cell=0x102, vals=pl_store, pre=pl_repost(pl_store), blocks=600),
+                   scenario(frames=96000, cell=0x102, vals=pl_store, pre=pl_repost(pl_store), blocks=600, image=STOCK))
+check("stage 1: the same preset reloaded mid-play (Slip 0, Quant 3, Sync 3: its four store entries re-posted in store "
+      "order at block 250) plays bit for bit as stock's under the same re-post", pl_ok, pl_d)
+
+pl_new = {**pl_store, P_SLIP: 960}
+
+
+def pl_then(rr):                                     # the old preset re-posted, then Slip 960 posted on its own
+    if rr.block == 250:
+        store(rr.m, rr.q, pl_new)
+        for pid, v in sorted(pl_store.items()):
+            rr.param(pid, v)
+        rr.param(P_SLIP, 960)
+
+
+r = scenario(frames=96000, cell=0x102, vals=pl_store, pre=pl_repost(pl_new), blocks=600)
+pl_ok, pl_d = same(r, scenario(frames=96000, cell=0x102, vals=pl_store, pre=pl_then, blocks=600))
+check("stage 1: a preset differing in Slip only (0 -> 960) loaded mid-play plays bit for bit as the old preset "
+      "re-posted and Slip 960 posted after it in the same block (stock's own rows re-posted alike in both): the rows "
+      "re-posted unchanged make no drop of their own, and the bank holds 960",
+      pl_ok and bank_slip(r.m, r.q) == 960, (pl_d, bank_slip(r.m, r.q)))
+
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

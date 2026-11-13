@@ -25,7 +25,7 @@ JOEBOX):
 
 - **Slip** — moves what the loop plays against the clock, live, up to a bar either way, like a CDJ jog: `+` pushes
   the loop ahead of the beat, `−` drags it behind. One knob: single ticks when you turn slowly, 1/64 steps at full
-  speed, a short detent on 0. The change is heard at the next step.
+  speed, a short detent on 0. The change is heard at the next step, even a turn made just before it.
 - **Region** Auto / File / Loop — the pad plays its **loop points** (set on the Clip pad's waveform or in Sample
   mode), in sync, instead of the whole file: no destructive Trim. Auto follows the loop points whenever they are not
   the whole file.
