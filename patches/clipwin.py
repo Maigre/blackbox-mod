@@ -56,6 +56,9 @@ PATCHES = [
     # slot 6, Slip in slot 7, Loop Len in slot 8, Fit in slot 9, and
     # stock's own Loop Fade row (0xFA, Sample mode's; the class-B pad drops it, the class-H object stores it) in slot 10,
     # TL Knob (the Waveform's TL in Clip mode: Loop Start or Move) in slot 11
+    # stage 1 (#t-044): the class-B process's param-set call, JOEBOX 2's sel_param (TAKES below): clipwin_param records
+    # the pad's rows in the bank, then calls sel_param
+    hook(0x080685D2, 0x08067648, "clipwin_param"),
     (0x080EF99A, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
     (0x080EF292, struct.pack("<6H", 0, 0, 0, 0, 0, 0), struct.pack("<6H", 0x150, 0x151, 0x152, 0x153, 0xFA, 0x154)),
 ]
@@ -63,11 +66,8 @@ PATCHES = [
 # Call sites JOEBOX 2's Clip selection (slice.py: sel_len_b, sel_zoom, sel_bind_bpm, sel_wave) hooks too. On a Clip
 # pad the Waveform screen and its four knobs are the Clip Window's; with no selection set, the selection is stock to
 # the bit (clipsel.c), so its setup trampoline and the rest of slice.py stay. patch.py skips slice.py's entry here.
-TAKES = (0x08064B2C, 0x08064C5A, 0x080A53B0, 0x080A582A, 0x080A5B0E)
+TAKES = (0x08064B2C, 0x08064C5A, 0x080A53B0, 0x080A582A, 0x080A5B0E, 0x080685D2)
 
-# Planned, not patched yet: stage 1's capture of the class-B param-set call at 0x080685D2 -> 0x08067648
-# (notes/clip-window-audit.md, notes/re/x3-region-data-path.md section C; hub #t-044). Since JOEBOX 2 that call is
-# slice.py's (sel_param, clipsel.c: a Quant / Sync change during a stopped pad's audition). The `resources: wants`
-# tag that stood here did its job on this merge (bench/resources.py named the clash) and is gone: the site is no
-# longer free to want. Stage 1 takes it the way the five sites above are taken (TAKES), and its handler ends in
-# sel_param, not in stock's FUN_08067648.
+# 0x080685D2 -> 0x08067648, the class-B param-set call (notes/clip-window-audit.md, notes/re/x3-region-data-path.md
+# section 1 C; hub #t-044): slice.py's since JOEBOX 2 (sel_param, clipsel.c: a Quant / Sync change during a stopped
+# pad's audition). Stage 1 takes it like the five above; clipwin_param ends in sel_param, not in stock's FUN_08067648.

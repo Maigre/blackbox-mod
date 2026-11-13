@@ -81,6 +81,14 @@ struct cw_region {
     int32_t rs, vlen;                /* the region the pad plays this pass, frames; vlen 0 = the whole file */
 };
 
+/* Stage 1's rows (cw_param), the first five in CW_SET order: Region, Loop Start, Loop End, Fit, Loop Fade, then Slip,
+   Loop Len, Quant, Sync */
+#define CW_P_SLIP     5
+#define CW_P_LOOPLEN  6
+#define CW_P_QUANT    7
+#define CW_P_SYNC     8
+#define CW_PARAMS     9
+
 struct cw_bank {
     uint32_t magic, scan;
     int32_t slip[16];                /* as last polled */
@@ -121,8 +129,11 @@ struct cw_bank {
                                         other Auto is chosen) */
     uint8_t moving[16];              /* 1: a Region Move is between its two posts (clipwin_move): the pad's wrap keeps the
                                         region it has (adopt) until the pair is whole */
+    int32_t set[16][CW_PARAMS];      /* stage 1 (#t-044): the pad's rows as the engine's queue last carried them to the
+                                        class-B param-set (cw_param), in CW_P_* order */
+    uint16_t seen[16];               /* ...bit i: set[q][i] has come through the queue since the bank was cleared */
 };
-#define CW_MAGIC  0x43574e43u        /* "CWNC": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e44u        /* "CWNC": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's CORE_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's CORE_BYTES gives the bank CW_BYTES");
@@ -134,7 +145,8 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, abeats) == 0x7b4 && offsetof(struct cw_bank, alen) == 0x7d4 &&
                offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
                offsetof(struct cw_bank, wrapped) == 0x888 && offsetof(struct cw_bank, abars) == 0x898 &&
-               offsetof(struct cw_bank, moving) == 0x8a8 && sizeof(struct cw_bank) == 0x8b8,
+               offsetof(struct cw_bank, moving) == 0x8a8 && offsetof(struct cw_bank, set) == 0x8b8 &&
+               offsetof(struct cw_bank, seen) == 0xaf8 && sizeof(struct cw_bank) == 0xb18,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*
@@ -181,6 +193,8 @@ void cw_retire(uint8_t *pad, int32_t len);
 void cw_poll(struct cw_bank *b, uint8_t *engine);
 /* H3's and H3''s bodies, from bank 1's clipwin_len and clipwin_wrap behind their gates (stage 3) */
 int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip);
+/* stage 1: a message the class-B process hands its param-set (0x080685d2), from bank 1's clipwin_param */
+void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg);
 void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uint32_t *t);
 /* H1's and H5's bodies, from bank 1's clipwin_seg_start and clipwin_playhead behind their gates (stage 3): the
    prefetch point (cw_latch's, src = the pad's source), and the playhead message rewritten in place (msg 0x4a) */

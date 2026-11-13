@@ -259,6 +259,20 @@ static __attribute__((noinline)) struct cw_bank *pad_bank(const uint8_t *pad, in
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
    0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
    and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
+int sel_param(uint8_t *pad, int a1, int a2, int a3);   /* clipsel.c: JOEBOX 2's, a Quant / Sync change in an audition */
+
+/* Stage 1 (#t-044). Replaces bl FUN_08067648 at 0x080685d2, the class-B process's only call to its param-set (r0 = the
+   pad, r1 = the clock, r2 = the 0x18-byte message, r3 = ctx; notes/re/x3 section 1 C), which JOEBOX 2's slice.py sends
+   to sel_param (patches/clipwin.py TAKES it): cw_param records the pad's rows in the bank, then sel_param as before. */
+int clipwin_param(uint8_t *pad, int clock, int msg, int ctx)
+{
+    int q;
+    struct cw_bank *b = pad_bank(pad, &q);
+    if (b)
+        cw_param(b, (unsigned)q, (const uint32_t *)msg);
+    return sel_param(pad, clock, msg, ctx);
+}
+
 int sel_len(void *sample, uint8_t *pad);   /* clipsel.c: JOEBOX 2's Clip selection, e - s (or the file's length) */
 
 /* With no Region the pad plays JOEBOX 2's selection, at the two sites its sel_len_b took (1 and 3; Thomas, answer

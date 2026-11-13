@@ -854,6 +854,22 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
         }
 }
 
+/* Stage 1 (#t-044): clipwin.c's clipwin_param hands every message the class-B process gives its param-set at
+   0x080685d2 here, before JOEBOX 2's sel_param. A pad's 0x39 posts reach that call in the order they were posted, the
+   re-post's too (notes/re/x3 section 1). The poll's own sends (cw_poll's fw_pad_param: Loop Len's forced Sync, F-p's
+   Sync) call the param-set directly, so they never land here. Records only, for now: nothing reads set yet. */
+static const uint16_t param_rows[CW_PARAMS] = {0x150, 0x91, 0x92, 0x153, 0xfa, 0x151, 0x152, 0x47, 0x94};   /* CW_P */
+
+void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg)
+{
+    unsigned id = msg[3] & 0xffffu;
+    for (unsigned i = 0; (msg[0] & 0xffu) == 0x39 && i < CW_PARAMS; i++)
+        if (id == param_rows[i]) {
+            b->set[q][i] = (int32_t)msg[4];
+            b->seen[q] |= (uint16_t)(1u << i);
+        }
+}
+
 /* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the store rows the
    region comes from, Fit and Loop Fade (clipwin.c's P_REGION, P_LOOP_START, P_LOOP_END, P_FIT, P_LOOP_FADE). */
 static const uint16_t region_rows[CW_SET_ROWS] = {0x150, 0x91, 0x92, 0x153, 0xfa};   /* CW_SET */
