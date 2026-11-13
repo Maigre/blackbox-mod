@@ -146,9 +146,9 @@ static const uint8_t fit_beats[FIT_MAX - FIT_BEATS] = {1, 2, 3, 4, 6, 8, 16, 32}
    gcd(Sync, clip), the largest step up to Sync that divides the clip (stock cuts 14 beats at Sync 1 bar into 3 steps
    of 4 480 ticks, on no grid of the bar). Steps lie on the clock's grid of their length, as stock's do: a pad launched
    off it (Quant 1/16 under Sync 1/4) is pulled onto the beat at its next step, as stock pulls it, and every pass after
-   starts on it (steps of gcd(Sync, gcd(Quant, clip)) kept it off the beat for good). Returns 1 when it stored them, 0
-   when the pad is not fitted (stock's stay). */
-__attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len)
+   starts on it (steps of gcd(Sync, gcd(Quant, clip)) kept it off the beat for good). Returns the clip in ticks when it
+   stored them (960 or more), 0 when the pad is not fitted (stock's stay). */
+__attribute__((noinline)) int32_t cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len)
 {
     unsigned v = b->fit[q], bars = v == FIT_AUTO, autos = bars || v == FIT_BEATS;
     float bpm = b->engine ? *(const float *)(b->engine + ENGINE_BPM) : 0.0f, base = *(const float *)(pad + PAD_RATE);
@@ -186,7 +186,7 @@ __attribute__((noinline)) int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad
     *(float *)(pad + PAD_RATE) = (float)len / (float)samples;
     b->bpm[q] = bpm;
     b->fon[q] = 1;
-    return 1;
+    return clip;
 }
 
 /* H3 (clipwin_len): the clip's length stock is told at site 0 .. 3, len = fw_src_len's. At site 1 (the recompute's
@@ -205,6 +205,42 @@ static int32_t sel_frames(const uint8_t *pad, int32_t len)
     return (s != 0 || e != len) && s >= 0 && e <= len && e - s >= SEL_MIN ? e - s : len;
 }
 
+/* H3 site 3 (0x08064c5a): the recompute's stack frame there (clipwin_thunk.S hands its sp over). Stock loaded the clip
+   in output samples from [sp + 0x20] into r9 at 0x08064bac and stores nothing there since; [sp + 0x28] is the clip in
+   ticks (i64), which it goes on to turn into the file tempo (+0x258, FUN_080704a8 reads it through r0) and to store at
+   +0xba8 when it is not the one there (+0xbb0 = 1; the process then tells the app, msg 0x8d) - so a +0xba8 written here
+   would be written back. */
+#define FRAME_CLIP  0x20
+#define FRAME_TICKS 0x28
+
+/* Stage 2's step fields, one owner at every recompute, from any caller (the wraps, the param-set, the launches, 0x90):
+   v = the region's length (0: none), len = the file's. Stock's stay as it stored them when nothing of ours applies; a
+   region at Fit Off keeps what site 1's length made of them (Beat Count Auto counts the region), but for a synced clip
+   of one step; Fit stores its own (cw_fit) and puts its clip in the frame, so stock tells the app Fit's beats (+0xba8,
+   msg 0x8d) and keeps the file tempo of Fit's beats over what the pad plays (+0x258: read only for a sliced pad's
+   output length, a1, which Fit never is). Returns site 3's length: what the pad plays when fitted, else the region's,
+   else the Clip selection's. */
+static int32_t cw_model(struct cw_bank *b, unsigned q, uint8_t *pad, uint8_t *frame, int32_t v, int32_t len)
+{
+    int32_t p = v ? v : len, ticks = cw_fit(b, q, pad, p), clip;
+    if (ticks) {
+        *(int64_t *)(frame + FRAME_TICKS) = ticks;
+        return p;
+    }
+    if (!v)
+        return sel_frames(pad, len);
+    /* A synced clip of one step (Sync >= the clip): stock times that step by the length (+0x204 = the region in output
+       samples), not by the clip, so the seamless step would run past the next pass (doubling) or stop short of it (a
+       gap), as stock does with a file that long. Time it by the clip, as stock times every step when there are two or
+       more. Only a step with no end reads +0x204 (an end re-derives the countdown): a one-shot is unchanged. A clip of
+       0 ticks (Beat Count Auto of a region under half a beat) has no grid: the step keeps the region's length, so the
+       region loops on its own length, as with Sync None. */
+    clip = *(const int32_t *)(frame + FRAME_CLIP);
+    if (pad[PAD_SYNCED] && *(const uint32_t *)(pad + PAD_STEPS) == 1 && clip > 0)
+        *(float *)(pad + PAD_STEP_OUT) = (float)clip;
+    return v;
+}
+
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set)
 {
     int32_t rs;
@@ -212,26 +248,16 @@ int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t cl
         b->flen[q] = len;
     if (site == 1 && (b->wrap == q + 1 || !(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])))
         adopt(b, q, pad, len, set);
-    int32_t v = region_of(b, q, pad, len, &rs), p = v ? v : len;
-    if (site == 3 && cw_fit(b, q, pad, p))
-        return p;
+    int32_t v = region_of(b, q, pad, len, &rs);
+    if (site == 3)
+        return cw_model(b, q, pad, (uint8_t *)(uintptr_t)clip, v, len);
     /* seamless: no end on the last step (end = 1 - 1 = 0), so it crossfades into the next pass like any other step;
        H1 latches it with the region, so what it plays past the end is the region's start. Not for a one-shot. A
        fitted file is a region of the whole file here (Thomas, Fit's design, answer 5: seamless): stock's own end
        notches the wrap, 2 or 3 silent samples a pass. */
     if (site == 2 && (v || b->fon[q]) && pad[PAD_LOOP] && pad[PAD_LAUNCH] != 1)
         return 1;
-    if (!v)
-        return site == 1 || site == 3 ? sel_frames(pad, len) : len;
-    /* A synced clip of one step (Sync >= the clip): stock times that step by the length (+0x204 = the region in output
-       samples), not by the clip, so the seamless step would run past the next pass (doubling) or stop short of it (a
-       gap), as stock does with a file that long. Time it by the clip, as stock times every step when there are two or
-       more. Only a step with no end reads +0x204 (an end re-derives the countdown): a one-shot is unchanged. A clip of
-       0 ticks (Beat Count Auto of a region under half a beat) has no grid: the step keeps the region's length, so the
-       region loops on its own length, as with Sync None. */
-    if (site == 3 && pad[PAD_SYNCED] && *(const uint32_t *)(pad + PAD_STEPS) == 1 && clip > 0)
-        *(float *)(pad + PAD_STEP_OUT) = (float)clip;
-    return v;
+    return !v && site == 1 ? sel_frames(pad, len) : v ? v : len;
 }
 
 /* H3' (clipwin_wrap), after the recompute at a wrap: was = what the pad had before it (the region, CW_WAS_GRID its

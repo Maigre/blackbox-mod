@@ -50,15 +50,16 @@ clipwin_len_recompute_b:
     movs    r2, #1
     b.w     clipwin_len
 
-/* 0x08064c5a, the recompute's second call, right after it stored the step fields: r9 is the clip in output samples
-   there (loaded from [sp + 0x20] at 0x08064bac on every path, the output of FUN_08070420), for a clip of one step */
+/* 0x08064c5a, the recompute's second call, right after it stored the step fields: r3 = sp, its frame (the bl left sp as
+   it was): [sp + 0x20] the clip in output samples (FUN_08070420's, loaded into r9 at 0x08064bac on every path and not
+   stored since), [sp + 0x28] the clip in ticks that stock turns into +0x258 and +0xba8 after it (cw_model) */
     .global clipwin_len_steps_b
     .thumb_func
     .type clipwin_len_steps_b, %function
 clipwin_len_steps_b:
     mov     r1, r4
     movs    r2, #3
-    mov     r3, r9
+    mov     r3, sp
     b.w     clipwin_len
 
 /* 0x0806561e (FUN_08065550's > 0 check) */

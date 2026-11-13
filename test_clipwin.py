@@ -262,8 +262,9 @@ for thunk, site in (("clipwin_len_recompute_b", 1), ("clipwin_len_b", 0), ("clip
     check(f"{thunk}: r1 = r4 (the pad), r2 = site {site}, then b.w clipwin_len (r0, the source, as the caller set it)",
           [(x[1], x[2]) for x in c[:2]] == [("mov", "r1, r4"), ("movs", f"r2, #{site}")] and branch(c[2][0]) == ("b.w", S["clipwin_len"]), c)
 c = code("clipwin_len_steps_b", 10)
-check("clipwin_len_steps_b: r1 = r4 (the pad), r2 = site 3, r3 = r9 (the clip in output samples at 0x08064c5a), then b.w "
-      "clipwin_len", [(x[1], x[2]) for x in c[:3]] == [("mov", "r1, r4"), ("movs", "r2, #3"), ("mov", "r3, sb")]
+check("clipwin_len_steps_b: r1 = r4 (the pad), r2 = site 3, r3 = sp (the recompute's frame at 0x08064c5a: the clip in output "
+      "samples at +0x20, in ticks at +0x28), then b.w clipwin_len",
+      [(x[1], x[2]) for x in c[:3]] == [("mov", "r1, r4"), ("movs", "r2, #3"), ("mov", "r3, sp")]
       and branch(c[3][0]) == ("b.w", S["clipwin_len"]), c)
 c = code("clipwin_playhead_b", 8)
 check("clipwin_playhead_b: r2 = r6 (the pad), r3 = fp (the slot of the segment just read), then b.w clipwin_playhead "
@@ -2243,8 +2244,12 @@ check("the sites while it plays: the region's length at the recompute and the > 
                                      ("Loop Off", (48000, 48000, 48000)), ("a Slicer pad", (96000,) * 3),
                                      ("Clip / Slicer mode off", (96000,) * 3), ("Sync Slice with slice markers", (96000,) * 3),
                                      ("Sync Slice, no markers", (48000, 48000, 1)))), rows)
-# site 3 (0x08064c5a, the recompute's second length, r3 = the clip in output samples): a synced clip of one step has
-# that step timed by the clip (+0x204), where stock times it by the length; nothing else changes it
+# site 3 (0x08064c5a, the recompute's second length, r3 = its stack frame: the clip in output samples at +0x20, in ticks
+# at +0x28): a synced clip of one step has that step timed by the clip (+0x204), where stock times it by the length;
+# nothing else changes it. FRAME: above the stack call() starts from, which nothing it calls writes
+FRAME = STACK + 0x100
+
+
 def site3(n=1, synced=1, clip=24000, region=True):
     keep, kb = bytes(u.uc.mem_read(UL, 0xC00)), bytes(u.uc.mem_read(BANK + B_REGION + 8 * UQ, 8))
     u.uc.mem_write(UL + 0x1F5, bytes([synced]))
@@ -2253,8 +2258,10 @@ def site3(n=1, synced=1, clip=24000, region=True):
     u.uc.mem_write(UL + 0x260, b"\x01")
     if not region:
         u.w32(BANK + B_REGION + 8 * UQ + 4, 0)
-    u.call("clipwin_len", USRC, UL, 3, clip)
+    u.uc.mem_write(FRAME + 0x20, struct.pack("<iiq", clip, 0, 1920))
+    u.call("clipwin_len", USRC, UL, 3, FRAME)
     got = (u.uc.reg_read(UC_ARM_REG_R0), struct.unpack("<f", bytes(u.uc.mem_read(UL + 0x204, 4)))[0])
+    assert struct.unpack("<q", bytes(u.uc.mem_read(FRAME + 0x28, 8)))[0] == 1920, "site 3 left stock's clip ticks"
     u.uc.mem_write(UL, keep)
     u.uc.mem_write(BANK + B_REGION + 8 * UQ, kb)
     return got
@@ -3541,12 +3548,14 @@ fu.uc.mem_write(FL + 0x1F4, bytes([1, 1, 0, 0, 3]))           # Loop On, synced;
 fu.uc.mem_write(FENG, bytes(0x40))
 fu.w32(BANK + B_ENGINE, FENG)                                # the engine as the poll leaves it
 STOCKF = (1234.5, 5678.5, 77, 3, 99)                         # stock's +0x1fc, +0x204, +0x208, +0x210, +0x230 (any)
+STOCKT = 0x123456789                                          # stock's clip ticks in the recompute's frame (any)
 
 
 def fit_at(length, fit, bpm=120.0, quant=3840, sync=960, synced=1, base=1.0, region=None, slicer=0, on=1):
     """pad FQ, stopped, with Fit `fit` (and Region Loop over `region` = (ls, le), else File) in its store: its
     recompute's two lengths at sites 1 and 3, stock's fields stored before site 3 (STOCKF). (site 3's answer, +0x230,
-    +0x208, +0x210, +0x1fc, +0x204, +0x1f0, fon, Auto's beats, Auto's length)"""
+    +0x208, +0x210, +0x1fc, +0x204, +0x1f0, fon, Auto's beats, Auto's length, the clip ticks stock goes on to store at
+    +0xba8 and tell the app: STOCKT, its own, unless site 3 put Fit's in the frame)"""
     fu.uc.mem_write(FENG + 0x18, struct.pack("<f", bpm))
     store(fu, FQ, {0x4: 500, P_FIT: fit, **({P_REGION: FILE} if region is None else
                                             {P_REGION: LOOP, 0x91: region[0], 0x92: region[1]})})
@@ -3560,11 +3569,13 @@ def fit_at(length, fit, bpm=120.0, quant=3840, sync=960, synced=1, base=1.0, reg
     fu.uc.mem_write(FL + 0x1FC, struct.pack("<f", STOCKF[0]))
     fu.uc.mem_write(FL + 0x204, struct.pack("<fqI", STOCKF[1], STOCKF[2], STOCKF[3]))
     fu.uc.mem_write(FL + 0x230, struct.pack("<q", STOCKF[4]))
-    fu.call("clipwin_len", FSRC, FL, 3, 0)
+    fu.uc.mem_write(FRAME + 0x20, struct.pack("<iiq", 0, 0, STOCKT))
+    fu.call("clipwin_len", FSRC, FL, 3, FRAME)
     ret = fu.uc.reg_read(UC_ARM_REG_R0)
     rd = lambda o, f_: struct.unpack(f_, bytes(fu.uc.mem_read(FL + o, struct.calcsize(f_))))[0]
     return (ret, rd(0x230, "<q"), rd(0x208, "<q"), rd(0x210, "<I"), rd(0x1FC, "<f"), rd(0x204, "<f"), rd(0x1F0, "<f"),
-            fu.r8(BANK + B_FON + FQ), fu.r16(BANK + B_ABEATS + 2 * FQ), fu.r32(BANK + B_ALEN + 4 * FQ))
+            fu.r8(BANK + B_FON + FQ), fu.r16(BANK + B_ABEATS + 2 * FQ), fu.r32(BANK + B_ALEN + 4 * FQ),
+            struct.unpack("<q", bytes(fu.uc.mem_read(FRAME + 0x28, 8)))[0])
 
 
 def fit_want(length, beats, bpm=120.0, quant=3840, sync=960, synced=1):
@@ -3618,9 +3629,10 @@ check(f"the other Auto chosen counts again, of the same length: 14.015 beats is 
 rows = []
 for v in range(3, 11):
     got = fit_at(96000, v)
-    rows.append((FIT_NAMES[v], got[1:4], got[:8] == fit_want(96000, FIT_BEATS[v]) and got[9] == 0))
+    rows.append((FIT_NAMES[v], got[1:4], got[:8] == fit_want(96000, FIT_BEATS[v]) and got[9] == 0 and got[10] == FIT_BEATS[v] * 960))
 check(f"Fit's list from 1/4 to 8 bars forces 1, 2, 3, 4, 6, 8, 16 and 32 beats on a one-bar file (grid, ticks per step, "
-      f"steps at Quant 1 bar, Sync 1/4: {[(w, g_) for w, g_, _ in rows]}); Auto's count is cleared",
+      f"steps at Quant 1 bar, Sync 1/4: {[(w, g_) for w, g_, _ in rows]}); Auto's count is cleared; the clip ticks stock "
+      f"stores at +0xba8 and tells the app (msg 0x8d) are Fit's",
       all(ok for *_, ok in rows), rows)
 cases = (("14 beats, Quant 1 bar, Sync 1/16", dict(sync=240), (1920, 240, 56)),
          ("14 beats, Quant 1 bar, Sync 1/4", dict(), (1920, 960, 14)),
@@ -3666,8 +3678,10 @@ rows["no engine polled yet"] = fit_at(96000, 1)
 fu.w32(BANK + B_ENGINE, FENG)
 stock_f = (96000, STOCKF[4], STOCKF[2], STOCKF[3]) + tuple(f32s(STOCKF[0], STOCKF[1])) + (1.0, 0)
 check(f"not fitted - Fit Off, a Slicer pad, a pad out of Clip / Slicer mode, a tempo of 0, no engine polled yet: site 3 "
-      f"leaves stock's step fields and its rate as they are ({ {w: g_[:8] == stock_f for w, g_ in rows.items()} })",
-      all(g_[:8] == stock_f for g_ in rows.values()), {w: g_ for w, g_ in rows.items() if g_[:8] != stock_f})
+      f"leaves stock's step fields, its rate and its clip ticks as they are "
+      f"({ {w: g_[:8] == stock_f and g_[10] == STOCKT for w, g_ in rows.items()} })",
+      all(g_[:8] == stock_f and g_[10] == STOCKT for g_ in rows.values()),
+      {w: g_ for w, g_ in rows.items() if g_[:8] != stock_f or g_[10] != STOCKT})
 got = fit_at(192000, 1, region=(6144, 95904))
 check(f"a region: Fit counts the region (3.74 beats -> 4; site 3 answers its length, {got[0]}), rate {got[6]:.6f}",
       got[:8] == fit_want(89760, 4) and got[8] == 4, got)
@@ -3808,7 +3822,8 @@ def poly(beats, quant=3, sync="1/4", kind="File", image=IMAGE, fit=AUTO_BEATS, b
                   image=image, **kw)
     ps = pass_starts(d["rig"])
     rate, nj, big, zeros, peak = seamless(d, vlen)
-    return ps, [b_ - a for a, b_ in zip(ps, ps[1:])], nj, big, zeros, peak
+    told = (fields(d["rig"])[7], [p[2] for p in d["rig"].posted if p[1] == 0x8D][-1:])
+    return ps, [b_ - a for a, b_ in zip(ps, ps[1:])], nj, big, zeros, peak, told
 
 
 # CW_FULL=1 runs the whole matrix (60 cases: Quant None at every Sync too, which changes nothing there - no grid, one
@@ -3819,15 +3834,18 @@ for kind, b_, quant, sync in ([(k, b, 3, s_) for k in ("File", "Region") for b i
                               + ([(k, b, 8, s_) for k in ("File", "Region") for b in (3, 5, 6, 7, 14) for s_ in ("1/16", "1/4", "1 bar")]
                                  if FULL else [("File", 3, 8, "1/4"), ("File", 14, 8, "1/4"), ("Region", 14, 8, "1/4")])
                               + [("File", 5, 3, "1/2")]):
-    ps, apart, nj, big, zeros, peak = poly(b_, quant=quant, sync=sync, kind=kind)
+    ps, apart, nj, big, zeros, peak, told = poly(b_, quant=quant, sync=sync, kind=kind)
     seen.append((kind, b_, f"{sync}{' Quant None' if quant == 8 else ''}", len(apart)))
+    if told[0] != b_ * 960 or not told[1] or told[1][0][1] != b_ * 960:
+        bad.append((kind, b_, sync, quant, "told the app", told))
     if not (len(apart) >= 2 and set(apart) == {b_ * 24000} and not big and zeros == 0 and peak <= 1 + 1e-6
             and (quant == 8 or ps[0] == 288000)):
         bad.append((kind, b_, sync, quant, ps, big[:3], zeros, peak))
 check(f"polymetric, Fit Auto (Beats): {len(seen)} cases - a File and a Region of 3, 5, 6, 7 and 14 beats, Quant 1 bar, Sync 1/16, "
       f"1/4 and 1 bar; {'every one at Quant None too' if FULL else '3 and 14 beats at Quant None'}; 5 at Sync 1/2 -: "
       f"every pass B beats after the one before, no jump over half a frame at any joint, no zero-gain sample, gain at "
-      f"most 1", not bad, bad)
+      f"most 1; the app is told B beats (+0xba8, the last msg 0x8d: B x 960 ticks, where stock's Auto says 4 for 3 and "
+      f"5, 8 for 6 and 7, 16 for 14)", not bad, bad)
 st14 = poly(14, sync="1/16", image=STOCK, fit=0, bc=14)
 st7 = poly(7, sync="1/4", image=STOCK, fit=0, bc=7)
 st5 = poly(5, sync="1/2", image=STOCK, fit=0, bc=5)

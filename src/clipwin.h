@@ -154,8 +154,8 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
  * bank() asks it); each is leaf code, and clipwin.c makes every stock call they need.
  */
 int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, else -1 */
-/* H3: the length stock is told at site 0 .. 3 (at site 3, a fitted pad's step fields stored again: cw_fit); set = the
-   pad's store rows below, read for site 1 only */
+/* H3: the length stock is told at site 0 .. 3 (at site 3 the step fields' one owner, cw_model, and clip = the address
+   of the recompute's stack frame, clipwin_thunk.S); set = the pad's store rows below, read for site 1 only */
 #define CW_SET_REGION 0
 #define CW_SET_START  1
 #define CW_SET_END    2
@@ -163,8 +163,8 @@ int cw_pad(const uint8_t *pad);      /* 0 .. 15 for one of the sixteen pads, els
 #define CW_SET_FADE   4
 #define CW_SET_ROWS   5
 int32_t cw_len(struct cw_bank *b, unsigned q, uint8_t *pad, int site, int32_t clip, int32_t len, const int32_t *set);
-/* ...cw_len's at site 3: a fitted pad's step fields over len (its region or its file); 1 = stored, 0 = not fitted */
-int cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len);
+/* ...cw_model's: a fitted pad's step fields over len (its region or its file); the clip in ticks = stored, 0 = not fitted */
+int32_t cw_fit(struct cw_bank *b, unsigned q, uint8_t *pad, int32_t len);
 /* H3': after the wrap's recompute, 1 = the region before it (was: rs, vlen, then the wrap grid and the clip, ticks, the
    pad had) is back and the pad must recompute again */
 #define CW_WAS_GRID 2

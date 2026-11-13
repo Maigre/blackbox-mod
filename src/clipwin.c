@@ -252,13 +252,14 @@ static __attribute__((noinline)) struct cw_bank *pad_bank(const uint8_t *pad, in
 
 /* H3. Replaces bl FUN_080636f0 (fw_src_len, r0 = the source; r4 = the pad, clipwin_thunk.S) at 0x08064b2c (site 1: the
    recompute's first, Beat Count Auto and the frames per step), 0x08064c5a (site 3: its second, the file tempo, right
-   after it stored the step fields; clip = r9 there, the clip in output samples), 0x0806561e (site 0: FUN_08065550's
+   after it stored the step fields; clip = its stack frame there, the clip in output samples and in ticks), 0x0806561e (site 0: FUN_08065550's
    > 0 check) and 0x08065690 (site 2: the last step's end, length - 1). Never at 0x080662f6: the reader's bound keeps
    the real length, clipwin_read folds. A playing pad takes its region only at its wrap; a stopped one at its next
    recompute, which nothing triggers when only the Region row or the loop points change: at the latest the one before
    its next voice start (0x0806838a, 0x08068632, 0x080686a8), so until the launch the clip length told the app (msg
    0x8d) can be the old one. The answer is cw_len's; at site 1 it is handed the store rows the region comes from, Fit
-   and Loop Fade. At site 3 a fitted pad's step fields are stored again there (cw_fit). */
+   and Loop Fade. At site 3 the step fields have one owner (cw_model): a fitted pad's are stored again there and the
+   app is told Fit's clip. */
 int sel_param(uint8_t *pad, int a1, int a2, int a3);   /* clipsel.c: JOEBOX 2's, a Quant / Sync change in an audition */
 
 /* Stage 1 (#t-044). Replaces bl FUN_08067648 at 0x080685d2, the class-B process's only call to its param-set (r0 = the
