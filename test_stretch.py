@@ -10,6 +10,7 @@ object's field values on a unit (offsets are from the disassembly: stretch_re.md
 import ctypes
 import math
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -154,7 +155,8 @@ def play(slice_, rate, blocks, seg=0):
 
 # Mac reference
 lib = os.path.join("host", "libstretch.dylib")
-subprocess.run(["clang", "-O2", "-DSTR_HOST", "-shared", "-fPIC", "-o", lib, "src/stretch_dsp.c", "host/stretch_host.c"], check=True)
+subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-DSTR_HOST", "-shared", "-fPIC", "-o", lib,
+                "src/stretch_dsp.c", "host/stretch_host.c"], check=True)
 L = ctypes.CDLL(os.path.abspath(lib))
 F = ctypes.POINTER(ctypes.c_float)
 L.render_segment.argtypes = [F, F, ctypes.c_int, ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_int, F, F, ctypes.c_int, ctypes.c_int]

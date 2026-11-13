@@ -14,7 +14,7 @@ unzip -q /srv/dev/dl/ghidra_*_PUBLIC_*.zip -d /srv/dev/toolchains        # -> /s
 
 # 2. Python venv for the Unicorn suites and pyghidra
 uv venv --python 3.12 /srv/dev/venvs/bb
-VIRTUAL_ENV=/srv/dev/venvs/bb uv pip install unicorn capstone numpy scipy pyghidra
+VIRTUAL_ENV=/srv/dev/venvs/bb uv pip install unicorn capstone numpy scipy pyusb pyghidra   # pyusb: test_benchkit
 
 # 3. The stock firmware, once, outside every clone (public download from 1010music; never in git)
 #    /srv/dev/firmware/BLACKBOX-3.1.9.bin  sha256 281ae303d32e5eb52adca7817a648a34e4bd3848017f26673dd9df3905f1341d
@@ -61,14 +61,18 @@ the hub's `verify:`.
 ## The check's time, a box's readiness, a check of any branch (fork-only, `bench/`)
 
 **What a box lacks**: `bench/doctor.sh` (`--ghidra` to require Ghidra too, `-C <worktree>` for another tree) checks
-the Arm toolchain, shasum, the suites' Python and its modules, the stock image's sha256 and a C compiler for the host
-builds, prints each miss with the line that fixes it, and exits 0 only when `./check.sh` can run. Five suites need
-the compiler: test_filter and test_machine load `host/libdsp` (`host/build.sh`, which splits `CC` into words), and
-test_clipper, test_insert and test_motion build their own library at every run (`host/render_*.py`, which hand `CC`
-to Python's subprocess as one program name); the doctor tries both ways, so a `CC` that is a command line
-(`python -m ziglang cc`, `env gcc`) is a miss. A box with no C compiler and no root (dev37) can use zig's behind a
-one-line wrapper: `VIRTUAL_ENV=/srv/dev/venvs/bb uv pip install ziglang`, then
-`printf '#!/bin/sh\nexec /srv/dev/venvs/bb/bin/python -m ziglang cc "$@"\n' > /srv/dev/venvs/bb/bin/zig-cc`,
+the Arm toolchain, shasum, the suites' Python and its modules (pyusb among them: test_benchkit runs `bench/bbusb.py`),
+the stock image's sha256 and a C compiler for the host builds, prints each miss with the line that fixes it, and exits
+0 only when `./check.sh` can run. Seven suites need the compiler: test_filter and test_machine load `host/libdsp`
+(`host/build.sh`, which splits `CC` into words), and test_clipper, test_insert, test_motion, test_transient and
+test_stretch build their own library at every run (`host/render_*.py` and `test_stretch.py`, which hand `CC` to
+Python's subprocess as one program name: `CC`, else `clang`, else `cc`); the doctor tries both ways, so a `CC` that is
+a command line (`python -m ziglang cc`, `env gcc`) is a miss. JOEBOX 2's two (test_stretch, `host/render_transient.py`)
+called `clang` by name until 13/11, which failed on every box without one (dev37 and mgr-ran: gcc); a merge of his
+may bring such a call back, so the doctor greps the suites for one and, if `clang` is not on the PATH, prints the link
+that stands in (`ln -sf "$(command -v gcc)" /srv/dev/venvs/bb/bin/clang`, the venv's `bin` on the PATH). A box with no
+C compiler and no root can use zig's behind a one-line wrapper: `VIRTUAL_ENV=/srv/dev/venvs/bb uv pip install ziglang`,
+then `printf '#!/bin/sh\nexec /srv/dev/venvs/bb/bin/python -m ziglang cc "$@"\n' > /srv/dev/venvs/bb/bin/zig-cc`,
 `chmod +x` it and `export CC=/srv/dev/venvs/bb/bin/zig-cc`. On mgr-ran (ziglang 0.17.1 in a scratch venv, the
 wrapper made by the line the doctor prints) the five suites pass with it, their logs line for line the same as with gcc.
 

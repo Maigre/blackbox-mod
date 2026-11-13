@@ -8,12 +8,14 @@
 #     -q        print the misses only
 #
 # Required: the Arm GNU toolchain (arm-none-eabi-gcc/-g++/-nm/-objcopy/-size), shasum (build.sh), the Python that
-# check.sh runs the suites with (.venv/bin/python, else python3; 3.9 or later) with unicorn, capstone, numpy and scipy,
-# the stock 3.1.9 image at firmware/BLACKBOX-3.1.9.bin with its sha256, and a C compiler for the suites that hold the
-# firmware's DSP against a host build of the same C: test_filter and test_machine (host/libdsp, host/build.sh, which
-# splits CC into words), test_clipper, test_insert and test_motion (host/render_*.py build their library at every run
-# and hand CC to Python's subprocess as ONE program name; both ways are tried). The fixes are notes/dev-setup.md's
-# recipe; /srv/dev is where this fork's boxes keep it.
+# check.sh runs the suites with (.venv/bin/python, else python3; 3.9 or later) with unicorn, capstone, numpy, scipy and
+# pyusb (`usb`: test_benchkit), the stock 3.1.9 image at firmware/BLACKBOX-3.1.9.bin with its sha256, and a C compiler
+# for the suites that hold the firmware's DSP against a host build of the same C: test_filter and test_machine
+# (host/libdsp, host/build.sh, which splits CC into words), test_clipper, test_insert, test_motion, test_transient and
+# test_stretch (host/render_*.py and test_stretch.py build their library at every run and hand CC to Python's
+# subprocess as ONE program name; both ways are tried); and a `clang` on the PATH if a suite calls it by name (none
+# does; a merge of JOEBOX's, written on a Mac, may bring one back). The fixes are notes/dev-setup.md's recipe;
+# /srv/dev is where this fork's boxes keep it.
 # POSIX sh (dash on Debian).
 TREE=$(dirname "$0")/..
 GHIDRA=0
@@ -23,7 +25,7 @@ while [ $# -gt 0 ]; do
     -C) TREE=${2:?-C needs a directory}; shift ;;
     --ghidra) GHIDRA=1 ;;
     -q) QUIET=1 ;;
-    *) sed -n '2,16p' "$0"; exit 2 ;;
+    *) sed -n '2,18p' "$0"; exit 2 ;;
   esac
   shift
 done
@@ -78,17 +80,17 @@ else
   else
     bad "Python 3.9 or later for the suites ($PY is ${pv:-unusable})" "uv venv --python 3.12 $VENV && ln -sfn $VENV .venv"
   fi
-  mods=""
-  for m in unicorn capstone numpy scipy; do
-    "$PY" -c "import $m" 2>/dev/null || mods="$mods $m"
+  mods="" pkgs=""
+  for m in unicorn capstone numpy scipy usb; do                     # usb is pyusb's: test_benchkit (bench/bbusb.py)
+    "$PY" -c "import $m" 2>/dev/null || { mods="$mods $m"; pkgs="$pkgs $( [ $m = usb ] && echo pyusb || echo $m)"; }
   done
   if [ -z "$mods" ]; then
-    ok "Python modules unicorn, capstone, numpy, scipy"
+    ok "Python modules unicorn, capstone, numpy, scipy, usb (pyusb)"
   elif [ "$PY" = python3 ] && [ -x "$VENV/bin/python" ] && [ ! -e .venv ]; then
     bad "Python modules:$mods (check.sh uses .venv/bin/python first, and there is no .venv here)" \
       "ln -sfn $VENV .venv && grep -qx .venv \"\$(git rev-parse --git-common-dir)/info/exclude\" || echo .venv >> \"\$(git rev-parse --git-common-dir)/info/exclude\""
   else
-    bad "Python modules:$mods (in $PY)" "VIRTUAL_ENV=$(dirname "$(dirname "$(command -v "$PY" 2>/dev/null || echo "$VENV/bin/python")")") uv pip install$mods"
+    bad "Python modules:$mods (in $PY)" "VIRTUAL_ENV=$(dirname "$(dirname "$(command -v "$PY" 2>/dev/null || echo "$VENV/bin/python")")") uv pip install$pkgs"
   fi
 fi
 
@@ -110,7 +112,7 @@ fi
 cc_=${CC:-$(command -v clang || command -v cc)}
 tmp=$(mktemp -d)
 printf 'int f(int x) { return x + 1; }\n' > "$tmp/t.c"
-needs="test_filter, test_machine, test_clipper, test_insert and test_motion need it"
+needs="test_filter, test_machine, test_clipper, test_insert, test_motion, test_transient and test_stretch need it"
 # shellcheck disable=SC2086
 if [ -z "$cc_" ] || ! $cc_ -O2 -shared -fPIC -o "$tmp/t.so" "$tmp/t.c" > /dev/null 2>&1; then
   bad "a C compiler for the host builds (${cc_:-none found}; $needs)" "sudo apt install gcc
@@ -121,12 +123,23 @@ elif ! "$PY" -c 'import os, shutil, subprocess, sys
 subprocess.run([os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or "cc", "-O2", "-shared", "-fPIC",
                 "-o", os.path.join(sys.argv[1], "u.so"), os.path.join(sys.argv[1], "t.c")], check=True, capture_output=True)' \
     "$tmp" > /dev/null 2>&1; then
-  bad "CC=\"$cc_\" builds for host/build.sh, but host/render_*.py run CC as one program name and cannot (test_clipper, test_insert and test_motion)" \
+  bad "CC=\"$cc_\" builds for host/build.sh, but host/render_*.py and test_stretch.py run CC as one program name and cannot (test_clipper, test_insert, test_motion, test_transient, test_stretch)" \
     "a one-line wrapper: printf '#!/bin/sh\\nexec $cc_ \"\$@\"\\n' > $VENV/bin/cc-wrap && chmod +x $VENV/bin/cc-wrap && export CC=$VENV/bin/cc-wrap"
 else
   ok "C compiler for the host builds ($cc_)"
 fi
 rm -rf "$tmp"
+
+# 5b. a suite that runs clang by name, whatever CC says (none does; JOEBOX's suites are written on a Mac, and a merge
+#     of his may bring one back): it needs a clang on the PATH
+byname=$(grep -l '\["clang"' ./*.py host/*.py 2>/dev/null | sed 's|^\./||' | tr '\n' ' ')
+if [ -z "$byname" ]; then
+  ok "no suite calls clang by name"
+elif command -v clang > /dev/null 2>&1; then
+  ok "clang on the PATH for ${byname% } (by name)"
+else
+  bad "clang by name (${byname% } call it, not CC)" "ln -sf \"\$(command -v gcc || command -v cc)\" $VENV/bin/clang    # with $VENV/bin on the PATH"
+fi
 
 # 6. the tools check.sh, bench/bbci.sh and the shards use
 for x in git flock; do
