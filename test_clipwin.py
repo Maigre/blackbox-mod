@@ -5502,5 +5502,29 @@ check("stage 1: Slip only stored (480) is read from the store; posted (960) it i
       and bank_seen(r.m, 6) == 1 << 5, (q_slip, bank_slip(r.m, 6), hex(bank_seen(r.m, 6))))
 
 
+# Slip is taken at its post (cw_param), not at the poll: H1 latches b->slip[q], which the poll wrote one pad a block, so
+# a turn in the last blocks before a step reached the latch up to 16 blocks late and that step played the old Slip.
+def step_first(rr, s):
+    xs = [x for x in rr.reads if rr.made[x[SID] - 1]["step"] == s]
+    return xs[0] if xs else None
+
+
+lb_ref = step_first(scenario(frames=96000, cell=0x102, blocks=700), 2)
+lb_at = lb_ref[0] - 1 if lb_ref else -1
+
+
+def lb_post(rr):
+    if rr.block == lb_at:
+        rr.param(P_SLIP, 960)
+
+
+r = scenario(frames=96000, cell=0x102, pre=lb_post, blocks=700)
+lb = step_first(r, 2)
+check(f"stage 1: Slip 0 -> 960 posted in the last block before step 2's first read (block {lb_at}) lands on that step: "
+      "it first reads in the same block, from 48 000 + slip_f = 72 000 (stock's 48 000), and the bank holds 960",
+      lb_ref and lb_ref[FET][0][1] == 48000 and lb and lb[0] == lb_ref[0] and lb[FET][0][1] == 72000
+      and bank_slip(r.m, 6) == 960, (lb_at, lb_ref and lb_ref[FET][:1], lb and (lb[0], lb[FET][:1]), bank_slip(r.m, 6)))
+
+
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

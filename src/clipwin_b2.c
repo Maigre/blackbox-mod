@@ -807,6 +807,18 @@ static int32_t cw_row(const struct cw_bank *b, unsigned q, const void *store, un
     return b->seen[q] & (1u << i) ? b->set[q][i] : fw_setting(store, param_rows[i]);
 }
 
+/* After a Slip change (cw_tick's bit 0, or a posted one at cw_param): the pending segments are made again (cw_drop), and
+   the launches waiting for their Quant point that H1 made are latched again in place */
+static void cw_redo(struct cw_bank *b, unsigned q, uint8_t *pad)
+{
+    unsigned again = cw_drop(b, q, pad);
+    for (unsigned k = 0; k < 4; k++)
+        if (again & (1u << k)) {
+            void *src = *(void **)(pad + PAD_SOURCE);
+            fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
+        }
+}
+
 void cw_poll(struct cw_bank *b, uint8_t *engine)
 {
     unsigned q = b->scan++ & 15;
@@ -852,29 +864,38 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
     }
     if (r & 2)
         fw_pad_param(pad, engine, msg, engine + B2_CLOCK_CTX);
-    if (!(r & 1))
-        return;
-    unsigned again = cw_drop(b, q, pad);
-    for (unsigned k = 0; k < 4; k++)
-        if (again & (1u << k)) {
-            void *src = *(void **)(pad + PAD_SOURCE);
-            fw_prefetch(src, cw_latch(b, q, k, pad, fw_src_len(src), -1));
-        }
+    if (r & 1)
+        cw_redo(b, q, pad);
 }
 
 /* Stage 1 (#t-044): clipwin.c's clipwin_param hands every message the class-B process gives its param-set at
    0x080685d2 here, before JOEBOX 2's sel_param. A pad's 0x39 posts reach that call in the order they were posted, the
    re-post's too (notes/re/x3 section 1). The poll's own sends (cw_poll's fw_pad_param: Loop Len's forced Sync, F-p's
-   Sync) call the param-set directly, so they never land here. cw_poll and cw_lenhook read them through cw_row. */
+   Sync) call the param-set directly, so they never land here. cw_poll and cw_lenhook read them through cw_row.
+   Slip is taken here, at its post (the ratified plan keeps only Loop Len's settle, cw_retire and Fit's tempo on the
+   poll): H1 latches b->slip[q], which the poll wrote one pad a block, up to 16 blocks late, so a turn in the last
+   blocks before a step missed it. Clamped as cw_tick clamps; a change makes the pending segments again (cw_redo), as
+   cw_tick's bit 0 did, for a pad H1 has seen. The poll then reads the same value through cw_row: no second drop. */
 
-void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg)
+void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
 {
     unsigned id = msg[3] & 0xffffu;
-    for (unsigned i = 0; (msg[0] & 0xffu) == 0x39 && i < CW_PARAMS; i++)
+    if ((msg[0] & 0xffu) != 0x39)
+        return;
+    for (unsigned i = 0; i < CW_PARAMS; i++)
         if (id == param_rows[i]) {
             b->set[q][i] = (int32_t)msg[4];
             b->seen[q] |= (uint16_t)(1u << i);
         }
+    if (id != param_rows[CW_P_SLIP])
+        return;
+    int32_t slip = (int32_t)msg[4];
+    slip = slip < -SLIP_MAX ? -SLIP_MAX : slip > SLIP_MAX ? SLIP_MAX : slip;
+    if (slip == b->slip[q])
+        return;
+    b->slip[q] = slip;
+    if (pad && pad == b->pad[q] && pad[PAD_CLASS] == 0x4c && cw_pad(pad) == (int)q)
+        cw_redo(b, q, pad);
 }
 
 /* H3: the region's length (clipwin.c's clipwin_len keeps the gate). At site 1 cw_len is handed the pad's rows the

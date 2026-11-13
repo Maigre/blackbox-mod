@@ -269,7 +269,7 @@ int clipwin_param(uint8_t *pad, int clock, int msg, int ctx)
     int q;
     struct cw_bank *b = pad_bank(pad, &q);
     if (b)
-        cw_param(b, (unsigned)q, (const uint32_t *)msg);
+        cw_param(b, (unsigned)q, pad, (const uint32_t *)msg);
     return sel_param(pad, clock, msg, ctx);
 }
 

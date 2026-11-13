@@ -91,7 +91,7 @@ struct cw_region {
 
 struct cw_bank {
     uint32_t magic, scan;
-    int32_t slip[16];                /* as last polled */
+    int32_t slip[16];                /* as last taken: posted (cw_param), else polled */
     uint8_t *pad[16];                /* the engine's pad object, cached by H1 */
     uint8_t valid[16];               /* bit k: latch[q][k] holds */
     struct cw_latch latch[16][4];
@@ -194,7 +194,7 @@ void cw_poll(struct cw_bank *b, uint8_t *engine);
 /* H3's and H3''s bodies, from bank 1's clipwin_len and clipwin_wrap behind their gates (stage 3) */
 int32_t cw_lenhook(struct cw_bank *b, unsigned q, void *src, uint8_t *pad, int site, int32_t clip);
 /* stage 1: a message the class-B process hands its param-set (0x080685d2), from bank 1's clipwin_param */
-void cw_param(struct cw_bank *b, unsigned q, const uint32_t *msg);
+void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg);
 void cw_wrap(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock, const uint32_t *t);
 /* H1's and H5's bodies, from bank 1's clipwin_seg_start and clipwin_playhead behind their gates (stage 3): the
    prefetch point (cw_latch's, src = the pad's source), and the playhead message rewritten in place (msg 0x4a) */
