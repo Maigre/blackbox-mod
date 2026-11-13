@@ -3836,7 +3836,7 @@ for kind, b_, quant, sync in ([(k, b, 3, s_) for k in ("File", "Region") for b i
                               + [("File", 5, 3, "1/2")]):
     ps, apart, nj, big, zeros, peak, told = poly(b_, quant=quant, sync=sync, kind=kind)
     seen.append((kind, b_, f"{sync}{' Quant None' if quant == 8 else ''}", len(apart)))
-    if told[0] != b_ * 960 or not told[1] or told[1][0][1] != b_ * 960:
+    if told[0] != b_ * 960 or not told[1] or told[1][0][2] != b_ * 960:   # a post: (.., the cell, the ticks, ..)
         bad.append((kind, b_, sync, quant, "told the app", told))
     if not (len(apart) >= 2 and set(apart) == {b_ * 24000} and not big and zeros == 0 and peak <= 1 + 1e-6
             and (quant == 8 or ps[0] == 288000)):
