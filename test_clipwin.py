@@ -5445,5 +5445,62 @@ check("Sample mode with TL Knob Move: TL is stock's Start (0x8f) and posts it al
       and [r for r, _ in sm_out[0][0]] == [0x8F] and sm_out[0][1] == (24000, 72000), sm_out)
 
 
+# ====================================================================================================== 12f. Stage 1: the queue's rows
+# Stage 1 (hub blackbox#t-044): clipwin_param takes the class-B param-set call (0x080685D2, before JOEBOX 2's sel_param)
+# and cw_param records the pad's nine Clip Window rows as its queue carried them (cw_bank's set, and seen: bit i = row i
+# has come through). cw_row reads set[q][i] once seen, the app's store until then (a section that only stores never
+# posts, and a cold boot zeroes the bank).
+B_SET, B_SEEN = 0x8B8, 0xAF8                         # cw_bank's set[16][9] (int32) and seen[16] (uint16), after moving[]
+Q_ROWS = (0x150, 0x91, 0x92, 0x153, 0xFA, 0x151, 0x152, 0x47, 0x94)   # CW_P order: Region .. Sync (param_rows)
+
+
+def bank_set(m, q):
+    return list(struct.unpack("<9i", m.uc.mem_read(BANK + B_SET + q * 36, 36)))
+
+
+def bank_seen(m, q):
+    return struct.unpack("<H", m.uc.mem_read(BANK + B_SEEN + 2 * q, 2))[0]
+
+
+q_vals = (1, 12000, 84000, 0, 3, 240, 0, 3, 3)
+q_at = {}
+
+
+def q_post(rr):
+    if rr.block == 100:
+        q_at["before"] = (bank_set(rr.m, 6), bank_seen(rr.m, 6))
+        for pid, v in zip(Q_ROWS, q_vals):
+            rr.param(pid, v)
+        rr.param(0x5C, 777)                          # Pitch: not one of the nine
+
+
+r = scenario(frames=96000, cell=0x102, pre=q_post, blocks=300)
+check("stage 1: the nine rows posted on a Clip pad's queue reach the bank through the hook, each in its CW_P slot "
+      "(Region, Loop Start, Loop End, Fit, Loop Fade, Slip, Loop Len, Quant, Sync), seen = 0x1FF; nothing before the "
+      "posts, and a tenth id (Pitch) is not recorded",
+      q_at.get("before") == ([0] * 9, 0) and bank_set(r.m, 6) == list(q_vals) and bank_seen(r.m, 6) == 0x1FF
+      and 777 not in bank_set(r.m, 6), (q_at, bank_set(r.m, 6), hex(bank_seen(r.m, 6))))
+
+q_slip = {}
+
+
+def q_store_then_post(rr):
+    if rr.block == 100:
+        store(rr.m, 6, {0x4: 500, P_SLIP: 480})         # only stored: the poll reads the store
+    if rr.block == 250:
+        q_slip["stored"] = bank_slip(rr.m, 6)
+        rr.param(P_SLIP, 960)                          # through the queue: the row is seen from here on
+    if rr.block == 400:
+        q_slip["posted"] = bank_slip(rr.m, 6)
+        store(rr.m, 6, {0x4: 500, P_SLIP: -480})        # the store disagrees now: a seen row does not read it
+
+
+r = scenario(frames=96000, cell=0x102, pre=q_store_then_post, blocks=600)
+check("stage 1: Slip only stored (480) is read from the store; posted (960) it is taken from the queue, and the store "
+      "set to -480 after that changes nothing (a row the queue has carried never reads the store again)",
+      q_slip.get("stored") == 480 and q_slip.get("posted") == 960 and bank_slip(r.m, 6) == 960
+      and bank_seen(r.m, 6) == 1 << 5, (q_slip, bank_slip(r.m, 6), hex(bank_seen(r.m, 6))))
+
+
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)
