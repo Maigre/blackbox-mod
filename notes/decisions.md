@@ -160,8 +160,10 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   has not carried since the bank was cleared still comes from the store, because a cold boot zeroes the bank,
   possibly after the project's load posted, and `test_clipwin.py`'s `store()` sections set rows that are never
   posted. `region_rows` and the copied ids `B2_P_SLIP` / `B2_P_LOOPLEN` go (`notes/resources.md`: `param_rows` is a
-  table of literal ids, which the in-tree check does not follow). cw_bank grows to `0xB18`, magic `CWND`. Not on a
-  unit yet.
+  table of literal ids, which the in-tree check does not follow). Slip is taken at its post (`cw_param`: clamp,
+  `b->slip[q]`, `cw_redo` on a change), not at the poll, which wrote one pad a block: a turn in the last blocks
+  before a step reached the latch up to 16 blocks late. `adopt`'s `good[]` stays (no check shows the queue's pair
+  whole). cw_bank grows to `0xB18`, magic `CWND`. Not on a unit yet.
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving
