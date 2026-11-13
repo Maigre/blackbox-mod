@@ -631,7 +631,10 @@ engine's `+0x18`:
 - stored: `+0x230` = grid, `+0x208` = step, `+0x210` = n, `+0x1FC` = len / n, `+0x204` = samples / n, `+0x1F0` = len /
   samples. Every segment takes `+0x1F0` as its rate (`FUN_08065550`, `0x080656DE`), so stock's re-placement at each
   step, the last step's end countdown and the Sync re-index all reckon with it; what stock goes on to compute from
-  site 3's answer (`+0x23C`, `+0x240`, `+0x244`) follows. The app is still told stock's clip (`+0xBA8`, msg `0x8D`).
+  site 3's answer (`+0x23C`, `+0x240`, `+0x244`) follows. Since stage 2 (#t-045) site 3 has one owner, `cw_model`,
+  which also puts Fit's clip in the recompute's frame (`[sp + 0x28]`, handed over by the thunk), so stock's own code
+  stores it at `+0xBA8` and tells the app Fit's beats (msg `0x8D`), and `+0x258` is the file tempo of Fit's beats (read
+  only for a sliced pad, which Fit never is). A `+0xBA8` written at site 3 would be written back: stock stores it after.
 - the seamless end and the circular latch take a fitted file as a region of the whole file (`fon`);
 - the poll (`cw_tick`, bit 3) recomputes a fitted pad whose `bpm` is not the engine's now (exactly: a tolerance would
   leave the clip off the tempo by up to it, a re-placement jump at every step); the steps already made play out at
@@ -847,7 +850,7 @@ id `0xfd79d330`, len `0x3480`. How the cave got here: notes/re/README.md questio
 **Fit**
 
 - It changes the speed, so the pitch: it is not a time-stretch (P6).
-- The Beat Count row and the clip length the app is told (msg `0x8D`) stay stock's.
+- The Beat Count row stays stock's; the clip length the app is told (`+0xBA8`, msg `0x8D`) is Fit's (stage 2, #t-045).
 - A tempo change is followed at the pad's next poll (within 16 blocks, 43 ms); the step already under way finishes at
   the old rate, and overlaps the next once at gain 2, as stock's own steps do at a tempo change.
 - A fitted loop that must play at another rate than 1 reads through stock's interpolating kernel: under emulation
