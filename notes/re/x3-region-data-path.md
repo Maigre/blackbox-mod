@@ -91,6 +91,75 @@ in store order, then the slice list. It has ten call sites, among them the mode 
 `FUN_080A0AC8`, the metadata apply `FUN_0809D998`, the recorder's take end and paste. So the engine is re-sent
 `0x8f..0x92` many times ✓ (t4, t6).
 
+### The route from the post to the pad's queue (✓ t19, blackbox#t-044 ①, 2026-11-13)
+
+« The engine routes it to the cell's queue » is two stages, both in the same tick, both first in, first out:
+
+1. The tick-start drain hands each app message to the router `FUN_080520EC` (a6, x1). Its `0x39` case (`0x080521A0`)
+   sends a pad's param, whatever its cell, to **cell `0x400`'s queue** (`ctx+4`) through `FUN_0805F460(ctx, msg,
+   0x400)`. Cell `0x400` itself, and ids `0xA5`/`0xAC`, branch off before.
+2. The session object (block method `0x08050464`, first in the root chain, cell `0x400`) reads that queue in order. Its
+   `0x39` table (`0x08050844`, ids `0x6A..0x10C`) sends every id the Clip Window uses to `0x080505F2`, the same as an
+   id outside the table: an entry whose cell is not its own goes on to that cell with `FUN_0805F32C`. Checked: `0x47`,
+   `0x8B`, `0x8D`..`0x94`, `0xD2`, `0xFA`, and `0x150`..`0x153` (outside the table).
+
+The pads run after the session object (x1 §Order), so a re-post (`FUN_08099200`, store order, t4) reaches the pad's
+queue in the same tick and in post order. From there, the class-B process takes each entry in order to its `0x39`
+case and `0x080685D2`. **So a preset load's re-post delivers our ids through `0x080685D2` in queue order.**
+
+t19 ran the real router and the real session block method (cell `0x400`, zeroed otherwise, stopped at the end of its
+queue loop `0x08050612`). 12 posts, 11 for pad `0x102` and one for pad `0x203` in the middle, came out in posted order
+on each pad's own queue. As a mutation, the object on cell `0x102` reads that pad's (empty) queue and forwards nothing.
+
+<details><summary>t19_route.py</summary>
+
+```python
+# blackbox#t-044 turn 4: app 0x39 posts -> real router FUN_080520EC -> queue 0x400 -> real session block FUN_08050464
+# (cell 0x400) -> the pad's own queue; ids and order read back. Stock 3.1.9, bare Unicorn.
+import struct
+from unicorn import *
+from unicorn.arm_const import *
+img = open('/srv/dev/firmware/BLACKBOX-3.1.9.bin', 'rb').read()
+B = 0x08040000
+uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
+uc.mem_map(B, 0x100000); uc.mem_write(B, img)
+uc.mem_map(0x20000000, 0x100000)
+uc.mem_map(0xC0000000, 0x40000)
+eng = 0xC0000000; ctx = eng + 0x128E0
+uc.mem_write(ctx, struct.pack('<I', eng))
+RET = 0x0807FFF0; uc.mem_write(RET, b'\x00\xbf\x00\xbf')
+q = lambda c: ctx + {0x400: 4, 0x401: 0x608}.get(c, ((c >> 8 & 0xFF) + ((c & 0xFF) + (c >> 16) * 4) * 4 + 2) * 0x604 + 4)
+cnt = lambda c: struct.unpack('<I', uc.mem_read(q(c) + 0x600, 4))[0]
+def call(fn, r0, r1, until=RET):
+    uc.reg_write(UC_ARM_REG_SP, 0x20080000); uc.reg_write(UC_ARM_REG_LR, RET | 1)
+    uc.reg_write(UC_ARM_REG_R0, r0); uc.reg_write(UC_ARM_REG_R1, r1)
+    uc.emu_start(fn | 1, until, count=2_000_000)
+CELL = 0x102
+# a re-post's shape: store entries in store order (x3 §2), ours among stock's, plus a second pad's to check the split
+seq = [(CELL, 0x8B, 1), (CELL, 0x8F, 0), (CELL, 0x91, 24576), (CELL, 0x92, 102072), (CELL, 0x47, 3), (CELL, 0x94, 5),
+       (0x203, 0x151, 7), (CELL, 0xFA, 1), (CELL, 0x150, 2), (CELL, 0x151, -645), (CELL, 0x152, 3), (CELL, 0x153, 4)]
+msg = 0x20010000
+for c, pid, v in seq:
+    uc.mem_write(msg, struct.pack('<BxxxIIIII', 0x39, 0, c, pid, v & 0xFFFFFFFF, 0))
+    call(0x080520EC, eng, msg)
+print('after router: queue 0x400 count', cnt(0x400), '| pad 0x102', cnt(CELL), '| pad 0x203', cnt(0x203))
+obj = 0x20020000                                   # the session object: zeroed, its cell 0x400
+uc.mem_write(obj, bytes(0x1000)); uc.mem_write(obj + 0x18, struct.pack('<I', 0x400))
+call(0x08050464, obj, ctx, until=0x08050612)       # its queue loop only; stop where the loop ends
+def ids(c):
+    out = []
+    for i in range(cnt(c)):
+        e = bytes(uc.mem_read(q(c) + 0x18 * i, 0x18))
+        t, f, cc, pid, v = struct.unpack('<BxxxIIIi', e[:0x14])
+        out.append((hex(t), hex(cc), hex(pid & 0xFFFF), v))
+    return out
+print('pad 0x102 queue:', ids(CELL))
+print('pad 0x203 queue:', ids(0x203))
+want = [(hex(0x39), hex(c), hex(p), v) for c, p, v in seq if c == CELL]
+print('pad 0x102 order == posted order:', ids(CELL) == want)
+```
+</details>
+
 ### The class-B param-set `FUN_08067648`: the 40 ids it acts on
 
 It is reached only from the class-B process, at **`0x080685D2`** (`bl`, the process's message type `0x39` case;
@@ -559,6 +628,7 @@ Independent verifiers re-checked the first version. Each point was settled again
 | "Store capacity 96" | **corrected: 64 in stock, 96 in JOEBOX** | capstone at `0x08093F26` / `0x080949F0`, `patches/duck.py`; t13's real defaults allocate 64 |
 | Loop Mode survives a load | confirmed, refined | t13: plain and Clip-resolving loads keep `0x8e`; a load whose metadata resolves to Sample resets it |
 | Hook ABI at `0x080685D2`; ParamPost layout | confirmed | process prologue and the `0x39` case (jump table `0x08068018`); ParamPost's `strh` at `+0x14`; `uxth` of the id at `0x08067652` |
+| A re-post reaches `0x080685D2` in queue order (stage 1's premise) | confirmed (t19) | real router `0x39` case → cell `0x400` → real session block `0x08050464` → `FUN_0805F32C` to the pad's queue; order kept, pads split; mutation forwards nothing |
 | H checks the cell; L does not | confirmed | H `0x0805A140`/`0x08059C5C` compare `H+0x18` with `msg+8`; L's `0x39` case branches straight to the call |
 | Flag-1 posts overwrite `H+0x108` | confirmed | `0x0805AE24` has no flag test; `FUN_0809D998`'s MultiSam posts use flag 1 |
 | "Only the last synced step has an end bound; the others play a full step from `step × len/n`" | confirmed | t15/t16: end 0 on steps 0–2, `len − 1` on step 3; one beat played per step |
@@ -579,6 +649,7 @@ outside git. They reuse A1's `stock.py` / `padb.py` / `render.py` / `vstart.py` 
 | `t2_classh.py` | real class-H ctor + process `FUN_080596B0`, messages through the real per-cell queue | `0x8f..0x92`/`0x8e` kept while in Clip mode; message `0x40` zeroes them; re-post restores; `0x8c` ignored |
 | `t3_builder.py` | the graph builder `FUN_080525F0` whole, allocator stubbed | per pad `L+8` = H of the same cell; the 17th class-B object is not followed by an H |
 | `t4_modeswitch.py` | real SetCellParam, `FUN_0809AA94`, `FUN_08099200`, store accessors; posts stubbed and recorded | the defaults table, the post order, the `0x8c` path |
+| `t19_route.py` (in §1, on dev37 2026-11-13) | real router `FUN_080520EC` and session block `0x08050464` on the stock image | the two-stage route, posted order on the pad's queue |
 | `t5_wav.py` | real header reader `FUN_08076AF4` on synthetic WAVs (FatFs open/read/seek stubbed to serve memory) + the meta getters | the meta fields and the mode rule |
 | `t6_meta_apply.py` | real `FUN_0809D998` on a pad store, fresh and not fresh | the metadata table in §3 |
 | `t7_srclen.py` | `fw_src_len`, rate getter, against the real host vtable on a fake slot table | the §4 table |
