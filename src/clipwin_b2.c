@@ -851,13 +851,18 @@ static void cw_redo(struct cw_bank *b, unsigned q, uint8_t *pad)
    next step plays it; same length, same Fit, same clip, so the step fields stand and no recompute. Either moved (a TL or
    TR turn, a Move's first post, a Region or Fit change): left to the wrap, where adopt takes it and cw_hold holds it to
    a wrap on the new grid. Asked at every post, never queued: a Move's first post is held, its second taken. A stopped
-   pad takes it at its launch's recompute (adopt, site 1). CW_LIVE_REGION (#t-030, off): a moved region taken now too
-   (on, it also wants a recompute: the step fields move with the length). */
+   pad is recomputed at once (the param-set's clock, as stock's own 0x90 does): its site 1 adopts the rows (cw_row
+   already holds the post; stock ignores all five ids, so its store after this changes nothing the recompute read),
+   and site 3 tells the app the new clip (+0xba8, msg 0x8d), where stock waited for the launch. CW_LIVE_REGION
+   (#t-030, off): a moved region taken now too (on, it also wants a recompute: the step fields move with the length). */
 #define CW_LIVE_REGION 0
-static void cw_apply(struct cw_bank *b, unsigned q, uint8_t *pad)
+static void cw_apply(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock)
 {
-    if (!(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE]))
+    if (!(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])) {
+        if (clock)
+            fw_recompute(pad, clock);
         return;
+    }
     const void *store = (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u);
     int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE)), ls = cw_row(b, q, store, CW_SET_START),
             le = cw_row(b, q, store, CW_SET_END);
@@ -931,9 +936,10 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
    poll): H1 latches b->slip[q], which the poll wrote one pad a block, up to 16 blocks late, so a turn in the last
    blocks before a step missed it. Clamped as cw_tick clamps; a change makes the pending segments again (cw_redo), as
    cw_tick's bit 0 did, for a pad H1 has seen. The poll then reads the same value through cw_row: no second drop.
-   Stage 2 (#t-045): a posted Region, Loop Start, Loop End, Fit or Loop Fade goes to cw_apply, for a pad H1 has seen. */
+   Stage 2 (#t-045): a posted Region, Loop Start, Loop End, Fit or Loop Fade goes to cw_apply, for a pad H1 has seen,
+   with the param-set's clock (a stopped pad is recomputed with it). */
 
-void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
+void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg, void *clock)
 {
     unsigned id = msg[3] & 0xffffu;
     if ((msg[0] & 0xffu) != 0x39)
@@ -946,7 +952,7 @@ void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
     int seen = pad && pad == b->pad[q] && pad[PAD_CLASS] == 0x4c && cw_pad(pad) == (int)q;
     for (unsigned i = 0; seen && i < CW_SET_ROWS; i++)
         if (id == param_rows[i]) {
-            cw_apply(b, q, pad);
+            cw_apply(b, q, pad, clock);
             return;
         }
     if (id != param_rows[CW_P_SLIP])
