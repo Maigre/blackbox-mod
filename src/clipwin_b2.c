@@ -845,6 +845,35 @@ static void cw_redo(struct cw_bank *b, unsigned q, uint8_t *pad)
         }
 }
 
+/* Stage 2 (#t-045 2): a posted Region, Loop Start, Loop End, Fit or Loop Fade on a pad that plays, the latest pending
+   region (the rows as posted, is_loop's rule) against the applied one (b->region, b->fit). Its length and Fit both kept
+   (a Region Move's second post, a Loop Fade turn): taken now, the pending segments made again from it (cw_redo), so the
+   next step plays it; same length, same Fit, same clip, so the step fields stand and no recompute. Either moved (a TL or
+   TR turn, a Move's first post, a Region or Fit change): left to the wrap, where adopt takes it and cw_hold holds it to
+   a wrap on the new grid. Asked at every post, never queued: a Move's first post is held, its second taken. A stopped
+   pad takes it at its launch's recompute (adopt, site 1). CW_LIVE_REGION (#t-030, off): a moved region taken now too
+   (on, it also wants a recompute: the step fields move with the length). */
+#define CW_LIVE_REGION 0
+static void cw_apply(struct cw_bank *b, unsigned q, uint8_t *pad)
+{
+    if (!(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE]))
+        return;
+    const void *store = (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u);
+    int32_t len = fw_src_len(*(void **)(pad + PAD_SOURCE)), ls = cw_row(b, q, store, CW_SET_START),
+            le = cw_row(b, q, store, CW_SET_END);
+    uint32_t fit = (uint32_t)cw_row(b, q, store, CW_SET_FIT), fade = (uint32_t)cw_row(b, q, store, CW_SET_FADE);
+    fit = fit <= FIT_MAX ? fit : 0;
+    fade = fade <= LOOP_FADE_MAX ? fade : 0;
+    struct cw_region *r = &b->region[q];
+    if (!is_loop(cw_row(b, q, store, CW_SET_REGION), ls, le, len) || r->vlen <= 0 ||
+        (!CW_LIVE_REGION && (le - ls != r->vlen || fit != b->fit[q])) || (ls == r->rs && fade == b->fade[q]))
+        return;
+    r->rs = ls;
+    r->vlen = le - ls;
+    b->fade[q] = (uint16_t)fade;
+    cw_redo(b, q, pad);
+}
+
 void cw_poll(struct cw_bank *b, uint8_t *engine)
 {
     unsigned q = b->scan++ & 15;
@@ -901,7 +930,8 @@ void cw_poll(struct cw_bank *b, uint8_t *engine)
    Slip is taken here, at its post (the ratified plan keeps only Loop Len's settle, cw_retire and Fit's tempo on the
    poll): H1 latches b->slip[q], which the poll wrote one pad a block, up to 16 blocks late, so a turn in the last
    blocks before a step missed it. Clamped as cw_tick clamps; a change makes the pending segments again (cw_redo), as
-   cw_tick's bit 0 did, for a pad H1 has seen. The poll then reads the same value through cw_row: no second drop. */
+   cw_tick's bit 0 did, for a pad H1 has seen. The poll then reads the same value through cw_row: no second drop.
+   Stage 2 (#t-045): a posted Region, Loop Start, Loop End, Fit or Loop Fade goes to cw_apply, for a pad H1 has seen. */
 
 void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
 {
@@ -913,6 +943,12 @@ void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
             b->set[q][i] = (int32_t)msg[4];
             b->seen[q] |= (uint16_t)(1u << i);
         }
+    int seen = pad && pad == b->pad[q] && pad[PAD_CLASS] == 0x4c && cw_pad(pad) == (int)q;
+    for (unsigned i = 0; seen && i < CW_SET_ROWS; i++)
+        if (id == param_rows[i]) {
+            cw_apply(b, q, pad);
+            return;
+        }
     if (id != param_rows[CW_P_SLIP])
         return;
     int32_t slip = (int32_t)msg[4];
@@ -920,7 +956,7 @@ void cw_param(struct cw_bank *b, unsigned q, uint8_t *pad, const uint32_t *msg)
     if (slip == b->slip[q])
         return;
     b->slip[q] = slip;
-    if (pad && pad == b->pad[q] && pad[PAD_CLASS] == 0x4c && cw_pad(pad) == (int)q)
+    if (seen)
         cw_redo(b, q, pad);
 }
 
