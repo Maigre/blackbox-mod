@@ -71,6 +71,8 @@ static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len
     if (h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
         ls = *(const int32_t *)(h + H_LOOP_START);
         le = *(const int32_t *)(h + H_LOOP_END);
+        if (b->taken[q] && (ls != set[CW_SET_START] || le != set[CW_SET_END]))
+            return;                      /* cw_apply took the posted pair; the class-H object has not stored it yet */
     } else {
         ls = set[CW_SET_START];
         le = set[CW_SET_END];
@@ -82,6 +84,7 @@ static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len
             le = b->good[q][1];
         }
     }
+    b->taken[q] = 0;
     b->region[q].vlen = 0;
     if (!is_loop(set[CW_SET_REGION], ls, le, len))
         return;
@@ -870,9 +873,11 @@ static void cw_apply(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock)
     fit = fit <= FIT_MAX ? fit : 0;
     fade = fade <= LOOP_FADE_MAX ? fade : 0;
     struct cw_region *r = &b->region[q];
+    b->taken[q] = 0;
     if (!is_loop(cw_row(b, q, store, CW_SET_REGION), ls, le, len) || r->vlen <= 0 ||
         (!CW_LIVE_REGION && (le - ls != r->vlen || fit != b->fit[q])) || (ls == r->rs && fade == b->fade[q]))
         return;
+    b->taken[q] = 1;
     r->rs = ls;
     r->vlen = le - ls;
     b->fade[q] = (uint16_t)fade;

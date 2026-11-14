@@ -132,8 +132,10 @@ struct cw_bank {
     int32_t set[16][CW_PARAMS];      /* stage 1 (#t-044): the pad's rows as the engine's queue last carried them to the
                                         class-B param-set (cw_param), in CW_P_* order */
     uint16_t seen[16];               /* ...bit i: set[q][i] has come through the queue since the bank was cleared */
+    uint8_t taken[16];               /* stage 2 (#t-045): 1: cw_apply took the posted region at its post; adopt keeps it
+                                        while the cell's class-H object still holds another pair (it lags the queue) */
 };
-#define CW_MAGIC  0x43574e44u        /* "CWND": bumped with the layout (SDRAM keeps its contents through a reset) */
+#define CW_MAGIC  0x43574e45u        /* "CWND": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */
 #define CW_BYTES  0x1000u            /* what master.c's CORE_BYTES gives the bank (0x800 before Fit) */
 _Static_assert(sizeof(struct cw_bank) <= CW_BYTES, "master.c's CORE_BYTES gives the bank CW_BYTES");
@@ -146,7 +148,8 @@ _Static_assert(offsetof(struct cw_bank, zero_at) == 0x4b8 && offsetof(struct cw_
                offsetof(struct cw_bank, bpm) == 0x814 && offsetof(struct cw_bank, fin) == 0x878 &&
                offsetof(struct cw_bank, wrapped) == 0x888 && offsetof(struct cw_bank, abars) == 0x898 &&
                offsetof(struct cw_bank, moving) == 0x8a8 && offsetof(struct cw_bank, set) == 0x8b8 &&
-               offsetof(struct cw_bank, seen) == 0xaf8 && sizeof(struct cw_bank) == 0xb18,
+               offsetof(struct cw_bank, seen) == 0xaf8 && offsetof(struct cw_bank, taken) == 0xb18 &&
+               sizeof(struct cw_bank) == 0xb28,
                "bench/bbusb.py knob / fit and test_clipwin.py read the knob's and Fit's fields here");
 
 /*
