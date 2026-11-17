@@ -380,7 +380,8 @@ loop with no Trim.
    single ticks) until the hits sit. It stops on 0 on the way (0.4 s if you come in slowly), then goes on if you keep
    turning.
 7. **Refine, if needed.**
-   - Move TL/TR again. A change is heard at the next wrap.
+   - Move TL/TR again. A change that keeps the region's length (a Region Move) is heard at the next step; one that
+     changes it, at the next wrap.
    - Loop Len (BR) 1/4 or 1/16 loops a beat or a sixteenth of what is playing. Off returns to the whole loop, in phase.
 8. **PSET Save.** The preset holds Region, Slip, Loop Len, Fit, Loop Fade and the loop points.
 

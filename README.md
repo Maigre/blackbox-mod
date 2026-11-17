@@ -46,7 +46,8 @@ JOEBOX):
   it follows the playhead again after a pause.
 - **Region Move** (`TL Knob:` Loop Start | Move, per pad, saved): in Move the top-left knob reads `Mov` and slides the
   whole region — Loop Start and Loop End together, its length kept — and the view goes to Loop Start. Heard at the
-  next pass, as Loop Start and Loop End are; with no region the knob does not turn.
+  next step, its length kept (a Loop Start or Loop End turn that changes the length waits for the next pass); with no
+  region the knob does not turn.
 
 Everywhere:
 
