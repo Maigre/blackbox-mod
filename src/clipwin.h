@@ -133,7 +133,9 @@ struct cw_bank {
                                         class-B param-set (cw_param), in CW_P_* order */
     uint16_t seen[16];               /* ...bit i: set[q][i] has come through the queue since the bank was cleared */
     uint8_t taken[16];               /* stage 2 (#t-045): 1: cw_apply took the posted region at its post; adopt keeps it
-                                        while the cell's class-H object still holds another pair (it lags the queue) */
+                                        while the cell's class-H object still holds another pair (it lags the queue);
+                                        2: a stopped pad recomputed at its post: adopt takes the posted rows, not that
+                                        object's pair */
 };
 #define CW_MAGIC  0x43574e45u        /* "CWND": bumped with the layout (SDRAM keeps its contents through a reset) */
 #define CW_OFFSET 0xb100u            /* master.c: the end of its block's core, where this bank begins */

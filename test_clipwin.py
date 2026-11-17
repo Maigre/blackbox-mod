@@ -2667,12 +2667,14 @@ for name, change in (("new loop points (Loop End 96 000 -> 48 000, Region Auto)"
           and out == 0 and not added and peak <= 1.0 + 1e-6, (same_before, s_, out, added[:5], peak))
 
 # region -> region while it plays, Slip 480 (slip_f 12 000 over either): [24 000, 72 000) -> [6 000, 54 000), both 2 beats.
-# Changed inside step 0 it is heard at the next wrap; inside the pass's last Sync step, at the one after: the next
-# pass's step 0 is made, and the wrap's recompute run, when the last step starts sounding (README)
+# Length and Slip kept, so cw_apply takes it at its post and it is heard at the NEXT STEP (stage 2, hub blackbox#t-045):
+# changed inside step 0, from step 1 at 312 000 (the new region's step 1); inside the pass's last Sync step, from the
+# wrap at 336 000 - the next pass's step 0, already made with the wrap's recompute, is made again from it (cw_redo), and
+# adopt holds the posted pair against the class-H object's lagging one (taken[], 3a)
 kw = dict(frames=96000, beats=0, cell=0x102, points=REG, blocks=1300, slip=480)
 ref_ = audio(**kw)
 zr = set(np.where(np.abs(ref_["gain"]) < 1e-7)[0] + ref_["base"])
-for blk, W, when in ((100, 336000, "inside step 0"), (265, 384000, "inside step 1, the last Sync step")):
+for blk, W, k0, when in ((100, 312000, 1, "inside step 0"), (265, 336000, 0, "inside step 1, the last Sync step")):
     cw = audio(pre=lambda rr, blk=blk: (rr.param(0x91, 6000), rr.param(0x92, 54000)) if rr.block == blk else None, **kw)
     r = cw["rig"]
     up_to = (W - 287000) // N - 1
@@ -2682,17 +2684,19 @@ for blk, W, when in ((100, 336000, "inside step 0"), (265, 384000, "inside step 
     added = sorted(x for x in zc - zr if 290000 <= x < cw["base"] + len(cw["gain"]) - N)
     lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
     s_ = [x for x in starts(r) if x[0] >= W][:3]
+    want = [(W, 1, 24000), (W + 24000, 0, 0), (W + 48000, 1, 24000)] if k0 else [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)]
     check(f"live, region -> region, Slip 480, {when} (sample {287000 + blk * N}): every output sample as without the "
-          f"change up to the wrap at {W}, from it the new region (steps {s_}; latched {lat[:1]}), nothing outside "
+          f"change up to the next step at {W}, from it the new region (steps {s_}; latched {lat[:1]}), nothing outside "
           f"[6 000, 54 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
-          same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
+          same_before and s_ == want and out == 0 and not added
           and pk <= 1.0 + 1e-6 and lat and all(x == (6000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
 
 # Region Move (TL Knob: Move, hub blackbox#t-042, 12e): a region -> region change at the same length. The test above is
 # a move back (Loop Start posted first); moving forward clipwin_move posts Loop End first, and the pair between the two
 # posts, [24 000, 84 000), is a valid, longer region. [24 000, 72 000) -> [36 000, 84 000), Slip 480, inside step 0:
-# heard at the next wrap, its length and Slip kept (kw, ref_ and zr are the test above's)
-W = 336000
+# the first post (longer) is held for the wrap, the second (the length back, Slip kept) taken at its post: heard at the
+# next step, 312 000, its length and Slip kept (kw, ref_ and zr are the test above's)
+W = 312000
 cw = audio(pre=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000)) if rr.block == 100 else None, **kw)
 r = cw["rig"]
 up_to = (W - 287000) // N - 1
@@ -2703,15 +2707,16 @@ added = sorted(x for x in zc - zr if 290000 <= x < cw["base"] + len(cw["gain"]) 
 lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
 s_ = [x for x in starts(r) if x[0] >= W][:3]
 check(f"live, Region Move forward (Loop End posted first, then Loop Start), Slip 480, inside step 0: every output sample "
-      f"as without the move up to the wrap at {W}, from it the moved region (steps {s_}; latched {lat[:1]}), its length "
-      f"and Slip kept, nothing outside [36 000, 84 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
-      same_before and s_ == [(W, 0, 0), (W + 24000, 1, 24000), (W + 48000, 0, 0)] and out == 0 and not added
+      f"as without the move up to the next step at {W}, from it the moved region (steps {s_}; latched {lat[:1]}), its "
+      f"length and Slip kept, nothing outside [36 000, 84 000), no zero-gain sample added ({len(added)}), peak {pk:.3f}",
+      same_before and s_ == [(W, 1, 24000), (W + 24000, 0, 0), (W + 48000, 1, 24000)] and out == 0 and not added
       and pk <= 1.0 + 1e-6 and lat and all(x == (36000, 48000, 12000) for x in lat), (same_before, s_, out, added[:5], pk, lat))
 
 # ...a wrap between the move's two posts (x5 3: an audio tick can fall there; the plan's Risk 1): clipwin_move marks the
 # pad moving in cw_bank across them (12e), and adopt keeps the region the pad has while it is marked. Loop End 84 000
 # alone with the mark inside step 0 (the recompute for the wrap at 336 000 runs when step 1 starts), then Loop Start
-# 36 000 and the mark cleared inside the next pass's step 0: that pass plays the old region, the one after the moved one.
+# 36 000 and the mark cleared inside the next pass's step 0: that pass's step 0 plays the old region, and the moved one
+# is heard from its next step, 360 000 (the second post keeps the length the pad plays: cw_apply takes it at the post).
 # Without the mark, the pass from 336 000 plays the half-moved pair [24 000, 84 000)
 gw = {}
 for mark in (1, 0):
@@ -2728,16 +2733,43 @@ for mark in (1, 0):
     cw = audio(pre=pre, **kw)
     r = cw["rig"]
     gw[mark] = (mid, [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1],
-                [x for x in starts(r) if x[0] >= 336000][:5], inside(cw, 24000, 48000, 336000 + 300, 384000)[0],
-                inside(cw, 36000, 48000, 384000 + 300)[0])
-mid, lat, s_, old, new = gw[1]
+                [x for x in starts(r) if x[0] >= 336000][:5], inside(cw, 24000, 48000, 336000 + 300, 360000)[0],
+                inside(cw, 36000, 48000, 360000 + 300)[0], inside(cw, 24000, 48000, 336000 + 300, 384000)[0])
+mid, lat, s_, old, new, _ = gw[1]
 check(f"live, Region Move with a wrap between its two posts (Loop End posted with the pad marked moving): the pass from "
-      f"336 000 keeps the old region (latched {mid[:1]}, {old} frames outside [24 000, 72 000)), the pass from 384 000 "
-      f"plays the moved one once Loop Start is posted and the mark cleared (latched {lat[:1]}, {new} outside); "
+      f"336 000 keeps the old region (latched {mid[:1]}, {old} frames outside [24 000, 72 000) in its step 0), its step 1 "
+      f"at 360 000 plays the moved one once Loop Start is posted and the mark cleared (latched {lat[:1]}, {new} outside); "
       f"unmarked, the pass from 336 000 plays the half-moved pair ({gw[0][0][:1]})",
       mid and all(x == (24000, 48000, 12000) for x in mid) and old == 0 and lat and new == 0
       and all(x == (36000, 48000, 12000) for x in lat) and [a for a, _, _ in s_] == [336000, 360000, 384000, 408000, 432000]
-      and gw[0][0] and all(x == (24000, 60000, 15000) for x in gw[0][0]) and gw[0][3] > 0, gw)
+      and gw[0][0] and all(x == (24000, 60000, 15000) for x in gw[0][0]) and gw[0][5] > 0, gw)
+
+# ...and a stopped pad (stage 2, hub blackbox#t-045): cw_apply recomputes it at the post (fw_recompute with the
+# param-set's clock), and that recompute's adopt must not read the class-H object's pair, which lags the queue (3a's
+# bug, in a pass's last step): the bank holds the posted region right after the post, and the relaunch plays it.
+# Toggle stops the pad at the bar at 384 000; region -> region [24 000, 72 000) -> [6 000, 54 000) posted at 402 200,
+# silent; relaunched on the bar at 480 000 (kw is region -> region's above)
+sp = {}
+def pre(rr, sp=sp):
+    if rr.block in (300, 1000):
+        rr.note_on()
+    elif rr.block == 900:
+        rr.param(0x91, 6000)
+        rr.param(0x92, 54000)
+    elif rr.block in (899, 902):
+        sp[rr.block] = struct.unpack("<ii", bytes(rr.m.uc.mem_read(BANK + B_REGION + 6 * 8, 8)))
+cw = audio(pre=pre, **dict(kw, blocks=2300))
+r = cw["rig"]
+quiet = cw["gain"][384000 + 300 - cw["base"]:480000 - cw["base"]]
+out, z, pk = inside(cw, 6000, 48000, 480000 + 300)
+s_ = [x for x in starts(r) if x[0] >= 480000][:3]
+check(f"stopped (Toggle at the bar at 384 000, silent to the relaunch: {not np.abs(quiet).max() > 1e-7}), region -> region "
+      f"posted at sample {287000 + 900 * N}: the bank holds the posted region right after it ({sp.get(902)}, before "
+      f"{sp.get(899)}), not the class-H object's lagging pair; the relaunch on the bar at 480 000 plays it (steps {s_}), "
+      f"nothing outside [6 000, 54 000) ({out}), peak {pk:.3f}",
+      not np.abs(quiet).max() > 1e-7 and sp.get(899) == (24000, 48000) and sp.get(902) == (6000, 48000)
+      and s_ == [(480000, 0, 0), (504000, 1, 24000), (528000, 0, 0)] and out == 0 and pk <= 1.0 + 1e-6,
+      (sp, s_, out, z, pk, float(np.abs(quiet).max())))
 
 # a change that makes the clip longer moves stock's wrap grid (+0x230 = min(Quant, clip)): a pass that does not start on
 # it has its end snapped back into the past. Stock does that on a live Beat Count change (2 -> 4 beats, Quant 1 bar):
@@ -3154,10 +3186,11 @@ check(f"Loop Len 1/4 on Region [24 000, 72 000) with Slip 480 (taken at origin {
 
 # Region Move (TL Knob: Move, hub blackbox#t-042) under Loop Len: the stacked pad above, its region moved forward as
 # clipwin_move posts it (Loop End 84 000 first, then Loop Start 36 000) inside step 0 of a pass, Loop Len 1/4 engaged.
-# The in-point stays; from the next wrap every step plays the window's beat in the moved region, 36 000 + (24 000 +
-# 12 000) mod 48 000 = 72 000 on; before it, every sample as the run without the move (cw above). Under Loop Len a
-# latch's delta is Slip's frames + the window's (cw_latch): the moved run's are cw's, rs 12 000 on
-W = 384000
+# The in-point stays; from the next step (the second post keeps the length: cw_apply takes it there) every step plays
+# the window's beat in the moved region, 36 000 + (24 000 + 12 000) mod 48 000 = 72 000 on; before it, every sample as
+# the run without the move (cw above). Under Loop Len a latch's delta is Slip's frames + the window's (cw_latch): the
+# moved run's are cw's, rs 12 000 on
+W = 360000
 mv = audio(pre=ll_pre({300: 3}, slip=480, then=lambda rr: (rr.param(0x92, 84000), rr.param(0x91, 36000))
                        if rr.block == 500 else None), **kw)
 r = mv["rig"]
@@ -3170,7 +3203,7 @@ out, z, pk = inside(mv, 36000, 48000, W + 300)
 lat = [latch(r.m, 6, k) for k in range(4) if bank_valid(r.m, 6) >> k & 1]
 lat_ = [latch(cw["rig"].m, 6, k) for k in range(4) if bank_valid(cw["rig"].m, 6) >> k & 1]
 check(f"Region Move forward under Loop Len 1/4 (Region [24 000, 72 000) -> [36 000, 84 000), Slip 480, the move inside "
-      f"step 0 at sample {287000 + 500 * N}): every output sample as without the move up to the wrap at {W}; the in-point "
+      f"step 0 at sample {287000 + 500 * N}): every output sample as without the move up to the next step at {W}; the in-point "
       f"kept (origin {on and on[2]}); from it every step starts on 72 000 ({[x[2] for x in sg[:5]]}), every sample 36 000 + "
       f"(its step's frame + 12 000) mod 48 000 ({n_}, max {err:.4f}); latched {lat}: the run without the move's, 12 000 on "
       f"(length, Slip and window kept); nothing outside the moved region, {z} zero-gain samples",

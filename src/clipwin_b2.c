@@ -68,7 +68,7 @@ static void adopt(struct cw_bank *b, unsigned q, const uint8_t *pad, int32_t len
     b->fade[q] = (uint16_t)((uint32_t)set[CW_SET_FADE] <= LOOP_FADE_MAX ? set[CW_SET_FADE] : 0);
     const uint8_t *h = *(uint8_t *const *)(pad + PAD_SIBLING);
     int32_t ls, le;
-    if (h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
+    if (b->taken[q] != 2 && h && h[PAD_CLASS] == H_CLASS && *(const uint32_t *)(h + PAD_ID) == *(const uint32_t *)(pad + PAD_ID)) {
         ls = *(const int32_t *)(h + H_LOOP_START);
         le = *(const int32_t *)(h + H_LOOP_END);
         if (b->taken[q] && (ls != set[CW_SET_START] || le != set[CW_SET_END]))
@@ -862,8 +862,10 @@ static void cw_redo(struct cw_bank *b, unsigned q, uint8_t *pad)
 static void cw_apply(struct cw_bank *b, unsigned q, uint8_t *pad, void *clock)
 {
     if (!(pad[LAYER0] | pad[LAYER0 + LAYER_SIZE])) {
-        if (clock)
+        if (clock) {
+            b->taken[q] = 2;             /* adopt takes the posted rows (set): the class-H object lags the queue */
             fw_recompute(pad, clock);
+        }
         return;
     }
     const void *store = (const void *)(B2_APP_PADS + (q + (q >> 2)) * 0x30u);
