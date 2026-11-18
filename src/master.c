@@ -30,6 +30,7 @@
  * master_list supplies the page for cell 0x40; values go through the stock global path.
  */
 #include <stdint.h>
+#include "looper.h"
 #include "vhs.h"
 
 #pragma GCC optimize("Os", "no-tree-loop-distribute-patterns")
@@ -147,7 +148,8 @@ int b2_live(void);               /* cpu.c: is bank 2, where prism_block lives, t
 #else
 #define KIT_BYTES   0x1400u       /* dev builds: the bench kit's data area, at the tail's end (kit_b2.c; fork-only) */
 #endif
-#define TAIL_BYTES  (PRISM_BYTES + 0x22000u + KIT_BYTES)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000; repeat.c's state in its last 0x800) */
+#define TAIL_BYTES  (PRISM_BYTES + 0x22000u + KIT_BYTES + LP_BYTES)   /* behind it, with the payload only: Prism's, insert.c's bank (0x22000; repeat.c's state in its last 0x800), the kit's area (dev builds), looper.c's bank (0x200, last) */
+_Static_assert(LP_OFFSET == PRISM_BYTES + 0x22000u + KIT_BYTES, "looper.c's bank (0x200) is the tail's last part, behind the kit's area in a dev build, so the kit keeps block + 0x95910");
 _Static_assert(0xb100u + 0x1000u <= 0xc100u, "clipwin.c's bank (0x1000 at 0xb100) ends where JOEBOX 2's parts begin");
 _Static_assert(CORE_BYTES + PRISM_BYTES + 0x22000u == 0x95910u, "JOEBOX 2's block (0x94910) + clipwin.c's bank: past D-030's 0x84900 (x2: a boot-time SDRAM overflow hangs the unit), so a unit's boot proves it; a dev build adds the kit's area only");
 
@@ -525,6 +527,7 @@ void master_alloc(int *line, int floats)
         if (tail) {
             *(volatile uint32_t *)(mem + CORE_BYTES) = 0;                   /* Prism */
             *(volatile uint32_t *)(mem + CORE_BYTES + PRISM_BYTES) = 0;     /* insert.c's bank */
+            *(volatile uint32_t *)(mem + CORE_BYTES + LP_OFFSET) = 0;       /* looper.c's bank */
         }
     }
     stretch_alloc(mem && tail ? (uint8_t *)mem : 0);         /* stretch.c: its own allocation, after this one; with the tail

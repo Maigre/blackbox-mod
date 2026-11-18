@@ -340,9 +340,9 @@ e.w32(BANK, CW_MAGIC)
 e.call("master_alloc", 0x24076000, 192000)
 e.meter_up()
 KIT = 0x1400 if "kit_run" in S else 0                 # a dev build's bench kit area at the tail's end (src/master.c)
-check(f"master_alloc: one {0x95910 + KIT:#x}-byte block (bank 2 holds the payload here; stretch.c's area after it), cw_bank's {B_BYTES:#x} bytes "
+check(f"master_alloc: one {0x95910 + KIT + 0x200:#x}-byte block (bank 2 holds the payload here, so looper.c's 0x200 ends its tail; stretch.c's area after it), cw_bank's {B_BYTES:#x} bytes "
       f"in its core (+0xB100, up to JOEBOX 2's parts at +0xC100; it uses {B_SIZE:#x}), its magic cleared each boot",
-      ("perm", 0x95910 + KIT) in allocs and BANK + B_BYTES == BLOCK + 0xC100 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
+      ("perm", 0x95910 + KIT + 0x200) in allocs and BANK + B_BYTES == BLOCK + 0xC100 and u32(e, BANK) == 0, (allocs, hex(u32(e, BANK))))
 del e.stubs[0x0806AA80], e.stubs[0x0804436C]
 
 # ====================================================================================================== 2. registration

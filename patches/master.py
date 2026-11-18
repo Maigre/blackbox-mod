@@ -86,3 +86,9 @@ PATCHES = [
     (0x080BCCD6, bytes.fromhex("4921"), bytes.fromhex("7f21")),
     (0x080BD236, bytes.fromhex("c2f16102"), bytes.fromhex("c2f18002")),
 ]
+
+# Looper FX (src/looper.c): its hooks ride with this set, which already owns the boot block its state lives in, so the
+# image keeps the name every suite opens. patches/looper.py holds them.
+from looper import PATCHES as LOOPER  # noqa: E402
+
+PATCHES += LOOPER

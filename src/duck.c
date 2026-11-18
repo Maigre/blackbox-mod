@@ -74,6 +74,7 @@ void stretch_tick(void);         /* stretch.c: one pad's Stretch setting per blo
 void insert_tick(void);          /* insert.c: one pad's insert settings per block */
 void clipwin_tick(uint8_t *engine); /* clipwin.c: one pad's Slip and Loop Len per block */
 void repeat_tick(uint8_t *engine, const uint32_t *bufs);   /* repeat.c: note repeat's due notes for the coming block */
+void looper_tick(uint8_t *engine);   /* looper.c: the clock as the pads see it, for the Looper's grid */
 
 #ifdef CPU_PROF
 void prof_ctl(uint32_t ours, uint32_t stock, unsigned starts);   /* prof.c */
@@ -146,6 +147,7 @@ int duck_block(uint8_t *engine, void *a, void *b)
     clipwin_tick(engine);
     stretch_tick();
     repeat_tick(engine, (const uint32_t *)a);
+    looper_tick(engine);
 #ifdef CPU_PROF
     uint32_t t1 = CYC;
     int r = fw_process(engine, a, b);

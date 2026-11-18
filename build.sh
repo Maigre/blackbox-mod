@@ -24,7 +24,7 @@ mkdir -p out out/obj
 
 # The files that live in bank 2. Leaf DSP only (and clipwin_b2's Clip Window maths, D-018): nothing the engine reaches before bank 2 has been checked, and
 # nothing holding state that bank 1 needs at boot.
-BANK2_SRCS="prism confetti insert_dsp rev4 smash relapse motion tapescam splash_img transient fx2_room compm clip vhs filter_dsp s950 rta_dsp stretch_dsp tempo_dsp chop_dsp clipwin_b2 chop chopmode_b2"   # smash relapse motion: 3.3.o, for room in bank 1; splash_img: 3.3.t, the boot graphic (data only)
+BANK2_SRCS="prism confetti insert_dsp rev4 smash relapse motion tapescam splash_img transient fx2_room compm clip vhs filter_dsp s950 rta_dsp stretch_dsp tempo_dsp chop_dsp clipwin_b2 chop chopmode_b2 looper_dsp"   # smash relapse motion: 3.3.o, for room in bank 1; splash_img: 3.3.t, the boot graphic (data only)
 # The bench kit's jobs (src/kit_b2.c, fork-only) go up in dev builds only, after everything else, so a release's bank 2
 # is byte for byte what it was and its bank 1 (which holds the payload's sum) with it. Two payloads, then: a dev
 # BBEXTRA.BIN is the release's plus the kit.

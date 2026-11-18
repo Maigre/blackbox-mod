@@ -58,7 +58,7 @@ struct.pack_into("<I", stale, 12, 0)          # another build's payload: bank 2 
 stale = bytes(stale)
 sym = {l.split()[2]: int(l.split()[0], 16) for l in subprocess.run(["arm-none-eabi-nm", ELF], capture_output=True, text=True,
                                                                    check=True).stdout.splitlines() if len(l.split()) == 3}
-WHOLE = 0x95910 + (0x1400 if "kit_run" in sym else 0)   # a dev build adds the bench kit's area at the tail's end (src/master.c)
+WHOLE = 0x95910 + (0x1400 if "kit_run" in sym else 0) + 0x200   # a dev build adds the bench kit's area at the tail's end, then looper.c's bank (src/master.c)
 size = {l.split()[3]: int(l.split()[1], 16) for l in subprocess.run(["arm-none-eabi-nm", "-S", ELF], capture_output=True,
                                                                     text=True, check=True).stdout.splitlines() if len(l.split()) == 4}
 img = open(IMAGE, "rb").read()
