@@ -149,7 +149,9 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   **On the default build since hub #t-061** (12/11, on 37.5.0): `./build.sh` moves note repeat, dev and
   `RELEASE=1` (`B2SPLIT=` builds without), and `./check.sh` fails on the tool's `--verify`. Bank 1 free: dev 287 ->
   1,784 B, release 915 -> 2,412 B; bank 2 +1,788 B in both. `test_repeat`'s idle block, called through the stub: 530
-  -> 570 instructions (~0.041 % -> ~0.044 %); the unit's figure is the bench step's.
+  -> 570 instructions (~0.041 % -> ~0.044 %); the unit's figure is the bench step's. **On the unit 18/11**
+  (`notes/bench/2026-11-18-37.5.0d-1695812.md`): the stubs and `b2s_pairs` read right in flash and take the bodies
+  while bank 2 is live, the four-pad load within 0.5 point of 37.5.0d's, the forced hold falls back as designed.
 - **D-048 (2026-11-13) — Clip Window stage 1: a pad's rows come from the engine's queue, from the store only until
   the queue has carried them** (hub #t-044, plan #t-036). `clipwin_param` takes the class-B param-set call at
   `0x080685D2` from JOEBOX 2's `sel_param` (`TAKES`, then `sel_param` as stock's was), and `cw_param` (bank 2) records
