@@ -299,8 +299,8 @@ at_tick = [i for i, x in enumerate(duck) if x[1] == "bl" and int(x[2].lstrip("#"
 r4_writes = [x for x in duck[:at_tick[0]] if x[2].split(",")[0].strip() == "r4" and not x[1].startswith(("str", "cmp", "tst"))]
 check("duck_block: lfo_tick, insert_tick, then clipwin_tick (once a block, before the pads) with r0 = the engine (duck_block's "
       "own r0, kept in r4: 'mov r4, r0' is the only write to r4 before it), then JOEBOX 2's stretch_tick and repeat_tick, then "
-      "the tail call into the engine's control tick (0x08053164)",
-      order[-5:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"], S["stretch_tick"], S["repeat_tick"]]
+      "the Looper's looper_tick, then the tail call into the engine's control tick (0x08053164)",
+      order[-6:] == [S["lfo_tick"], S["insert_tick"], S["clipwin_tick"], S["stretch_tick"], S["repeat_tick"], S["looper_tick"]]
       and order.count(S["clipwin_tick"]) == 1
       and struct.pack("<I", 0x08053165) in tail and duck[at_tick[0] - 1][1:] == ("mov", "r0, r4")
       and [x[1:] for x in r4_writes] == [("mov", "r4, r0")], ([hex(t) for t in order], duck[at_tick[0] - 1], r4_writes))
