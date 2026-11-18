@@ -166,6 +166,18 @@ Dated, with the reason. The plan is `notes/plan.md`; the hub tracks the tasks (`
   `b->slip[q]`, `cw_redo` on a change), not at the poll, which wrote one pad a block: a turn in the last blocks
   before a step reached the latch up to 16 blocks late. `adopt`'s `good[]` stays (no check shows the queue's pair
   whole). cw_bank grows to `0xB18`, magic `CWND`. Not on a unit yet.
+- **D-049 (2026-11-18) — The Looper on the JOEBOX 2 base: its ids are `0x13c..0x142`, its bank is the tail's last
+  0x200** (hub #t-010). `feat/looper` (16/10) merged onto 37.5.0 with no text conflict on its ids, but its X axis
+  `0x1cc` « Length: » is TapeScam's Noise (`tsnoise`) since JOEBOX 2: the registry keeps one entry per id, so one of the
+  two would have become the other's control (D-036's clash again). « Length: » moves to `0x13c`, the low end of the
+  `0x13c..0x17b` gap, below upstream's first id there (`0x143`); P5's rows (`Loop Rec`, `Loop Max`) take `0x13d..0x142`,
+  not D-022 / D-023's `0x1cd..0x1cf` (TapeScam's too). The xml name `looperlen` does not move. `test_resources.py`
+  refuses `0x1cc` (« registered for 2 parameters »; the merge's first run left it out), and `test_param_ids.py` now runs
+  `looper_register_fxa` (stock's FX A type, `0x18`) with the other hooks, so it refuses it too.
+  Memory: `struct lp_bank` (0x200) is the last part of master.c's tail (D-030): behind Prism's 0x56800, insert.c's
+  bank 0x22000 and, in a dev build, the kit's 0x1400, so the kit keeps block + 0x95910; `looper.c` reads it through
+  `master_tail()` (none without a payload: the Looper stays a Repeater). The block grows by 0x200 (`master.c` asserts
+  the offset). Bank 1 with the Looper: `.cave` 56,696 B, 1,040 B free. Not on a unit yet (Gate 4, hub #t-011).
 - **D-034 (2026-11-06) — Region Move posts the pair in the safe order and guards the wrap between the posts** (hub
   #t-042, plan #t-032). `TL Knob:` (`0x1cc`, Loop Start | Move) per pad, saved. In Move, `clipwin_move` (the view's
   forward) posts the knob's Loop Start as two posts: the edge ahead first (Loop End moving forward, Loop Start moving

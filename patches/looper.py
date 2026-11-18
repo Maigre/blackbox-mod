@@ -12,7 +12,7 @@ sym = symbols(os.path.join(ROOT, "out", "cave.elf"))
 AXES_COUNT, AXES = 0x080EEA78, 0x080EEA7C     # FX A's stock XY axis table: count, then {X, Y} per type
 
 PATCHES = [
-    # FX A's type list (0x18): Repeater, Gater, Filter + Looper, Loop In; and the X axis "Length:" (0x1cc)
+    # FX A's type list (0x18): Repeater, Gater, Filter + Looper, Loop In; and the X axis "Length:" (0x13c, D-049)
     (0x0808C594, bl(0x0808C594, 0x0808C0D8), bl(0x0808C594, sym["looper_register_fxa"])),
     # the slot setter's case for 0x18: `cmp r2, #2; bhi` -> latch the index, then stock's swap
     (0x0806E174, bytes.fromhex("022aedd8"), bw(0x0806E174, sym["looper_fxa_set"])),

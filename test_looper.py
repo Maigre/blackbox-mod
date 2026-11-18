@@ -43,7 +43,7 @@ LP = MB + 0x95910 + KIT                          # looper.c's bank: the last 0x2
 DSP = LP + 28
 REP_VT, REP1, REP2 = 0x080DF580, 0x24015268, 0x24015340
 CHAN_A, CHAN_B = 0x30300, 0x30400
-P_FINGER, P_HOLD, P_LEN, P_HPF = 0x15, 0x1A, 0x1CC, 0x30
+P_FINGER, P_HOLD, P_LEN, P_HPF = 0x15, 0x1A, 0x13C, 0x30
 LENS = ["4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16"]
 TICKS = [15360, 7680, 3840, 1920, 960, 480, 240]
 
@@ -278,7 +278,7 @@ check("Repeater vtable: process (+0x0c) -> looper_process, active (+0x70) -> loo
       iw(0x080DF58C) == sym["looper_process"] | 1 and iw(0x080DF5F0) == sym["looper_active"] | 1)
 check("...hold (+0x74) and set_param (+0x64) stay stock", iw(0x080DF5F4) == 0x0806D135 and iw(0x080DF5E4) == 0x0806D0B9)
 ax = struct.unpack_from("<I10H", img, sym["lp_axes"] - 0x08040000)
-check("lp_axes: 5 types; Repeater, Gater, Filter as stock; Looper and Loop In = (Length 0x1cc, HPF 0x30)",
+check("lp_axes: 5 types; Repeater, Gater, Filter as stock; Looper and Loop In = (Length 0x13c, HPF 0x30)",
       ax == (5, 0x1C, 0x13, 0x1D, 0x1E, 0x10, 0x11, P_LEN, P_HPF, P_LEN, P_HPF)
       and stock[0x080EEA7C - 0x08040000:0x080EEA88 - 0x08040000] == struct.pack("<6H", *ax[1:7]) and sym["lp_axes"] % 4 == 0, ax)
 
@@ -326,7 +326,7 @@ u.uc.hook_add(UC_HOOK_CODE, on_num, begin=0x0808C12C, end=0x0808C12C)
 u.call(0x0808C158, 0x24064000, count=50_000_000)
 check("FX A (0x18): Repeater, Gater, Filter, Looper, Loop In ('FX A:', fxalgolivea)",
       regs.get(0x18) == ("list", "FX A:", ["Repeater", "Gater", "Filter", "Looper", "Loop In"], "fxalgolivea"), regs.get(0x18))
-check("Length (0x1cc): 4 bars, 2 bars, 1 bar, 1/2, 1/4, 1/8, 1/16 (stock's own strings), xml looperlen",
+check("Length (0x13c): 4 bars, 2 bars, 1 bar, 1/2, 1/4, 1/8, 1/16 (stock's own strings), xml looperlen",
       regs.get(P_LEN) == ("list", "Length:", LENS, "looperlen"), regs.get(P_LEN))
 check("HPF (0x30) is still stock's: type 0xa, 0..1000, echohpf", regs.get(0x30) == ("num", 0xA, "HPF:", 0, 1000, "echohpf"), regs.get(0x30))
 check("FX B (0x19) is untouched: six types", regs.get(0x19, ("", "", []))[2] == ["Crusher", "Filter", "Echo", "EchoHP", "Flanger", "Echo2"], regs.get(0x19))
@@ -355,7 +355,7 @@ for idx in range(5):
     u.call(0x080B1DE0, VIEW, 0, idx, count=5_000_000)
     pad = VIEW + 0x22C
     binds[idx] = (u.r16(pad + 0x3C), u.r16(pad + 0x3E), u.r32(pad + 0x40), u.r32(pad + 0x44))
-check("FX A index 0..4 binds (X, Y): Repeater (0x1c, 0x13), Gater (0x1d, 0x1e), Filter (0x10, 0x11), Looper / Loop In (0x1cc, 0x30)",
+check("FX A index 0..4 binds (X, Y): Repeater (0x1c, 0x13), Gater (0x1d, 0x1e), Filter (0x10, 0x11), Looper / Loop In (0x13c, 0x30)",
       [b[:2] for b in binds.values()] == [(0x1C, 0x13), (0x1D, 0x1E), (0x10, 0x11), (P_LEN, P_HPF), (P_LEN, P_HPF)], binds)
 check("...and the dot's rest position for the Looper is X = 3 (1/2), Y = 500: the values the view posts at rest",
       binds[3][2:] == (3, 500), binds[3])
@@ -390,13 +390,13 @@ for idx in (3, 4):
     u.uc.mem_write(VIEW + 0x22C + 0x3C, b"\0" * 4)
     u.uc.mem_write(0x24065000, struct.pack("<HHIHHIi", 0x3C, 0, 0, 0x330, 0, idx, 0x18))
     u.call(0x080B1EE4, VIEW, 0x24065000, count=5_000_000)
-    check(f"view handler, msg 0x3c type {idx}: index stored, pad bound to (0x1cc, 0x30), the change forwarded",
+    check(f"view handler, msg 0x3c type {idx}: index stored, pad bound to (0x13c, 0x30), the change forwarded",
           u.r32(VIEW + 0x8CC) == idx and (u.r16(VIEW + 0x22C + 0x3C), u.r16(VIEW + 0x22C + 0x3E)) == (P_LEN, P_HPF)
           and posts and posts[-1][2:] == (0x330, 0x18, idx), (u.r32(VIEW + 0x8CC), posts))
 posts.clear()
 u.uc.mem_write(0x24065000, struct.pack("<HHIHHIi", 0x6E, 0, 0, 0x330, 0, P_FINGER, 0))
 ret = u.call(0x080B1EE4, VIEW, 0x24065000, count=5_000_000)
-check("finger-up on FX A with Hold off: the view posts X rest (0x1cc = 3) then Y rest (0x30 = 500), and lets the 0x15 = 0 on",
+check("finger-up on FX A with Hold off: the view posts X rest (0x13c = 3) then Y rest (0x30 = 500), and lets the 0x15 = 0 on",
       [(p[2], p[3], p[4]) for p in posts] == [(0x330, P_LEN, 3), (0x330, P_HPF, 500)] and u.uc.reg_read(UC_ARM_REG_R0) == 1, posts)
 
 

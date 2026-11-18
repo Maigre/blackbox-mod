@@ -22,7 +22,8 @@
 #define P_LP_FINGER   0x15           /* stock, unregistered: the XY pad's touch, 1 / 0 */
 #define P_LP_HOLD     0x1a           /* stock, unregistered: FX A's Hold button */
 #define P_LP_HPF      0x30           /* stock "HPF:" (EchoHP's), 0..1000: the Y axis */
-#define P_LP_LEN      0x1cc          /* ours, "Length:": the X axis, 0 = 4 bars .. 6 = 1/16 */
+#define P_LP_LEN      0x13c          /* ours, "Length:": the X axis, 0 = 4 bars .. 6 = 1/16. The Looper's ids are
+                                        0x13c..0x142 (D-049): 0x1cc is TapeScam's Noise since JOEBOX 2 */
 #define LP_EV_RESET   0xffffu        /* an engine message of type 0x40 on the channel: release, Hold off */
 
 #define LP_LENS       7              /* 4 bars, 2 bars, 1 bar, 1/2, 1/4, 1/8, 1/16 (stock's Clip Quant names) */
@@ -85,7 +86,7 @@ struct lp_in {
     uint8_t playing, edge, src, mon; /* edge: a transport change in this block; src 1 = Loop In; mon: the input is
                                         already in Out 1 (monitored) */
     uint8_t nev, _r[3];
-    struct lp_ev ev[LP_EVENTS];      /* 0x15, 0x1a, 0x1cc, 0x30 and resets, in queue order */
+    struct lp_ev ev[LP_EVENTS];      /* 0x15, 0x1a, 0x13c, 0x30 and resets, in queue order */
 };
 
 /* bank 1 writes the head, bank 2 owns dsp */

@@ -5,8 +5,9 @@ later registration wins and the other's knob turns into the wrong control. A gre
 computed ones; this runs the real registration code instead.
 
 Real firmware runs for: every registration hook of ours, called the way stock calls it (comp_register for 0xb4,
-cond_register 0x10e, interp_register 0xf1, munchi_register 0x197, fx2_register 0x198) - which covers master, lfo,
-insert, preroll, groove and theme through comp_register.
+cond_register 0x10e, interp_register 0xf1, munchi_register 0x197, fx2_register 0x198, looper_register_fxa 0x18) -
+which covers master, lfo, insert, preroll, groove and theme through comp_register, and the Looper's X axis (its first
+id, 0x1cc, was TapeScam's Noise once JOEBOX 2 merged in, and nothing here ran its hook: D-049).
 Stubbed: stock's three registration functions (recorded: the id each call registers).
 Reference: research/stock_param_ids.txt, every id stock 3.1.9 registers (from the decompile: all calls to
 FUN_0808c0d8 / FUN_0808c12c / FUN_0808c102 with a constant id).
@@ -40,12 +41,13 @@ for fn in (0x0808C0D8, 0x0808C12C, 0x0808C102):
 TABLE, NAMES, TEXT = 0x24060000, 0x24061000, 0x24062000
 e.uc.mem_write(TEXT, b"x\0")
 e.uc.mem_write(NAMES, struct.pack("<4I", TEXT, TEXT, TEXT, TEXT))
-REPLACED = {0xB4, 0x10E, 0xF1, 0x197, 0x198}
+REPLACED = {0xB4, 0x10E, 0xF1, 0x197, 0x198, 0x18}
 hooks = [("comp_register", (TABLE, 0xB4, 1, TEXT), (0, 1, TEXT)),
          ("cond_register", (TABLE, 0x10E, TEXT, NAMES), (4, TEXT)),
          ("interp_register", (TABLE, 0xF1, TEXT, NAMES), (4, TEXT)),
          ("munchi_register", (TABLE, 0x197, TEXT, NAMES), (4, TEXT)),
-         ("fx2_register", (TABLE, 0x198, TEXT, NAMES), (4, TEXT))]
+         ("fx2_register", (TABLE, 0x198, TEXT, NAMES), (4, TEXT)),
+         ("looper_register_fxa", (TABLE, 0x18, TEXT, NAMES), (3, TEXT))]
 per = {}
 for name, regs, stack in hooks:
     calls.clear()
@@ -64,7 +66,7 @@ check(f"{len(ours)} ids of ours, each registered once", not dup, dup)
 clash = sorted({(hex(i), n) for i, n in ours if i in stock})
 check("none of ours lands on an id stock registers", not clash, clash)
 check("every id below the registry's 500 slots", all(i < 500 for i, _ in ours), [hex(i) for i, _ in ours if i >= 500])
-check("the five replaced stock ids are each registered by their own hook",
+check(f"the {len(REPLACED)} replaced stock ids are each registered by their own hook",
       all(p in per[n] for n, (_, p, *_r), _s in hooks), {n: [hex(x) for x in per[n][:3]] for n in per})
 for want, who in ((0x1BA, "insert Depth"), (0x1BB, "insert Manual"), (0x1BC, "insert Feedback"), (0x1BD, "insert Spread")):
     check(f"{who} is on {want:#x}, once (the id 3.3.n-q's first cut collided with)",

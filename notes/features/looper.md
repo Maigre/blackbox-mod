@@ -48,15 +48,15 @@ Route A of the plan (D-024): the Looper *is* FX A's own Repeater object in two m
 
 | site | stock | now | why |
 |---|---|---|---|
-| `0x0808C594` | `bl FUN_0808C0D8` (FX A list, 3 names) | `bl looper_register_fxa` | 5 names; also registers `0x1cc` "Length:" on stock's Clip Quant names `0x080ECB0C` (7 of them) |
+| `0x0808C594` | `bl FUN_0808C0D8` (FX A list, 3 names) | `bl looper_register_fxa` | 5 names; also registers `0x13c` "Length:" (D-049) on stock's Clip Quant names `0x080ECB0C` (7 of them) |
 | `0x0806E174` | `cmp r2, #2; bhi` (slot setter, FX A type) | `b.w looper_fxa_set` (`looper_thunk.S`) | index ≤ 4 → `looper_latch` answers the class (`0x40`, the Repeater, for 3 / 4) → stock's swap `0x0806E048`; > 4 → `bx lr` as stock |
-| `0x080B1E44/48`, `0x080B20B8/BC` | literals → axis table `0x080EEA78` (count 3) | → `lp_axes` (count 5) | Looper / Loop In axes: X = `0x1cc`, Y = `0x30` (EchoHP's `HPF:`, 0..1000) |
+| `0x080B1E44/48`, `0x080B20B8/BC` | literals → axis table `0x080EEA78` (count 3) | → `lp_axes` (count 5) | Looper / Loop In axes: X = `0x13c`, Y = `0x30` (EchoHP's `HPF:`, 0..1000) |
 | `0x080DF58C` | Repeater vt+0x0c → `0x0806D859` | `looper_process` | in mode 3 / 4, `lp_run` (bank 2) instead of the Repeater |
 | `0x080DF5F0` | Repeater vt+0x70 → `0x0806D0A1` | `looper_active` | always 1 in mode 3 / 4, so the container runs it (and the ring is fed) while nothing loops |
 | `src/duck.c` | — | `looper_tick(engine)` before the stock tick | the clock as the pads see it this block: sample, tick (i64), playing |
 
 Not wrapped: the Repeater's hold (+0x74) and set_param (+0x64). The DSP reads FX A's channel queue itself
-(`0x15` finger, `0x1a` Hold, `0x1cc` X, `0x30` Y, type `0x40` = reset), in order, every block.
+(`0x15` finger, `0x1a` Hold, `0x13c` X, `0x30` Y, type `0x40` = reset), in order, every block.
 
 Changing type in and out of Looper / Loop In resets the Repeater, and leaving zeroes the last 2048 floats of both
 ring buffers: the Repeater's backfill reads behind its write index, and our int16 pairs read as floats can be NaN.
@@ -64,8 +64,9 @@ Looper ↔ Loop In restarts the ring (it held the other source).
 
 ### State
 
-`struct lp_bank` (`src/looper.h`), 0x200 bytes at `PRISM_BYTES + 0x2d900` in master.c's boot block (`EXTRA_BYTES`
-0x2db00; 0x2d100..0x2d900 is kept for the Clip Window's bank so neither offset moves when `feat/slip` merges).
+`struct lp_bank` (`src/looper.h`), 0x200 bytes, the last part of master.c's tail (D-030, D-049): `master_tail()` +
+`LP_OFFSET` = Prism's 0x56800 + insert.c's bank 0x22000 (+ the kit's 0x1400 in a dev build, so the kit keeps
+block + 0x95910). No payload, no tail: `looper_bank()` answers 0 and Looper / Loop In stay Repeaters.
 `master_alloc` clears its magic at every boot. Bank 1 (`looper.c`) writes the head: the latched mode, the sub-slot,
 the clock snapshot. Bank 2 owns `struct lp_dsp` (132 bytes, no pointers, one layout on the unit and on a 64-bit host):
 the ring's write index and history length, the loop (in-point, pass position `phi` with its fraction `acc`, pass
@@ -112,10 +113,10 @@ pointers are not valid RAM the source falls back to input bus 0 (v1's source), a
 
 ### Costs (this build)
 
-- Bank 1: `looper.o` 645 B + `looper_thunk.o` 28 B. Bank 1 has about 3.4 KB left; nothing of the review fixes is in
-  bank 1.
-- Bank 2: `looper_dsp.o` 4,516 B (bank 2 payload 17,412 B of ~770 KB).
-- SDRAM: master.c's block grows by 0xA00 (0x84300 in all); the ring is the Repeater's own 3 MB.
+- Bank 1 (37.5.0 + the Looper, 18/11): `looper.o` 653 B + `looper_thunk.o` 28 B; `.cave` 56,696 B, 1,040 B free
+  (1,784 B before it). Nothing of the review fixes is in bank 1.
+- Bank 2: `looper_dsp.o` 4,516 B (bank 2 payload 117,724 B with it).
+- SDRAM: master.c's block grows by 0x200 (D-049); the ring is the Repeater's own 3 MB.
 - Stack below the DJ FX container: `looper_process` 48 + `lp_run` 232 + `lp_block` 120 + `lp_xfrom` 8 = 408 B (Prism's
   path below `comp_process` is 600 B).
 - CPU: Unicorn instruction counts per 128-frame block (the block is 1.28 M cycles at 480 MHz): idle 10.7 k, looping
@@ -136,7 +137,7 @@ latched, Loop In's live pass on top.
 
 ## Not done yet
 
-- **Rows**: `Source` is the type (Looper / Loop In); `Max Len` waits for P5 (`0x1cd` reserved next to `Loop Rec`);
+- **Rows**: `Source` is the type (Looper / Loop In); `Max Len` waits for P5 (`0x13d..0x142` kept for it and `Loop Rec`, D-049);
   `Slip` waits for the `t004` merge and a knob home (D-022). `Y Ctl` is P6.
 - **Save to a slot** (P5): Rec Input Resam records the Looper's output; Loop In keeps looping the input meanwhile.
 - **Tempo**: the loop stays on the grid but is not stretched (P6 `Repitch`).
