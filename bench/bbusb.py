@@ -181,7 +181,10 @@ def first_onset(s, skip=1000):
     return int(hits[0]) + skip if len(hits) else None
 
 
-CW_MAGIC = 0x43574E43            # "CWNC": src/clipwin.h's cw_bank layout this tool reads
+CW_MAGIC = 0x43574E45            # "CWNE": src/clipwin.h's cw_bank layout now (stage 2, #t-045)
+# Every layout whose fields this tool reads (all below set, 0x8b8) sit where it reads them: CWND (stage 1) and
+# CWNE (stage 2) only appended set / seen / taken after them
+CW_MAGICS = (0x43574E43, 0x43574E44, 0x43574E45)
 GUI_MS = 0x2402EEE0              # the GUI's ms clock (clipwin.c GUI_MS)
 
 
@@ -191,7 +194,7 @@ def cw_bank():
     mem = word(0x38800F70)
     if not 0xC0000000 <= mem < 0xC4000000:
         sys.exit(f"no SDRAM block (block pointer {mem:#x})")
-    return mem + (0x83900 if word(mem + 0xB100) != CW_MAGIC and word(mem + 0x83900) == CW_MAGIC else 0xB100)
+    return mem + (0x83900 if word(mem + 0xB100) not in CW_MAGICS and word(mem + 0x83900) in CW_MAGICS else 0xB100)
 
 
 # The parameter mailbox (DEV builds; src/usbdev.c until 37.4.1d, the bench kit's MBX1 in bank 2 since, src/kit_b2.c,
@@ -301,10 +304,10 @@ def main(argv):
         bank = cw_bank()
         hdr = peek(bank, 8 + 64 + 64 + 16)
         magic, scan = struct.unpack_from("<II", hdr)
-        if magic != CW_MAGIC:
+        if magic not in CW_MAGICS:
             # master_alloc clears only the magic at each boot, and SDRAM keeps the rest through a reset: without the
             # bank set up this boot, every field below is a previous boot's, not live
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): "
+            sys.exit(f"cw_bank magic {magic:#010x}, not one of CWNC / CWND / CWNE: "
                      + ("the bank is not set up this boot - no matching bank 2 (D-018: TOOLS shows a '!'); its Slip "
                         "rows, pad pointers and latched slots are a previous boot's" if not magic else "another layout"))
         slip = struct.unpack_from("<16i", hdr, 8)
@@ -322,8 +325,8 @@ def main(argv):
         # hold, ZERO_DETENT_SLOW_MS). Read only: nothing is written to the unit.
         bank = cw_bank()
         magic = word(bank)
-        if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): another layout, no "
+        if magic not in CW_MAGICS:
+            sys.exit(f"cw_bank magic {magic:#010x}, not one of CWNC / CWND / CWNE: another layout, no "
                      "knob fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         counts, speed, zero_at, zero_dir, zero_slow, now = knob_state(bank)
         print(f"last Slip turn event: {counts:+d} counts, speed {speed}; last arrival on 0: "
@@ -350,8 +353,8 @@ def main(argv):
         # (+ 0x48 + 4q) for its step fields. Read only.
         bank = cw_bank()
         magic = word(bank)
-        if magic != CW_MAGIC:
-            sys.exit(f"cw_bank magic {magic:#010x}, not {CW_MAGIC:#010x} (CWNB, the F-a fade-in marks): another layout, no "
+        if magic not in CW_MAGICS:
+            sys.exit(f"cw_bank magic {magic:#010x}, not one of CWNC / CWND / CWNE: another layout, no "
                      "Fit fields - or no matching bank 2, which leaves the bank unset (D-018: TOOLS shows a '!')")
         names = ["Off", "Auto (Bars)", "Auto (Beats)", "1/4", "1/2", "3 beats", "1 bar", "6 beats", "2 bars", "4 bars",
                  "8 bars"]
