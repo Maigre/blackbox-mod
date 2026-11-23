@@ -1,0 +1,8 @@
+# The image of the Blackbox's rig gates (rig.toml, rig/gates.py). The runner builds it from the base branch's copy
+# only, with the network on (37Dev docs/RIG.md); the gates then run with none.
+# alsa-utils: arecord / amidi (the unit's USB audio and MIDI, the Fireface); numpy: the takes' comparison;
+# python3-usb: bench/bbusb.py's peeks, when the rig lends the unit's USB device.
+FROM debian:13-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-numpy python3-usb alsa-utils \
+ && rm -rf /var/lib/apt/lists/*

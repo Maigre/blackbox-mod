@@ -1,0 +1,24 @@
+# The Blackbox's rig gates - grammar and contract: 37Dev docs/RIG.md. Run on mgr-ran by its rig runner when a
+# 37loop/blackbox-t-NNN tip asks with a `Rig: soak` / `Rig: bootloop` trailer; what each does: rig/gates.py.
+# Both need the unit's power (the socket) and /dev/snd (lent by audio:fireface, the unit's own card with it).
+# Sized for a first proof; a longer soak is a new tip with bigger numbers.
+
+[rig]
+version = 1
+image = "rig/Containerfile"
+
+# blackbox#t-025 (F-o): a pad loops, a 10 s take every 10 min on USB and on the Fireface's analog side;
+# a crunch is the two diverging. 3 takes = 20 min.
+[gate.soak]
+needs = ["usb-power:blackbox", "audio:fireface"]
+command = ["python3", "rig/gates.py", "soak", "--takes", "3", "--every", "600", "--length", "10"]
+timeout = "40m"
+verdict = "soak.txt"
+
+# blackbox#t-026 (F-n, boot half): boot 0, then 5 power cycles through the socket; after each, every pad by its
+# MIDI note; a pad that sounded at boot 0 and is silent after a later boot is the catch. About 2 min a boot.
+[gate.bootloop]
+needs = ["usb-power:blackbox", "audio:fireface"]
+command = ["python3", "rig/gates.py", "bootloop", "--cycles", "5"]
+timeout = "30m"
+verdict = "bootloop.txt"
