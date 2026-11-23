@@ -6,7 +6,8 @@ mgr-ran's rig runner starts these in a container with no network: /src is this t
   usb-power:blackbox   /rig/power.sock - one line in (on, off, cycle [s], status), one out (ok on|off, err why)
   audio:fireface       /dev/snd as it was when the job started, RIG_ALSA = the Fireface UFX. The unit's own ALSA card
                        (its MIDI and its 6 USB channels) comes with it when the unit was on at that moment.
-No /proc/asound in a container: cards and ports are found through alsa-lib (`arecord -l`, `amidi -l`).
+No /proc/asound in a container: cards and ports are found through alsa-lib (`arecord -l`, `amidi -l`). /sys is the
+host's, read-only: where the host has the unit after a power cycle is read there (host_view).
 
   gates.py soak [--takes N] [--every S] [--length S] [--pad Q]
       pad Q (default 0) started by its MIDI note (36 + q, channel 1); then N takes (3), one every S seconds (600),
@@ -26,11 +27,14 @@ a USB record, then - by peek only, never a poke nor the mailbox - `bbusb.py cras
 2405FFF0, 24013930 (twice) and two dumps of 2400A9C0 (37 632 bytes). The peeks need the unit's USB device itself,
 which no mgr-ran resource lends yet: without it they are skipped, and the verdict says so.
 
-Verdict: /out/<gate>.txt (rig.toml `verdict`): one line per take or boot, then PASS or FAIL and why; takes and
-reads beside it in /out. Exit 0 = pass, 1 = fail (a crunch, a catch, or the gate could not run - it says which).
+Verdict: /out/<gate>.txt (rig.toml `verdict`): a `seen:` line (the unit's card and port, its USB lent or not, the
+power, where the host has the unit), one line per take or boot, then PASS or FAIL and why; takes and reads beside it
+in /out. The `seen:` line comes back when the unit is lost too: a unit that did not boot, or one that booted outside
+the devices this container was lent at its start (another card number or minor), read apart. Exit 0 = pass, 1 = fail (a crunch, a catch, or the gate could not run - it says which).
 """
 import argparse
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -74,6 +78,71 @@ def blackbox_midi(listing):
         if len(parts) >= 3 and parts[1].startswith("hw:") and "Blackbox" in line:
             return parts[1]
     return None
+
+
+def host_unit(sys_root="/sys"):
+    """the unit as the HOST sees it, through sysfs (read-only in a container, not namespaced for sound):
+    (on its USB bus: bool, its card number or None, {node name: "major:minor"} of that card's nodes);
+    None when sysfs has no sound class to read"""
+    snd = os.path.join(sys_root, "class", "sound")
+    try:
+        names = sorted(os.listdir(snd))
+    except OSError:
+        return None
+    on_bus = False
+    usb = os.path.join(sys_root, "bus", "usb", "devices")
+    want = (f"{bbusb.VID:04x}", f"{bbusb.PID:04x}")
+    for d in (os.listdir(usb) if os.path.isdir(usb) else ()):
+        try:
+            ids = tuple(open(os.path.join(usb, d, k)).read().strip().lower() for k in ("idVendor", "idProduct"))
+        except OSError:
+            continue
+        on_bus = on_bus or ids == want
+    card = None
+    for n in names:
+        if n.startswith("card"):
+            try:
+                if open(os.path.join(snd, n, "id")).read().strip() == "Blackbox":
+                    card = n[4:]
+            except OSError:
+                continue
+    nodes = {}
+    if card is not None:
+        for n in names:
+            if re.fullmatch(rf"[a-z]+C{card}(D\d+[pc]?)?", n):
+                try:
+                    nodes[n] = open(os.path.join(snd, n, "dev")).read().strip()
+                except OSError:
+                    continue
+    return on_bus, card, nodes
+
+
+def held_nodes(names, dev_snd="/dev/snd"):
+    """{node name: "major:minor"} of the nodes this container holds, among `names`"""
+    got = {}
+    for n in names:
+        try:
+            st = os.stat(os.path.join(dev_snd, n))
+        except OSError:
+            continue
+        got[n] = f"{os.major(st.st_rdev)}:{os.minor(st.st_rdev)}"
+    return got
+
+
+def host_view(seen, held):
+    """one line: where the host has the unit (host_unit) against the nodes this container holds (held_nodes)"""
+    if seen is None:
+        return "host: sysfs has no sound class here - where the host has the unit is unknown"
+    on_bus, card, nodes = seen
+    bus = f"unit on the host's USB ({bbusb.VID:04x}:{bbusb.PID:04x}): {'yes' if on_bus else 'no'}"
+    if card is None:
+        return f"host: {bus}, no Blackbox card" + ("" if on_bus else " (off, booting, or off the bus)")
+    off = [f"{n} {d} here {held.get(n, 'absent')}" for n, d in sorted(nodes.items()) if held.get(n) != d]
+    if not off:
+        return f"host: {bus}, card {card}, its {len(nodes)} nodes held here as they are"
+    return (f"host: {bus}, card {card}, {len(off)} of its {len(nodes)} nodes not held here as they are ("
+            + "; ".join(off[:3]) + ("; ..." if len(off) > 3 else "")
+            + ") - it came back outside what this container was lent")
 
 
 def plug(alsa):
@@ -126,6 +195,17 @@ class Unit:
 
     def power(self, cmd):
         return power(cmd)
+
+    def seen(self):
+        """the verdict's `seen:` line: what this container reaches, and where the host has the unit"""
+        try:
+            pw = power("status", timeout=10)
+        except Exception as e:
+            pw = f"unread ({e})"
+        h = host_unit()
+        held = held_nodes(h[2]) if h and h[2] else {}
+        return (f"card {self.card()}, MIDI {self.midi()}, Fireface {self.alsa or '-'}, power {pw}, unit USB lent "
+                f"(peeks): {'yes' if self.usb_lent() else 'no'}; {host_view(h, held)}")
 
     def _arecord(self, dev, channels, fmt, seconds, path):
         return subprocess.Popen(["arecord", "-q", "-D", dev, "-c", str(channels), "-r", str(RATE), "-f", fmt,
@@ -292,6 +372,7 @@ def soak(unit, out, takes=3, every=600, length=10, pad=0, sleep=time.sleep):
     v = Verdict("soak", out)
     v.say(f"soak: pad q{pad} by note {NOTE0 + pad}, {takes} takes of {length} s every {every} s, crunch at "
           f"+{DIVERGE_DB:g} dB over the first take's residual")
+    v.say("seen: " + unit.seen())
     why = present(unit)
     if why:
         return v.end(False, "could not run: " + why)
@@ -302,6 +383,7 @@ def soak(unit, out, takes=3, every=600, length=10, pad=0, sleep=time.sleep):
         if k:
             sleep(max(0, every - length))
         if unit.card() is None:
+            v.say("seen: " + unit.seen())
             for line in unit.reads(f"take {k}: the unit left USB", k):
                 v.say(line)
             return v.end(False, f"take {k}: the unit's card is gone (it reset, or its USB went quiet: F-i)")
@@ -357,6 +439,7 @@ def one_boot(unit, pads, n):
 def bootloop(unit, out, cycles=5, pads=tuple(range(16)), off_s=5, sleep=time.sleep):
     v = Verdict("bootloop", out)
     v.say(f"bootloop: boot 0 then {cycles} power cycles ({off_s} s off), pads {','.join('q%d' % q for q in pads)}")
+    v.say("seen: " + unit.seen())
     why = present(unit)
     if why:
         return v.end(False, "could not run: " + why)
@@ -364,19 +447,20 @@ def bootloop(unit, out, cycles=5, pads=tuple(range(16)), off_s=5, sleep=time.sle
     for n in range(cycles + 1):
         unit.power(f"cycle {off_s}")
         if not wait_back(unit, sleep):
+            v.say("seen: " + unit.seen())
             return v.end(False, f"boot {n}: the unit did not come back on USB within {BOOT_WAIT} s (no boot, or it "
                                 f"re-enumerated outside the devices this container was lent)")
         got = one_boot(unit, pads, n)
         on = [q for q in pads if got[q]]
         if ref is None:
             ref = set(on)
-            v.say(f"boot 0 (the reference): {len(on)} pads sound: {','.join('q%d' % q for q in on) or 'none'}")
+            v.say(f"boot 0 (the reference, card {unit.card()}): {len(on)} pads sound: {','.join('q%d' % q for q in on) or 'none'}")
             if not on:
                 return v.end(False, "boot 0: no pad sounded - nothing to compare (the preset, or every pad waits for "
                                     "the transport)")
             continue
         silent = sorted(ref - set(on))
-        v.say(f"boot {n}: {len(on)} pads sound" + (f", SILENT: {','.join('q%d' % q for q in silent)}" if silent else ""))
+        v.say(f"boot {n} (card {unit.card()}): {len(on)} pads sound" + (f", SILENT: {','.join('q%d' % q for q in silent)}" if silent else ""))
         if silent:
             for line in unit.reads(f"boot {n}: pads {silent} silent", n):
                 v.say(line)
@@ -392,6 +476,8 @@ def io(unit):
     print("power socket:", SOCK if os.path.exists(SOCK) else "-")
     print("unit USB lent (peeks):", unit.usb_lent())
     print("RIG_NEEDS:", os.environ.get("RIG_NEEDS", "-"))
+    h = host_unit()
+    print(host_view(h, held_nodes(h[2]) if h and h[2] else {}))
     return 0
 
 

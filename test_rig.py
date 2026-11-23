@@ -4,7 +4,8 @@ Here: rig.toml reads as the runner reads it (37Dev bin/rig: the gate-name patter
 6 h that the gate's own length fits in, the recipe and the script present, the needs among what mgr-ran lends); the
 comparison sees a clean analog take as clean (a delay, a gain, a polarity, noise, two clocks 50 ppm apart) and a
 bit-reduced one as a crunch; a pad sounds when the take after its note rises over what came before, not when the pad
-before still rings; alsa-utils' listings give the unit's card and port; the power socket's client; the soak and
+before still rings; alsa-utils' listings give the unit's card and port; sysfs tells where the host has the unit against the nodes the
+container holds; the power socket's client; the soak and
 the boot loop end to end on a fake unit, passing, catching, and refusing to judge what they cannot.
 NOT checked here: the unit, the Fireface, the container, the runner - that is the rig run itself (a `Rig:` tip).
 """
@@ -142,6 +143,56 @@ check("arecord -l without it: None", gates.blackbox_card(AREC.splitlines()[1]) i
 check("amidi -l: the unit's port", gates.blackbox_midi(AMIDI) == "hw:3,0,0")
 check("RIG_ALSA through the plug", gates.plug("hw:UFX23108111,0") == "plughw:UFX23108111,0")
 
+# ---------------------------------------------------------------- where the host has the unit (sysfs)
+
+def fake_sys(root, card="3", nodes=(("controlC3", "116:13"), ("pcmC3D0c", "116:12"), ("midiC3D0", "116:11")),
+             on_bus=True):
+    """a /sys with the Fireface as card 1 and, when `card`, the unit"""
+    def put(path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w").write(text + "\n")
+    put(os.path.join(root, "class/sound/card1/id"), "UFX23108111")
+    put(os.path.join(root, "class/sound/controlC1/dev"), "116:6")
+    if card:
+        put(os.path.join(root, f"class/sound/card{card}/id"), "Blackbox")
+        for n, d in nodes:
+            put(os.path.join(root, f"class/sound/{n}/dev"), d)
+    put(os.path.join(root, "bus/usb/devices/9-1.4.4/idVendor"), "2109")
+    put(os.path.join(root, "bus/usb/devices/9-1.4.4/idProduct"), "2817")
+    if on_bus:
+        put(os.path.join(root, "bus/usb/devices/9-1.4.4.1/idVendor"), "1209")
+        put(os.path.join(root, "bus/usb/devices/9-1.4.4.1/idProduct"), "0003")
+
+
+with tempfile.TemporaryDirectory() as d:
+    fake_sys(d)
+    h = gates.host_unit(d)
+    check("sysfs: the unit on the bus, card 3, its three nodes",
+          h == (True, "3", {"controlC3": "116:13", "pcmC3D0c": "116:12", "midiC3D0": "116:11"}), h)
+    line = gates.host_view(h, dict(h[2]))
+    check("held as the host has them: said so", "nodes held here as they are" in line and "card 3" in line, line)
+    line = gates.host_view(h, {"controlC3": "116:13", "pcmC3D0c": "116:7"})
+    check("another minor, a node missing: both named, and what it means",
+          "2 of its 3" in line and "pcmC3D0c 116:12 here 116:7" in line and "midiC3D0 116:11 here absent" in line
+          and "outside what this container was lent" in line, line)
+with tempfile.TemporaryDirectory() as d:
+    fake_sys(d, card=None, on_bus=False)
+    h = gates.host_unit(d)
+    line = gates.host_view(h, {})
+    check("no unit on the host: off the bus, no card", h == (False, None, {}) and "USB (1209:0003): no" in line
+          and "no Blackbox card (off" in line, (h, line))
+with tempfile.TemporaryDirectory() as d:
+    fake_sys(d, card=None)
+    line = gates.host_view(gates.host_unit(d), {})
+    check("on the bus, no card yet: not called off", "USB (1209:0003): yes, no Blackbox card" in line
+          and "(off" not in line, line)
+with tempfile.TemporaryDirectory() as d:
+    fake_sys(d, card="30", nodes=(("controlC30", "116:40"),))
+    h = gates.host_unit(d)
+    check("card 30's nodes are its own, not card 3's", h[1] == "30" and set(h[2]) == {"controlC30"}, h)
+check("no sysfs sound class: unknown, said so", gates.host_unit("/nonexistent") is None
+      and "unknown" in gates.host_view(None, {}))
+
 # ---------------------------------------------------------------- the power socket's client
 
 with tempfile.TemporaryDirectory() as d:
@@ -226,6 +277,9 @@ class Fake:
     def usb_lent(self):
         return self.lent
 
+    def seen(self):
+        return f"card {self.card()}, host: boot {self.boot}"
+
     def reads(self, why, n):
         self.reads_n.append(why)
         return [f"reads-{n}"]
@@ -243,6 +297,7 @@ def run(fn, fake, **kw):
 rc, text = run(gates.soak, Fake(None), takes=3, every=600, length=10)
 check("soak, clean: pass", rc == 0 and text.splitlines()[-1].startswith("PASS"), text)
 check("soak: the pad started and stopped by its note", "pad q0" in text)
+check("soak: its verdict's second line is what it sees", text.splitlines()[1].startswith("seen: card 3"), text)
 f = Fake(None, crunch_at=2)
 rc, text = run(gates.soak, f, takes=4, every=600, length=10)
 check("soak, a crunch at the third take: fail, named, the reads taken",
@@ -254,6 +309,9 @@ f = Fake(None)
 rc, text = run(gates.bootloop, f, cycles=3, pads=tuple(range(16)))
 check("bootloop, every pad back each time: pass", rc == 0 and "3 power cycles" in text, text)
 check("bootloop: one cycle a boot, boot 0 included", f.powers == ["cycle 5"] * 4, f.powers)
+check("bootloop: what it sees first, the card each boot came back as",
+      text.splitlines()[1].startswith("seen: ") and "boot 0 (the reference, card 3)" in text and "boot 3 (card 3)" in text,
+      text)
 check("bootloop: a stop note for each pad that kept playing", f.notes.count(0) == 2 * 4, f.notes.count(0))
 f = Fake(None, dead={2: {5}})
 rc, text = run(gates.bootloop, f, cycles=4, pads=tuple(range(16)))
@@ -274,6 +332,8 @@ class Gone(Fake):
 rc, text = run(gates.bootloop, Gone(None), cycles=2, pads=(0,))
 check("bootloop: a unit that never comes back is not taken for a catch", rc == 1 and "did not come back" in text,
       text)
+check("bootloop: a unit lost, what it sees then, before the FAIL",
+      text.splitlines()[-2] == "seen: card None, host: boot 1", text)
 
 # the reads without the unit's USB: the record, then the peeks said skipped
 with tempfile.TemporaryDirectory() as d:
